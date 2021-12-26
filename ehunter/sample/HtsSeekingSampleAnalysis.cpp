@@ -24,6 +24,8 @@
 
 #include <atomic>
 #include <cassert>
+#include <chrono>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -40,6 +42,7 @@
 #include "spdlog/fmt/ostr.h"
 // clang-format on
 
+#include "core/Read.hh"
 #include "core/ReadPairs.hh"
 #include "locus/LocusAnalyzer.hh"
 #include "sample/AnalyzerFinder.hh"
@@ -84,9 +87,35 @@ bool checkIfMatesWereMappedNearby(const LinearAlignmentStats& alignmentStats)
     return false;
 }
 
+bool addMateToRegionIfNearby(
+    GenomicRegion& mateGenomicRegion, const ReadId& readId, htshelpers::MateRegionToRecover& mateRegionToRecover)
+{
+    const int maxDistance = 2000;
+    bool isNearby = mateRegionToRecover.genomicRegion.distance(mateGenomicRegion) < maxDistance;
+
+    ReadId mateReadId(readId.fragmentId(),
+        (readId.mateNumber() == MateNumber::kFirstMate) ? MateNumber::kSecondMate : MateNumber::kFirstMate);
+
+    if (isNearby) {
+        mateRegionToRecover.genomicRegion = GenomicRegion(
+            mateRegionToRecover.genomicRegion.contigIndex(),
+            std::min(mateRegionToRecover.genomicRegion.start(), mateGenomicRegion.start()),
+            std::max(mateRegionToRecover.genomicRegion.end(), mateGenomicRegion.end()));
+
+        mateRegionToRecover.mateReadIds.emplace(mateReadId);
+    }
+
+    return isNearby;
+}
+
 void recoverMates(
     htshelpers::MateExtractor& mateExtractor, AlignmentStatsCatalog& alignmentStatsCatalog, ReadPairs& readPairs)
 {
+
+    // compute a vector of MateRegionToRecover structs, each of which represents a GenomicRegion + a vector of
+    // ReadIds that need to be recovered from that region.
+    vector<htshelpers::MateRegionToRecover> mateRegionsToRecover;
+
     for (auto& fragmentIdAndReadPair : readPairs)
     {
         ReadPair& readPair = fragmentIdAndReadPair.second;
@@ -105,22 +134,53 @@ void recoverMates(
         }
         const LinearAlignmentStats& alignmentStats = alignmentStatsIterator->second;
 
-        if (!checkIfMatesWereMappedNearby(alignmentStats))
-        {
-            LinearAlignmentStats mateStats;
-            optional<Read> optionalMate = mateExtractor.extractMate(read, alignmentStats, mateStats);
-            if (optionalMate)
-            {
-                const Read& mate = *optionalMate;
-                alignmentStatsCatalog.emplace(std::make_pair(mate.readId(), alignmentStats));
-                readPairs.AddMateToExistingRead(mate);
-            }
-            else
-            {
-                spdlog::warn("Could not recover the mate of {}", read.readId());
+        if (checkIfMatesWereMappedNearby(alignmentStats)) {
+            continue;
+        }
+
+        const int32_t mateContigIndex = alignmentStats.isMateMapped ? alignmentStats.mateChromId : alignmentStats.chromId;
+        const int32_t matePos = alignmentStats.isMateMapped ? alignmentStats.matePos : alignmentStats.pos;
+
+        // check if mate is close to other mates so they can be fetched together
+        bool foundNearbyRegion = false;
+        for (auto& mateRegionToRecover : mateRegionsToRecover) {
+            GenomicRegion mateGenomicRegion = GenomicRegion(mateContigIndex, matePos, matePos + read.sequence().length());
+
+            if (addMateToRegionIfNearby(mateGenomicRegion, read.readId(), mateRegionToRecover)) {
+                foundNearbyRegion = true;
+                break;
             }
         }
+        if (!foundNearbyRegion) {
+            // create a new entry in mateRegionsToRecover
+            GenomicRegion mateGenomicRegion = GenomicRegion(mateContigIndex, matePos, matePos + read.sequence().length());
+            htshelpers::MateRegionToRecover newMateRegionToRecover = { mateGenomicRegion, std::unordered_set<ReadId, boost::hash<ReadId>>() };
+            addMateToRegionIfNearby(mateGenomicRegion, read.readId(), newMateRegionToRecover);
+
+            mateRegionsToRecover.push_back(newMateRegionToRecover);
+        }
     }
+
+
+    // fetch mates for the regions
+    for (auto& mateRegionToRecover : mateRegionsToRecover) {
+        for (auto& mateAndAlignmentStats : mateExtractor.extractMates(mateRegionToRecover)) {
+            auto& mate = mateAndAlignmentStats.first;
+            auto& alignmentStats = mateAndAlignmentStats.second;
+                alignmentStatsCatalog.emplace(std::make_pair(mate.readId(), alignmentStats));
+                readPairs.AddMateToExistingRead(mate);
+
+        }
+    }
+}
+
+std::chrono::system_clock::rep time_since_epoch(){
+    static_assert(
+        std::is_integral<std::chrono::system_clock::rep>::value,
+        "Representation of ticks isn't an integral value."
+    );
+    auto now = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
 ReadPairs collectCandidateReads(
@@ -265,20 +325,40 @@ struct LocusThreadLocalData
 /// \brief Process a series of loci on one thread
 ///
 void processLocus(
-    const int threadIndex, const InputPaths& inputPaths, const Sex sampleSex,
+    const int threadIndex, const ProgramParameters& programParams,
     const HeuristicParameters& heuristicParams, const RegionCatalog& regionCatalog,
     locus::AlignWriterPtr alignmentWriter, SampleFindings& sampleFindings, LocusThreadSharedData& locusThreadSharedData,
     std::vector<LocusThreadLocalData>& locusThreadLocalDataPool)
 {
+    const InputPaths& inputPaths = programParams.inputPaths();
+    const Sex& sampleSex = programParams.sample().sex();
+
     LocusThreadLocalData& locusThreadData(locusThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
+    std::ofstream timing_tsv_file;
+    if (programParams.recordTiming()) {
+        const std::string timingPath = programParams.outputPaths().timing();
+        timing_tsv_file.open(timingPath, std::ios::out);
+        timing_tsv_file
+            << "locusNumber"
+            << "\t" << "sampleId"
+            << "\t" << "locusId"
+            << "\t" << "motif"
+            << "\t" << "cacheMates"
+            << "\t" << "collectReads (millisec)"
+            << "\t" << "processReads (millisec)"
+            << "\t" << "analyze (millisec)"
+            << "\t" << "total (millisec)"
+            << std::endl;
+    }
 
     try
     {
         HtsFileSeeker htsFileSeeker(inputPaths.htsFile(), inputPaths.reference());
-        htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference());
+        htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference(), programParams.cacheMates());
         graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
 
+        int locusCounter = 0;
         const unsigned size(regionCatalog.size());
         while (true)
         {
@@ -292,8 +372,23 @@ void processLocus(
                 return;
             }
 
+            locusCounter += 1;
+
+            auto time0 = time_since_epoch();
+
             const auto& locusSpec(regionCatalog[locusIndex]);
             locusId = locusSpec.locusId();
+
+            std::string locusMotif = "";
+            const auto& graph = locusSpec.regionGraph();
+            for (const auto& variantSpec : locusSpec.variantSpecs()) {
+                const int repeatNodeId = static_cast<int>(variantSpec.nodes().front());
+                const auto& motif = graph.nodeSeq(repeatNodeId);
+                if (locusMotif.length() > 0) {
+                    locusMotif += "/";
+                }
+                locusMotif += motif;
+            }
 
             spdlog::info("Analyzing {}", locusId);
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
@@ -306,9 +401,30 @@ void processLocus(
                 locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(), alignmentStats,
                 htsFileSeeker, mateExtractor);
 
+            auto time1 = time_since_epoch();
             processReads(locusAnalyzers, readPairs, alignmentStats, analyzerFinder, alignerSelector);
-
+            auto time2 = time_since_epoch();
             sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(sampleSex, boost::none);
+            auto time3 = time_since_epoch();
+
+            spdlog::info("Analyzing locus #{}: {} {} took {} sec", locusCounter, locusId, locusMotif, (time3 - time0)/1000.0);
+
+            if (programParams.recordTiming()) {
+                timing_tsv_file
+                    << locusCounter
+                    << "\t" << programParams.sample().id()
+                    << "\t" << locusId
+                    << "\t" << locusMotif
+                    << "\t" << programParams.cacheMates()
+                    << "\t" << time1 - time0
+                    << "\t" << time2 - time1
+                    << "\t" << time3 - time2
+                    << "\t" << time3 - time0
+                    << std::endl;
+            }
+        }
+        if (programParams.recordTiming()) {
+            timing_tsv_file.close();
         }
     }
     catch (const std::exception& e)
@@ -331,9 +447,10 @@ void processLocus(
 }
 
 SampleFindings htsSeekingSampleAnalysis(
-    const InputPaths& inputPaths, Sex sampleSex, const HeuristicParameters& heuristicParams, const int threadCount,
+    const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
     const RegionCatalog& regionCatalog, locus::AlignWriterPtr alignmentWriter)
 {
+	const int threadCount = programParams.threadCount;
     LocusThreadSharedData locusThreadSharedData;
     std::vector<LocusThreadLocalData> locusThreadLocalDataPool(threadCount);
 
@@ -345,7 +462,7 @@ SampleFindings htsSeekingSampleAnalysis(
     for (int threadIndex(0); threadIndex < threadCount; ++threadIndex)
     {
         locusThreads.emplace_back(
-            processLocus, threadIndex, std::cref(inputPaths), sampleSex, std::cref(heuristicParams),
+            processLocus, threadIndex, std::cref(programParams), std::cref(heuristicParams),
             std::cref(regionCatalog), alignmentWriter, std::ref(sampleFindings), std::ref(locusThreadSharedData),
             std::ref(locusThreadLocalDataPool));
     }

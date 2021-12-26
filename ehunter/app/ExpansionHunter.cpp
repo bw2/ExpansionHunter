@@ -133,14 +133,12 @@ int main(int argc, char** argv)
         if (params.analysisMode() == AnalysisMode::kSeeking)
         {
             spdlog::info("Running sample analysis in seeking mode");
-            sampleFindings = htsSeekingSampleAnalysis(
-                inputPaths, sampleParams.sex(), heuristicParams, params.threadCount, regionCatalog, bamletWriter);
+            sampleFindings = htsSeekingSampleAnalysis(params, heuristicParams, regionCatalog, bamletWriter);
         }
         else
         {
             spdlog::info("Running sample analysis in streaming mode");
-            sampleFindings = htsStreamingSampleAnalysis(
-                inputPaths, sampleParams.sex(), heuristicParams, params.threadCount, regionCatalog, bamletWriter);
+            sampleFindings = htsStreamingSampleAnalysis(params, heuristicParams, regionCatalog, bamletWriter);
         }
 
         spdlog::info("Writing output to disk");

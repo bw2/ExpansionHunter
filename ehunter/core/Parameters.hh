@@ -75,21 +75,24 @@ private:
 class OutputPaths
 {
 public:
-    OutputPaths(std::string vcf, std::string json, std::string bamlet)
+    OutputPaths(std::string vcf, std::string json, std::string bamlet, std::string timing)
         : vcf_(vcf)
         , json_(json)
         , bamlet_(bamlet)
+        , timing_(timing)
     {
     }
 
     const std::string& vcf() const { return vcf_; }
     const std::string& json() const { return json_; }
     const std::string& bamlet() const { return bamlet_; }
+    const std::string& timing() const { return timing_; }
 
 private:
     std::string vcf_;
     std::string json_;
     std::string bamlet_;
+    std::string timing_;
 };
 
 class SampleParameters
@@ -168,7 +171,8 @@ class ProgramParameters
 public:
     ProgramParameters(
         InputPaths inputPaths, OutputPaths outputPaths, SampleParameters sample, HeuristicParameters heuristics,
-        AnalysisMode analysisMode, LogLevel logLevel, const int initThreadCount, const bool initDisableBamletOutput)
+        AnalysisMode analysisMode, LogLevel logLevel, const int initThreadCount, const bool initDisableBamletOutput,
+        bool recordTiming, bool cacheMates)
         : threadCount(initThreadCount)
         , disableBamletOutput(initDisableBamletOutput)
         , inputPaths_(std::move(inputPaths))
@@ -177,6 +181,8 @@ public:
         , heuristics_(std::move(heuristics))
         , analysisMode_(analysisMode)
         , logLevel_(logLevel)
+        , recordTiming_(recordTiming)
+        , cacheMates_(cacheMates)
     {
     }
 
@@ -186,6 +192,8 @@ public:
     const HeuristicParameters& heuristics() const { return heuristics_; }
     AnalysisMode analysisMode() const { return analysisMode_; }
     LogLevel logLevel() const { return logLevel_; }
+    bool recordTiming() const { return recordTiming_; }
+    bool cacheMates() const { return cacheMates_; }
 
     int threadCount;
     bool disableBamletOutput;
@@ -197,6 +205,8 @@ private:
     HeuristicParameters heuristics_;
     AnalysisMode analysisMode_;
     LogLevel logLevel_;
+    bool recordTiming_;
+    bool cacheMates_;
 };
 
 }

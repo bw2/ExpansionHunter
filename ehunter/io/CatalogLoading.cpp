@@ -221,8 +221,14 @@ RegionCatalog loadLocusCatalogFromDisk(
     for (auto& locusJson : catalogJson)
     {
         LocusDescriptionFromUser userDescription = loadUserDescription(locusJson, reference.contigInfo());
-        LocusSpecification locusSpec = decodeLocusSpecification(userDescription, reference, heuristicParams);
-        catalog.emplace_back(std::move(locusSpec));
+        try {
+            LocusSpecification locusSpec = decodeLocusSpecification(userDescription, reference, heuristicParams);
+            catalog.emplace_back(std::move(locusSpec));
+        }
+        catch (const std::exception& e)
+        {
+            std::cout << "Error on locus spec " + userDescription.locusId + ": " + e.what() << std::endl;
+        }
     }
 
     return catalog;

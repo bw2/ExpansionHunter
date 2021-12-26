@@ -65,6 +65,9 @@ struct UserParameters
     string logLevel;
     int threadCount;
     bool disableBamletOutput = false;
+
+    bool recordTiming = false;
+    bool cacheMates = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -90,6 +93,8 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     advancedOptions.add_options()
         ("aligner,a", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Specify which aligner to use (dag-aligner or path-aligner)")
         ("analysis-mode,m", po::value<string>(&params.analysisMode)->default_value("seeking"), "Specify which analysis workflow to use (seeking or streaming)")
+        ("record-timing", po::bool_switch(&params.recordTiming), "Write out a table of processing time per locus")
+        ("cache-mates", po::bool_switch(&params.cacheMates), "Keep some reads in memory across loci. This speeds up execution but uses more memory.")
         ("threads,n", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
     ;
     // clang-format on
@@ -317,7 +322,8 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     const string vcfPath = userParams.outputPrefix + ".vcf";
     const string jsonPath = userParams.outputPrefix + ".json";
     const string bamletPath = userParams.outputPrefix + "_realigned.bam";
-    OutputPaths outputPaths(vcfPath, jsonPath, bamletPath);
+    const string timingPath = userParams.outputPrefix + "_timing.tsv";
+    OutputPaths outputPaths(vcfPath, jsonPath, bamletPath, timingPath);
     SampleParameters sampleParameters = decodeSampleParameters(userParams);
     HeuristicParameters heuristicParameters(
         userParams.regionExtensionLength, userParams.qualityCutoffForGoodBaseCall, userParams.skipUnaligned,
@@ -347,7 +353,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
 
     return ProgramParameters(
         inputPaths, outputPaths, sampleParameters, heuristicParameters, analysisMode, logLevel, userParams.threadCount,
-        userParams.disableBamletOutput);
+        userParams.disableBamletOutput, userParams.recordTiming, userParams.cacheMates);
 }
 
 }
