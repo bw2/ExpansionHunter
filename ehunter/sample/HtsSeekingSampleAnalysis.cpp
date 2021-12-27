@@ -174,11 +174,7 @@ void recoverMates(
     }
 }
 
-std::chrono::system_clock::rep time_since_epoch(){
-    static_assert(
-        std::is_integral<std::chrono::system_clock::rep>::value,
-        "Representation of ticks isn't an integral value."
-    );
+std::chrono::system_clock::rep millisecSinceEpoch() {
     auto now = std::chrono::system_clock::now().time_since_epoch();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
@@ -374,7 +370,7 @@ void processLocus(
 
             locusCounter += 1;
 
-            auto time0 = time_since_epoch();
+            auto time0 = millisecSinceEpoch();
 
             const auto& locusSpec(regionCatalog[locusIndex]);
             locusId = locusSpec.locusId();
@@ -401,11 +397,11 @@ void processLocus(
                 locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(), alignmentStats,
                 htsFileSeeker, mateExtractor);
 
-            auto time1 = time_since_epoch();
+            auto time1 = millisecSinceEpoch();
             processReads(locusAnalyzers, readPairs, alignmentStats, analyzerFinder, alignerSelector);
-            auto time2 = time_since_epoch();
+            auto time2 = millisecSinceEpoch();
             sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(sampleSex, boost::none);
-            auto time3 = time_since_epoch();
+            auto time3 = millisecSinceEpoch();
 
             spdlog::info("Analyzing locus #{}: {} {} took {} sec", locusCounter, locusId, locusMotif, (time3 - time0)/1000.0);
 
