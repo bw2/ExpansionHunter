@@ -24,6 +24,7 @@
 #include <stdexcept>
 
 #include "core/HtsHelpers.hh"
+#include "spdlog/spdlog.h"
 
 namespace ehunter
 {
@@ -180,7 +181,12 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
     hts_itr_destroy(htsRegionPtr_);
 
     if (mateReadIdsNotFoundYet.size() > 0) {
-        throw std::runtime_error("Failed to recover " + std::to_string(mateReadIdsNotFoundYet.size()) + " mates");
+		std::ostringstream out;
+		out <<  "Failed to recover " << mateReadIdsNotFoundYet.size() << " mate(s): ";
+		for (const auto& readId: mateReadIdsNotFoundYet) {
+			out << readId.fragmentId() << "  ";
+		}
+        spdlog::warn(out.str());
     }
 
     return extractedMatesAndAlignmentStats;
