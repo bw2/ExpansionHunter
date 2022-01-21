@@ -4,11 +4,12 @@ This fork of ExpansionHunter contains two new I/O optimizations that together sp
 One of the optimizations is always used, while the other optimization is off by default (since it moderately increases memory usage), but can be enabled using a new `--cache-mates` option. 
 
 The optimizations are intended to bring down the cost of running ExpansionHunter on very large variants catalogs and/or large numbers of samples. 
-These changes are hosted here pending review and incorporation into the main ExpansionHunter repo. 
+These changes are hosted here pending review and incorporation into the main ExpansionHunter repo.  
+
 Two new command-line options have been added:
 
 ```
---cache-mates    enables an optimization that caches mates across loci and can cause 1.5x to 2x faster runtimes while moderately increasing memory usage.
+--cache-mates    enables an optimization that caches mates across loci and can yield 1.5x to 2x faster runtimes while moderately increasing memory usage.
 --record-timing  write out a .tsv file with information on how long each locus takes to process. Processing time can be longer for some loci compared to others, and this allows the few slowest outliers to be excluded from a large variant catalog. 
 ```
 
