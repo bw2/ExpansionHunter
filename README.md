@@ -1,3 +1,22 @@
+## NOTE:
+
+This fork of ExpansionHunter contains I/O optimizations that speed up the tool by 2-3x without changing the output. 
+The optimizations bring down the cost of running ExpansionHunter on very large variants catalogs and/or large numbers of samples. 
+These changes are hosted here pending review and incorporation into the main ExpansionHunter repo. 
+Two new command-line options have been added:
+
+```
+--cache-mates    enables an optimization that caches mates across loci and can cause 1.5x to 2x faster runtimes while moderately increasing memory usage.
+--record-timing  write out a .tsv file with information on how long each locus takes to process. Processing time can be longer for some loci compared to others, and this allows the few slowest outliers to be excluded from a large variant catalog. 
+```
+
+Compiled binaries with these changes are available for MacOSX and Linux in the [`bin`](https://github.com/bw2/ExpansionHunter/tree/master/bin) directory.
+
+---
+
+
+
+
 # Expansion Hunter: a tool for estimating repeat sizes
 
 There are a number of regions in the human genome consisting of repetitions of
