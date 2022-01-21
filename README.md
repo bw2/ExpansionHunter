@@ -3,7 +3,7 @@
 This fork of ExpansionHunter contains two new I/O optimizations that together speed up the tool by 2-3x without changing the output.
 One of the optimizations is always used. The other optimization is off by default since it moderately increases memory usage, but it can be enabled using a new `--cache-mates` option. 
 
-The optimizations are intended to bring down the cost of running ExpansionHunter on very large variants catalogs and/or large numbers of samples. 
+The optimizations are intended to bring down the cost of running ExpansionHunter on very large variant catalogs and/or large numbers of samples. 
 These changes are hosted here pending review and incorporation into the main ExpansionHunter repo.  
 
 Two new command-line options have been added:
