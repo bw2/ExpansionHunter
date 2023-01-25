@@ -13,8 +13,6 @@ Two new command-line options have been added:
 --record-timing  write out a .tsv file with information on how long each locus takes to process. Processing time can be longer for some loci compared to others, and this allows the few slowest outliers to be excluded from a large variant catalog. 
 ```
 
-Compiled binaries with these changes are available for MacOSX and Linux in the [`bin`](https://github.com/bw2/ExpansionHunter/tree/master/bin) directory.
-
 ---
 
 
