@@ -1,4 +1,4 @@
-## NOTE:
+## Note about this optimized version of ExpansionHunter 
 
 This fork of ExpansionHunter contains two new I/O optimizations that together speed up the tool by 2-3x without changing the output.
 One of the optimizations is always used. The other optimization is off by default since it moderately increases memory usage, but it can be enabled using a new `--cache-mates` option. 
@@ -12,6 +12,8 @@ Two new command-line options have been added:
 --cache-mates    enables an optimization that caches mates across loci and can yield 1.5x to 2x faster runtimes while moderately increasing memory usage.
 --record-timing  write out a .tsv file with information on how long each locus takes to process. Processing time can be longer for some loci compared to others, and this allows the few slowest outliers to be excluded from a large variant catalog. 
 ```
+
+Additionally, this version changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning that ExpansionHunter will print before continuing to the next locus. This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
 
 ---
 
