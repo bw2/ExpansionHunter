@@ -58,6 +58,7 @@ struct UserParameters
     // Heuristic parameters
     string alignerType;
     int regionExtensionLength;
+    double minLocusCoverage = 10.0;
     int qualityCutoffForGoodBaseCall = 20;
     bool skipUnaligned;
 
@@ -79,23 +80,25 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     basicOptions.add_options()
         ("help,h", "Print help message")
         ("version,v", "Print version number")
-        ("reads", po::value<string>(&params.htsFilePath)->required(), "BAM/CRAM file with aligned reads")
-        ("reference", po::value<string>(&params.referencePath)->required(), "FASTA file with reference genome")
+        ("reads", po::value<string>(&params.htsFilePath)->required(), "aligned reads BAM/CRAM file/URL")
+        ("reference", po::value<string>(&params.referencePath)->required(), "reference genome FASTA file")
         ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "Prefix for the output files")
-        ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "Sex of the sample; must be either male or female")
-        ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "trace, debug, info, warn, or error");
+    ;
     // clang-format on
 
     // clang-format off
     po::options_description advancedOptions("Advanced options");
     advancedOptions.add_options()
-        ("aligner,a", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Specify which aligner to use (dag-aligner or path-aligner)")
-        ("analysis-mode,m", po::value<string>(&params.analysisMode)->default_value("seeking"), "Specify which analysis workflow to use (seeking or streaming)")
+        ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
+        ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
+        ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
+        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use (seeking or streaming)")
         ("record-timing", po::bool_switch(&params.recordTiming), "Write out a table of processing time per locus")
         ("cache-mates", po::bool_switch(&params.cacheMates), "Keep some reads in memory across loci. This speeds up execution but uses more memory. Also, this option cannot be used with --threads.")
-        ("threads,n", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
+        ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
+        ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "trace, debug, info, warn, or error")
     ;
     // clang-format on
 
@@ -187,10 +190,13 @@ void assertValidity(const UserParameters& userParameters)
     }
 
     // Validate input file paths
-    assertPathToExistingFile(userParameters.htsFilePath);
-    if (userParameters.analysisMode != "streaming")
+    if (not isURL(userParameters.htsFilePath))
     {
-        assertIndexExists(userParameters.htsFilePath);
+        assertPathToExistingFile(userParameters.htsFilePath);
+        if (userParameters.analysisMode != "streaming")
+        {
+            assertIndexExists(userParameters.htsFilePath);
+        }
     }
     assertPathToExistingFile(userParameters.referencePath);
     assertPathToExistingFile(userParameters.catalogPath);
@@ -329,8 +335,8 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     OutputPaths outputPaths(vcfPath, jsonPath, bamletPath, timingPath);
     SampleParameters sampleParameters = decodeSampleParameters(userParams);
     HeuristicParameters heuristicParameters(
-        userParams.regionExtensionLength, userParams.qualityCutoffForGoodBaseCall, userParams.skipUnaligned,
-        decodeAlignerType(userParams.alignerType));
+        userParams.regionExtensionLength, userParams.minLocusCoverage, userParams.qualityCutoffForGoodBaseCall,
+        userParams.skipUnaligned, decodeAlignerType(userParams.alignerType));
 
     LogLevel logLevel;
     try

@@ -20,3 +20,8 @@
 //
 
 #include "locus/VariantAnalyzer.hh"
+bool ehunter::VariantAnalyzer::isLowDepth(const LocusStats& stats) const
+{
+    const double diploidCoverage = stats.alleleCount() == AlleleCount::kTwo ? stats.depth() : 2 * stats.depth();
+    return (stats.meanReadLength() == 0 || diploidCoverage < genotyperParams_.minLocusCoverage);
+}
