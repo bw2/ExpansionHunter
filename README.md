@@ -6,7 +6,9 @@ To take advantage of these optimizations:
 ```
 1) Install this optimized version
 2) Run it with the new --cache-mates option 
-3) If you are splitting your variant catalog into multiple shards, it's important to presort the catalog by the normalized motif of each locus so that loci with the same motif are grouped into the same shard. This significantly improves performance by increasing cache hit rates. 
+3) If you are splitting your variant catalog into multiple shards, it's important to presort the catalog
+   by the normalized motif of each locus so that loci with the same motif are grouped into the same shard. 
+   This significantly improves performance by increasing cache hit rates. 
 ```
 
 NOTE: if you want to process a very large catalog and have a machine with a lot of memory, you may find that it's faster / cheaper to use ExpansionHunter's **streaming** mode than this optimized **seeking** mode.
