@@ -7,7 +7,7 @@ To take advantage of these optimizations:
 1) Install this optimized version
 2) Run it with the new --cache-mates option 
 3) If you are splitting your variant catalog into multiple shards, it's important to presort the catalog
-   by the normalized motif of each locus so that loci with the same motif are grouped into the same shard. 
+   by the normalized motif so that loci with the same motif are grouped into the same shard. 
    This significantly improves performance by increasing cache hit rates. 
 ```
 
