@@ -11,7 +11,7 @@ To take advantage of these optimizations:
    This significantly improves performance by increasing cache hit rates. 
 ```
 
-NOTE: if you want to process a very large catalog and have a machine with a lot of memory, you may find that it's faster / cheaper to use ExpansionHunter's **streaming** mode than this optimized **seeking** mode.
+**NOTE:** if you want to process a very large catalog and have a machine with a lot of memory, you may find that it's faster / cheaper to use ExpansionHunter's **streaming** mode than this optimized **seeking** mode.
 
 This fork includes several additional modifications:
 
