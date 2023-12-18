@@ -51,6 +51,7 @@ struct MateRegionToRecover {
     std::unordered_set<ReadId, boost::hash<ReadId>> mateReadIds;
 };
 
+using MateCache = std::unordered_map<ReadId, std::pair<Read, LinearAlignmentStats>, boost::hash<ReadId>>;
 
 class MateExtractor
 {
@@ -70,6 +71,7 @@ private:
     std::string htsFilePath_;
     std::string htsReferencePath_;
     ReferenceContigInfo contigInfo_;
+    MateCache mateCache_;
     bool cacheMates_;
 
     htsFile* htsFilePtr_ = nullptr;

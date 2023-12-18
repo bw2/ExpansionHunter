@@ -36,10 +36,6 @@ namespace htshelpers
 {
 
 
-using RecoveredMateCache = std::unordered_map<ReadId, std::pair<Read, LinearAlignmentStats>, boost::hash<ReadId>>;
-
-RecoveredMateCache recoveredMateCache;
-
 MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates)
     : htsFilePath_(htsFilePath)
     , htsReferencePath_(htsReferencePath)
@@ -113,8 +109,8 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
 
     if (cacheMates_) {
         for (ReadId mateReadId : mateRegionToRecover.mateReadIds) {
-            if (recoveredMateCache.count(mateReadId) > 0) {
-                extractedMatesAndAlignmentStats.push_back(recoveredMateCache.at(mateReadId));
+            if (mateCache_.count(mateReadId) > 0) {
+                extractedMatesAndAlignmentStats.push_back(mateCache_.at(mateReadId));
                 mateReadIdsNotFoundYet.erase(mateReadId);
             }
         }
@@ -122,7 +118,6 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
             return extractedMatesAndAlignmentStats;
         }
     }
-
 
     const int32_t searchRegionContigIndex = mateRegionToRecover.genomicRegion.contigIndex();
     const int32_t searchRegionStart = mateRegionToRecover.genomicRegion.start();
@@ -153,19 +148,21 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
         ReadId putativeMateReadId = decodeReadId(htsAlignmentPtr_);
 
         // if this is one of the fragment ids we're looking for, check if forms a proper pair with the 1st read with
-        // this fragmentId. If it does, decode this read and add it as a mate
+        // this fragmentId. If it does, decode this read and add it to the list of mates to return
         bool foundRequestedMate = mateReadIdsNotFoundYet.count(putativeMateReadId) > 0;
         if (foundRequestedMate || cacheMates_) {
             LinearAlignmentStats mateStats = decodeAlignmentStats(htsAlignmentPtr_);
 
-            bool shouldCacheThisMateRegardless = cacheMates_ && (
+            // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the
+            // read, suggesting there's a chance that it signals a large expansion at this locus
+            bool shouldCacheThisMate = cacheMates_ && (
                 mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.matePos - mateStats.matePos) > 1000);
 
-            if (foundRequestedMate || shouldCacheThisMateRegardless) {
+            if (foundRequestedMate || shouldCacheThisMate) {
                 Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
                 auto mateAndAlignmentStats = std::make_pair(putativeMate, mateStats);
-                if (shouldCacheThisMateRegardless) {
-                    recoveredMateCache.emplace(putativeMate.readId(), mateAndAlignmentStats);
+                if (shouldCacheThisMate) {
+                    mateCache_.emplace(putativeMate.readId(), mateAndAlignmentStats);
                 }
                 if (foundRequestedMate) {
                     extractedMatesAndAlignmentStats.push_back(mateAndAlignmentStats);
@@ -181,11 +178,11 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
     hts_itr_destroy(htsRegionPtr_);
 
     if (mateReadIdsNotFoundYet.size() > 0) {
-		std::ostringstream out;
-		out <<  "Failed to recover " << mateReadIdsNotFoundYet.size() << " mate(s): ";
-		for (const auto& readId: mateReadIdsNotFoundYet) {
-			out << readId.fragmentId() << "  ";
-		}
+        std::ostringstream out;
+        out <<  "Failed to recover " << mateReadIdsNotFoundYet.size() << " mate(s): ";
+        for (const auto& readId: mateReadIdsNotFoundYet) {
+            out << readId.fragmentId() << "  ";
+        }
         spdlog::warn(out.str());
     }
 

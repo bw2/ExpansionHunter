@@ -96,7 +96,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
         ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use (seeking or streaming)")
         ("record-timing", po::bool_switch(&params.recordTiming), "Write out a table of processing time per locus")
-        ("cache-mates", po::bool_switch(&params.cacheMates), "Keep some reads in memory across loci. This speeds up execution but uses more memory. Also, this option cannot be used with --threads.")
+        ("cache-mates", po::bool_switch(&params.cacheMates), "Cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "trace, debug, info, warn, or error")
     ;
@@ -242,10 +242,7 @@ void assertValidity(const UserParameters& userParameters)
     {
         const string message = "Thread count cannot be less than 1";
         throw std::invalid_argument(message);
-    } else if (userParameters.threadCount > 1 && userParameters.cacheMates) {
-		throw std::invalid_argument("--cache-mates only works with a single thread and is incompatible with --threads "
-			+ to_string(userParameters.threadCount));
-	}
+    }
 }
 
 SampleParameters decodeSampleParameters(const UserParameters& userParams)
