@@ -13,7 +13,7 @@ endif ()
 message(STATUS "BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
 set(Boost_USE_STATIC_LIBS ON)
-find_package(Boost 1.73 REQUIRED COMPONENTS program_options filesystem system)
+find_package(Boost 1.73 REQUIRED COMPONENTS program_options filesystem system iostreams)
 
 
 add_compile_options(-Wall -Werror -Wextra)

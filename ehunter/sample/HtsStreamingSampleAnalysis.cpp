@@ -228,7 +228,7 @@ SampleFindings htsStreamingSampleAnalysis(
     }
     ctpl::thread_pool pool(threadCount);
 
-    spdlog::info("Initializing all loci");
+    spdlog::info("Initializing all {} loci", locusAnalyzerCount);
     graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
     locusAnalyzerThreadSharedData.locusAnalyzers
         = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount);

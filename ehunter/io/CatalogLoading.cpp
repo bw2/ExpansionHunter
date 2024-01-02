@@ -30,7 +30,10 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/copy.hpp>
 #include <boost/optional.hpp>
 
 #include "spdlog/spdlog.h"
@@ -237,7 +240,23 @@ RegionCatalog loadLocusCatalogFromDisk(
     }
 
     Json catalogJson;
-    inputStream >> catalogJson;
+    if (boost::algorithm::ends_with(catalogPath, "gz"))
+    {
+        std::ifstream binaryInputStream(catalogPath.c_str(), std::ios::binary);
+        boost::iostreams::filtering_istreambuf bufferedInputStream;
+        bufferedInputStream.push(boost::iostreams::gzip_decompressor());
+        bufferedInputStream.push(binaryInputStream);
+        std::istream(&bufferedInputStream) >> catalogJson;
+
+    } else {
+        std::ifstream inputStream(catalogPath.c_str());
+
+        if (!inputStream.is_open())
+        {
+            throw std::runtime_error("Failed to open catalog file " + catalogPath);
+        }
+        inputStream >> catalogJson;
+    }
     makeArray(catalogJson);
 
     RegionCatalog catalog;

@@ -82,7 +82,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("version,v", "Print version number")
         ("reads", po::value<string>(&params.htsFilePath)->required(), "aligned reads BAM/CRAM file/URL")
         ("reference", po::value<string>(&params.referencePath)->required(), "reference genome FASTA file")
-        ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype")
+        ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype. It can be plain-text or gzipped.")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "Prefix for the output files")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "Sex of the sample; must be either male or female")
     ;
