@@ -208,10 +208,14 @@ void analyzeLocus(
 }
 
 SampleFindings htsStreamingSampleAnalysis(
-    const InputPaths& inputPaths, Sex sampleSex, const HeuristicParameters& heuristicParams, const int threadCount,
+    const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
     const RegionCatalog& regionCatalog, locus::AlignWriterPtr bamletWriter)
 {
     // Setup thread-specific data structures and thread pool
+    const InputPaths& inputPaths = programParams.inputPaths();
+    const Sex sampleSex = programParams.sample().sex();
+
+    const int threadCount = programParams.threadCount;
     const unsigned maxActiveLocusAnalyzerQueues(threadCount + 5);
     const unsigned locusAnalyzerCount(regionCatalog.size());
     LocusAnalyzerThreadSharedData locusAnalyzerThreadSharedData(maxActiveLocusAnalyzerQueues, locusAnalyzerCount);

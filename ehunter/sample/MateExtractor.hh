@@ -32,6 +32,7 @@ extern "C"
 #include "htslib/sam.h"
 }
 
+#include "core/GenomicRegion.hh"
 #include "core/Read.hh"
 #include "core/ReferenceContigInfo.hh"
 
@@ -40,14 +41,27 @@ namespace ehunter
 
 namespace htshelpers
 {
+
+
+// Represents one or more mates that need to be recovered from a specific genomic region.
+struct MateRegionToRecover {
+    GenomicRegion genomicRegion;
+
+    //stores the ReadId of each mate that needs to be recovered from the genomicRegion
+    std::unordered_set<ReadId, boost::hash<ReadId>> mateReadIds;
+};
+
+using MateCache = std::unordered_map<ReadId, std::pair<Read, LinearAlignmentStats>, boost::hash<ReadId>>;
+
 class MateExtractor
 {
 public:
-    MateExtractor(const std::string& htsFilePath, const std::string& htsReferencePath);
+    MateExtractor(const std::string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates);
     ~MateExtractor();
 
     boost::optional<Read>
     extractMate(const Read& read, const LinearAlignmentStats& alignmentStats, LinearAlignmentStats& mateStats);
+    std::vector<std::pair<Read, LinearAlignmentStats>> extractMates(const MateRegionToRecover& mateRegionToRecover);
 
 private:
     void openFile();
@@ -57,6 +71,8 @@ private:
     std::string htsFilePath_;
     std::string htsReferencePath_;
     ReferenceContigInfo contigInfo_;
+    MateCache mateCache_;
+    bool cacheMates_;
 
     htsFile* htsFilePtr_ = nullptr;
     bam_hdr_t* htsHeaderPtr_ = nullptr;

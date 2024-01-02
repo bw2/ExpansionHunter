@@ -24,6 +24,7 @@
 #include <stdexcept>
 
 #include "core/HtsHelpers.hh"
+#include "spdlog/spdlog.h"
 
 namespace ehunter
 {
@@ -33,10 +34,13 @@ using std::string;
 
 namespace htshelpers
 {
-MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath)
+
+
+MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates)
     : htsFilePath_(htsFilePath)
     , htsReferencePath_(htsReferencePath)
     , contigInfo_({})
+    , cacheMates_(cacheMates)
 {
     openFile();
     loadHeader();
@@ -97,14 +101,27 @@ void MateExtractor::loadIndex()
     }
 }
 
-optional<Read> MateExtractor::extractMate(
-    const Read& read, const LinearAlignmentStats& alignmentStats, LinearAlignmentStats& mateStats)
+std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(const MateRegionToRecover& mateRegionToRecover)
 {
-    const int32_t searchRegionContigIndex
-        = alignmentStats.isMateMapped ? alignmentStats.mateChromId : alignmentStats.chromId;
 
-    const int32_t searchRegionStart = alignmentStats.isMateMapped ? alignmentStats.matePos : alignmentStats.pos;
-    const int32_t searchRegionEnd = searchRegionStart + 1;
+    std::unordered_set<ReadId, boost::hash<ReadId>> mateReadIdsNotFoundYet = mateRegionToRecover.mateReadIds;
+    std::vector<std::pair<Read, LinearAlignmentStats>> extractedMatesAndAlignmentStats;
+
+    if (cacheMates_) {
+        for (ReadId mateReadId : mateRegionToRecover.mateReadIds) {
+            if (mateCache_.count(mateReadId) > 0) {
+                extractedMatesAndAlignmentStats.push_back(mateCache_.at(mateReadId));
+                mateReadIdsNotFoundYet.erase(mateReadId);
+            }
+        }
+        if (mateReadIdsNotFoundYet.size() == 0) {
+            return extractedMatesAndAlignmentStats;
+        }
+    }
+
+    const int32_t searchRegionContigIndex = mateRegionToRecover.genomicRegion.contigIndex();
+    const int32_t searchRegionStart = mateRegionToRecover.genomicRegion.start();
+    const int32_t searchRegionEnd = mateRegionToRecover.genomicRegion.end();
 
     hts_itr_t* htsRegionPtr_
         = sam_itr_queryi(htsIndexPtr_, searchRegionContigIndex, searchRegionStart, searchRegionEnd);
@@ -128,21 +145,48 @@ optional<Read> MateExtractor::extractMate(
             continue;
         }
 
-        Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
+        ReadId putativeMateReadId = decodeReadId(htsAlignmentPtr_);
 
-        const bool belongToSameFragment = read.fragmentId() == putativeMate.fragmentId();
-        const bool formProperPair = read.mateNumber() != putativeMate.mateNumber();
+        // if this is one of the fragment ids we're looking for, check if forms a proper pair with the 1st read with
+        // this fragmentId. If it does, decode this read and add it to the list of mates to return
+        bool foundRequestedMate = mateReadIdsNotFoundYet.count(putativeMateReadId) > 0;
+        if (foundRequestedMate || cacheMates_) {
+            LinearAlignmentStats mateStats = decodeAlignmentStats(htsAlignmentPtr_);
 
-        if (belongToSameFragment && formProperPair)
-        {
-            mateStats = decodeAlignmentStats(htsAlignmentPtr_);
-            hts_itr_destroy(htsRegionPtr_);
-            return putativeMate;
+            // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the
+            // read, suggesting there's a chance that it signals a large expansion at this locus
+            bool shouldCacheThisMate = cacheMates_ && (
+                mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.matePos - mateStats.matePos) > 1000);
+
+            if (foundRequestedMate || shouldCacheThisMate) {
+                Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
+                auto mateAndAlignmentStats = std::make_pair(putativeMate, mateStats);
+                if (shouldCacheThisMate) {
+                    mateCache_.emplace(putativeMate.readId(), mateAndAlignmentStats);
+                }
+                if (foundRequestedMate) {
+                    extractedMatesAndAlignmentStats.push_back(mateAndAlignmentStats);
+                    mateReadIdsNotFoundYet.erase(putativeMate.readId());
+                    if (mateReadIdsNotFoundYet.size() == 0 && !cacheMates_) {
+                        break;  // found all requested mates
+                    }
+                }
+            }
+
         }
     }
     hts_itr_destroy(htsRegionPtr_);
 
-    return optional<Read>();
+    if (mateReadIdsNotFoundYet.size() > 0) {
+        std::ostringstream out;
+        out <<  "Failed to recover " << mateReadIdsNotFoundYet.size() << " mate(s): ";
+        for (const auto& readId: mateReadIdsNotFoundYet) {
+            out << readId.fragmentId() << "  ";
+        }
+        spdlog::warn(out.str());
+    }
+
+    return extractedMatesAndAlignmentStats;
 }
 
 }

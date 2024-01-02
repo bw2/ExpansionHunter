@@ -36,7 +36,7 @@ namespace ehunter
 {
 
 SampleFindings htsStreamingSampleAnalysis(
-    const InputPaths& inputPaths, Sex sampleSex, const HeuristicParameters& heuristicParams, const int threadCount,
+    const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
     const RegionCatalog& regionCatalog, locus::AlignWriterPtr alignmentWriter);
 
 }
