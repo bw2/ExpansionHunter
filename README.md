@@ -2,6 +2,7 @@
 
 This modified version of ExpansionHunter introduces the following new features:
 - support for gzip-compressed input catalogs
+- directly access remote bam/cram files in Google Cloud Storage or S3 
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning. 
   - This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
 - optimization of ExpansionHunter's "seeking" analysis mode that yields a 1.5x to 3x speed increase without changing the output.

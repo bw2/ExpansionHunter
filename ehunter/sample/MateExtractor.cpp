@@ -25,6 +25,7 @@
 
 #include "core/HtsHelpers.hh"
 #include "spdlog/spdlog.h"
+#include "htslib/hts.h"
 
 namespace ehunter
 {
@@ -93,9 +94,9 @@ void MateExtractor::loadHeader()
 
 void MateExtractor::loadIndex()
 {
-    htsIndexPtr_ = sam_index_load(htsFilePtr_, htsFilePath_.c_str());
+	htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
 
-    if (!htsIndexPtr_)
+	if (!htsIndexPtr_)
     {
         throw std::runtime_error("Failed to read index of " + htsFilePath_);
     }

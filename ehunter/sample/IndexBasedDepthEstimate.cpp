@@ -75,7 +75,7 @@ double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength)
         throw std::runtime_error("Failed to load header of " + htsFilePath);
     }
 
-    hts_idx_t* htsIndexPtr = sam_index_load(htsFilePtr, htsFilePath.c_str());
+    hts_idx_t* htsIndexPtr = htshelpers::openHtsIndex(htsFilePtr, htsFilePath);
     if (!htsIndexPtr)
     {
         throw std::runtime_error("Failed to load index of " + htsFilePath);

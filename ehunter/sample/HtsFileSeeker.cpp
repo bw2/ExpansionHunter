@@ -96,7 +96,7 @@ void HtsFileSeeker::loadHeader()
 
 void HtsFileSeeker::loadIndex()
 {
-    htsIndexPtr_ = sam_index_load(htsFilePtr_, htsFilePath_.c_str());
+    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
 
     if (!htsIndexPtr_)
     {

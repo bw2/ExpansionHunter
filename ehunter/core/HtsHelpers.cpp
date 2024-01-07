@@ -41,6 +41,29 @@ namespace ehunter
 namespace htshelpers
 {
 
+/* Open a local or remote .bai or .crai index file. This supports direct access to files in Google Storage or S3.
+ *
+ * @param htsFilePtr pointer to an already open .bam or .cram file
+ * @param htsFilePath path of the .bam or .cram file
+ */
+hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath) {
+	std::string indexFilePath = htsFilePath + (htsFilePtr->format.format == cram ? ".crai" : ".bai");
+	hts_idx_t* htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
+
+	if (!htsIndexPtr_)
+	{
+		//try the alternative index filename, replacing the .cram or .bam suffix with .crai or .bai
+		if (htsFilePtr->format.format == cram) {
+			indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".crai";
+		} else {
+			indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 3) + ".bai";
+		}
+		htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
+	}
+
+	return htsIndexPtr_;
+}
+
 string decodeQuals(bam1_t* htsAlignPtr)
 {
     string quals;
