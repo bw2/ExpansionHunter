@@ -45,7 +45,7 @@ endif()
 
 ExternalProject_Add(Boost
 	BUILD_IN_SOURCE YES
-	URL https://boostorg.jfrog.io/artifactory/main/release/1.73.0/source/boost_1_73_0.tar.bz2
+	URL https://downloads.sourceforge.net/project/boost/boost/1.73.0/boost_1_73_0.tar.gz
 	PATCH_COMMAND ${BOOST_PATCH_COMMAND}
 	CONFIGURE_COMMAND ./bootstrap.sh --prefix=${installDir}
 	BUILD_COMMAND ./b2 install -j8  --with-filesystem --with-system --with-iostreams --with-program_options link=static ${B2_OPTIONS}
