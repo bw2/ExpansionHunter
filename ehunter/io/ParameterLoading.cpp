@@ -198,7 +198,10 @@ void assertValidity(const UserParameters& userParameters)
             assertIndexExists(userParameters.htsFilePath);
         }
     }
-    assertPathToExistingFile(userParameters.referencePath);
+    if (not isURL(userParameters.referencePath))
+    {
+    	assertPathToExistingFile(userParameters.referencePath);
+    }
     assertPathToExistingFile(userParameters.catalogPath);
 
     // Validate output prefix
