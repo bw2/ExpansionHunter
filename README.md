@@ -3,8 +3,8 @@
 This modified version of ExpansionHunter introduces the following new features:
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning. 
   - This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
-- support for gzip-compressed input catalogs
-- directly access remote bam/cram files in Google Cloud Storage or S3
+- supports gzip-compressed input catalogs
+- supports direct access to remote bam/cram and fasta files from Google Cloud Storage or S3, so they don't have to be downloaded first.
   - for access to private buckets, set environment var. `GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, set environment var. `GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
 - optimization of ExpansionHunter's "seeking" analysis mode that yields a 1.5x to 3x speed increase without changing the output.
@@ -12,7 +12,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - by default, the cache is reset after each locus, leading to a modest speedup with negligible memory overhead.
   - the new `--cache-mates` option activates reuse of the cache across loci, leading to a more significant speed increase, though at a cost of increased memory usage (typically in the range of 1-2GB of memory usage for catalogs with 100s to 1000s of loci). 
   - if/when spliting a large variant catalog into multiple shards, it's important to presort the loci by their normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). 
-    This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed for this optimization.
+    This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed with this optimization.
 
 
 ### Citation
