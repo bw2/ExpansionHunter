@@ -1,4 +1,4 @@
-## Note 
+### Description
 
 This modified version of ExpansionHunter introduces the following new features:
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning. 
@@ -13,7 +13,15 @@ This modified version of ExpansionHunter introduces the following new features:
   - the new `--cache-mates` option activates reuse of the cache across loci, leading to a more significant speed increase, though at a cost of increased memory usage (typically in the range of 1-2GB of memory usage for catalogs with 100s to 1000s of loci). 
   - if/when spliting a large variant catalog into multiple shards, it's important to presort the loci by their normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). 
     This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed for this optimization.
-  
+
+
+### Citation
+If you use this version of ExpansionHunter, please cite:
+```
+Insights from a genome-wide truth set of tandem repeat variation
+Ben Weisburd, Grace Tiao, Heidi L. Rehm
+bioRxiv 2023.05.05.539588; doi: https://doi.org/10.1101/2023.05.05.539588
+```
 
 ---
 
