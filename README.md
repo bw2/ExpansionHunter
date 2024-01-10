@@ -5,8 +5,10 @@ This modified version of ExpansionHunter introduces the following new features:
   - This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
 - supports gzip-compressed input catalogs
 - supports direct access to remote bam/cram and fasta files from Google Cloud Storage or S3, so they don't have to be downloaded first.
-  - for access to private buckets, set environment var. `GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
-  - for access to requester-pays buckets, set environment var. `GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
+  - for access to private buckets, set environment variable:  
+    `GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
+  - for access to requester-pays buckets, set environment variable:  
+    `GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
 - optimization of ExpansionHunter's "seeking" analysis mode that yields a 1.5x to 3x speed increase without changing the output.
   - it works by introducing an in-memory read cache that reduces the number of disk accesses required to retrieve mismapped mate pairs.
   - by default, the cache is reset after each locus, leading to a modest speedup with negligible memory overhead.
