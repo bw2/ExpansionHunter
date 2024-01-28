@@ -161,15 +161,13 @@ void recoverMates(
         }
     }
 
-
     // fetch mates for the regions
     for (auto& mateRegionToRecover : mateRegionsToRecover) {
         for (auto& mateAndAlignmentStats : mateExtractor.extractMates(mateRegionToRecover)) {
             auto& mate = mateAndAlignmentStats.first;
             auto& alignmentStats = mateAndAlignmentStats.second;
-                alignmentStatsCatalog.emplace(std::make_pair(mate.readId(), alignmentStats));
-                readPairs.AddMateToExistingRead(mate);
-
+            alignmentStatsCatalog.emplace(std::make_pair(mate.readId(), alignmentStats));
+            readPairs.AddMateToExistingRead(mate);
         }
     }
 }

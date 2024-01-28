@@ -54,9 +54,6 @@ RUN wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud
 
 ENV PATH=/google-cloud-sdk/bin:$PATH
 
-RUN python3 -m pip install str_analysis==1.2.5 --no-cache-dir \
-    && python3 -m pip uninstall -y hail pyspark
-    
 RUN apt update && apt-get install --no-install-recommends -y libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev libboost-all-dev  libgmock-dev
 RUN apt update && apt-get install --no-install-recommends -y libgtest-dev libspdlog-dev libabsl-dev
 
@@ -79,5 +76,7 @@ RUN mkdir build \
     && cmake .. \
     && make \
     && make install 
+
+RUN python3 -m pip install str_analysis==1.2.7 --no-cache-dir
 
 ENTRYPOINT ["/bin/bash"]

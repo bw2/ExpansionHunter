@@ -69,7 +69,6 @@ HtsFileSeeker::~HtsFileSeeker()
 void HtsFileSeeker::openFile()
 {
     htsFilePtr_ = sam_open(htsFilePath_.c_str(), "r");
-
     if (!htsFilePtr_)
     {
         throw std::runtime_error("Failed to read BAM file " + htsFilePath_);

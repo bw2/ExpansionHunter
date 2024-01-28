@@ -67,7 +67,6 @@ MateExtractor::~MateExtractor()
 void MateExtractor::openFile()
 {
     htsFilePtr_ = sam_open(htsFilePath_.c_str(), "r");
-
     if (!htsFilePtr_)
     {
         throw std::runtime_error("Failed to read BAM file " + htsFilePath_);
@@ -157,7 +156,7 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
             // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the
             // read, suggesting there's a chance that it signals a large expansion at this locus
             bool shouldCacheThisMate = cacheMates_ && (
-                mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.matePos - mateStats.matePos) > 1000);
+                mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.pos - mateStats.matePos) > 1000);
 
             if (foundRequestedMate || shouldCacheThisMate) {
                 Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
