@@ -1,6 +1,7 @@
 ### Description
 
-This modified version of ExpansionHunter introduces the following new features:
+This modified version of ExpansionHunter introduces the following changes:
+- adds an optional --locus arg for only processing a single locus from the variant catalog. 
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning. 
   - This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
 - supports gzip-compressed input catalogs
@@ -18,7 +19,7 @@ This modified version of ExpansionHunter introduces the following new features:
 
 
 ### Citation
-If you use this version of ExpansionHunter, please cite:
+If you use this modified version of ExpansionHunter, please cite:
 ```
 Insights from a genome-wide truth set of tandem repeat variation
 Ben Weisburd, Grace Tiao, Heidi L. Rehm

@@ -110,12 +110,13 @@ int main(int argc, char** argv)
 
         const InputPaths& inputPaths = params.inputPaths();
 
-        spdlog::info("Initializing reference {}", inputPaths.reference());
+		spdlog::info("Initializing reference {}", inputPaths.reference());
         FastaReference reference(inputPaths.reference(), extractReferenceContigInfo(inputPaths.htsFile()));
 
         spdlog::info("Loading variant catalog from disk {}", inputPaths.catalog());
         const HeuristicParameters& heuristicParams = params.heuristics();
-        const RegionCatalog regionCatalog = loadLocusCatalogFromDisk(inputPaths.catalog(), heuristicParams, reference);
+        const RegionCatalog regionCatalog = loadLocusCatalogFromDisk(
+            inputPaths.catalog(), params.locusIds(), heuristicParams, reference);
 
         const OutputPaths& outputPaths = params.outputPaths();
 

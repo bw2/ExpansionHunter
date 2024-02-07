@@ -33,6 +33,7 @@ namespace ehunter
 {
 
 RegionCatalog loadLocusCatalogFromDisk(
-    const std::string& catalogPath, const HeuristicParameters& heuristicParams, const Reference& reference);
+    const std::string& catalogPath, const std::string& locusId, const HeuristicParameters& heuristicParams,
+    const Reference& reference);
 
 }

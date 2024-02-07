@@ -77,6 +77,9 @@ RUN mkdir build \
     && make \
     && make install 
 
-RUN python3 -m pip install str_analysis==1.2.7 --no-cache-dir
+ARG CACHEBUST=1 
+RUN git clone https://github.com/broadinstitute/str-analysis.git \
+    && cd str-analysis \
+    && python3 -m pip install . --no-cache-dir
 
 ENTRYPOINT ["/bin/bash"]

@@ -69,6 +69,8 @@ struct UserParameters
 
     bool recordTiming = false;
     bool cacheMates = false;
+
+    string locusId;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -85,6 +87,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype. It can be plain-text or gzipped.")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "Prefix for the output files")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "Sex of the sample; must be either male or female")
+        ("locus", po::value<string>(&params.locusId), "Locus to analyze. If not specified, all loci in the catalog will be processed.")
     ;
     // clang-format on
 
@@ -362,7 +365,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
 
     return ProgramParameters(
         inputPaths, outputPaths, sampleParameters, heuristicParameters, analysisMode, logLevel, userParams.threadCount,
-        userParams.disableBamletOutput, userParams.recordTiming, userParams.cacheMates);
+        userParams.disableBamletOutput, userParams.recordTiming, userParams.cacheMates, userParams.locusId);
 }
 
 }

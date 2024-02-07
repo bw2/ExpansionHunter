@@ -1,0 +1,6 @@
+*.cram
+*.crai
+build
+.idea
+tools
+docker
