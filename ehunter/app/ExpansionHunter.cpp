@@ -105,15 +105,13 @@ int main(int argc, char** argv)
         setLogLevel(params.logLevel());
 
         const SampleParameters& sampleParams = params.sample();
-
-        spdlog::info("Analyzing sample {}", sampleParams.id());
-
         const InputPaths& inputPaths = params.inputPaths();
 
-		spdlog::info("Initializing reference {}", inputPaths.reference());
+        spdlog::info("Analyzing sample {} from {}", sampleParams.id(), inputPaths.htsFile());
+		spdlog::info("Initializing reference from {}", inputPaths.reference());
         FastaReference reference(inputPaths.reference(), extractReferenceContigInfo(inputPaths.htsFile()));
 
-        spdlog::info("Loading variant catalog from disk {}", inputPaths.catalog());
+        spdlog::info("Loading variant catalog from {}", inputPaths.catalog());
         const HeuristicParameters& heuristicParams = params.heuristics();
         const RegionCatalog regionCatalog = loadLocusCatalogFromDisk(
             inputPaths.catalog(), params.locusIds(), heuristicParams, reference);
