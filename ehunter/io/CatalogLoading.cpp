@@ -34,6 +34,8 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/copy.hpp>
+#include <boost/algorithm/string.hpp>
+
 #include <boost/optional.hpp>
 
 #include "spdlog/spdlog.h"
@@ -229,10 +231,47 @@ static LocusDescriptionFromUser loadUserDescription(Json& locusJson, const Refer
     return userDescription;
 }
 
+void printMessageIfLocusIdArgNotFullyProcessed(vector<std::string>& locusIdsFromArg,
+    vector<std::string>& processedLocusIds, const std::string& locusIdArg) {
+
+    if (!locusIdsFromArg.empty() && processedLocusIds.size() < locusIdsFromArg.size()) {
+        if (processedLocusIds.size() == 0) {
+            if (locusIdsFromArg.size() > 1) {
+                spdlog::error("ERROR: --locus arg: none of the locus ids {} were not found in the catalog", locusIdArg);
+            } else {
+                spdlog::error("ERROR: --locus arg: {} not found in the catalog", locusIdArg);
+            }
+        } else {
+            std::string message = "";
+            int i = 0;
+            for (const auto& locusId : locusIdsFromArg) {
+                if (std::find(processedLocusIds.begin(), processedLocusIds.end(), locusId) == processedLocusIds.end()) {
+                    if (i > 0) {
+                        message += ", ";
+                    }
+                    message += locusId;
+                    i += 1;
+                }
+            }
+            if (i > 1) {
+                spdlog::warn("WARNING: --locus arg: {} locus ids were not found in the catalog: {}", i, message);
+            } else {
+                spdlog::warn("WARNING: --locus arg: 1 locus id was not found in the catalog: {}", message);
+            }
+
+        }
+    }
+}
+
 RegionCatalog loadLocusCatalogFromDisk(
-    const string& catalogPath, const std::string& locusId, const HeuristicParameters& heuristicParams,
+    const string& catalogPath, const std::string& locusIdArg, const HeuristicParameters& heuristicParams,
     const Reference& reference)
 {
+    vector<std::string> locusIdsFromArg;
+    if (!locusIdArg.empty()) {
+        boost::split(locusIdsFromArg, locusIdArg, boost::is_any_of(","));
+    }
+
     std::ifstream inputStream(catalogPath.c_str());
 
     if (!inputStream.is_open())
@@ -262,14 +301,20 @@ RegionCatalog loadLocusCatalogFromDisk(
 
     RegionCatalog catalog;
     catalog.reserve(catalogJson.size());
+    vector<std::string> processedLocusIds;
     for (auto& locusJson : catalogJson)
     {
-        LocusDescriptionFromUser userDescription = loadUserDescription(locusJson, reference.contigInfo());
-        if (!locusId.empty() && locusId != userDescription.locusId)
-        {
-            continue;
+        if (!locusIdsFromArg.empty()) {
+            // check if currentLocusId is in the vector of --locus ids
+            assertFieldExists(locusJson, "LocusId");
+            std::string currentLocusId = locusJson["LocusId"].get<string>();
+            if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
+                continue;
+            }
+            processedLocusIds.push_back(currentLocusId);
         }
 
+        LocusDescriptionFromUser userDescription = loadUserDescription(locusJson, reference.contigInfo());
         try {
             LocusSpecification locusSpec = decodeLocusSpecification(userDescription, reference, heuristicParams);
             catalog.emplace_back(std::move(locusSpec));
@@ -279,6 +324,8 @@ RegionCatalog loadLocusCatalogFromDisk(
             std::cout << "Error on locus spec " + userDescription.locusId + ": " + e.what() << std::endl;
         }
     }
+
+    printMessageIfLocusIdArgNotFullyProcessed(locusIdsFromArg, processedLocusIds, locusIdArg);
 
     return catalog;
 }

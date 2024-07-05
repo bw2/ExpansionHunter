@@ -71,6 +71,7 @@ struct UserParameters
     bool cacheMates = false;
 
     string locusId;
+    bool generateImages;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -87,7 +88,8 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype. It can be plain-text or gzipped.")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "Prefix for the output files")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "Sex of the sample; must be either male or female")
-        ("locus", po::value<string>(&params.locusId), "Locus to analyze. If not specified, all loci in the catalog will be processed.")
+        ("locus,l", po::value<string>(&params.locusId), "Locus to analyze (or a list of comma-separated loci). If not specified, all loci in the variant catalog will be processed.")
+        //("generate-images", po::bool_switch(&params.generateImages), "Generate REViewer images for all loci, or just for the loci specified by the --locus argument")
     ;
     // clang-format on
 
