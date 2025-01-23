@@ -20,6 +20,7 @@ add_compile_options(-Wall -Werror -Wextra)
 
 enable_testing()
 
+find_package(libdeflate REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
 find_package(LibLZMA REQUIRED)
@@ -119,6 +120,7 @@ target_link_libraries(ExpansionHunterLib PUBLIC
         ${Boost_LIBRARIES}
         ${LIBLZMA_LIBRARIES}
         ${CURL_LIBRARIES}
+	libdeflate::libdeflate_shared
         ZLIB::ZLIB
         BZip2::BZip2
         Threads::Threads

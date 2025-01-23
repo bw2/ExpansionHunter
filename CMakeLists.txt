@@ -21,7 +21,7 @@ set(installDir ${CMAKE_CURRENT_BINARY_DIR}/install)
 ExternalProject_Add(htslib
 	BUILD_IN_SOURCE YES
 	URL https://github.com/samtools/htslib/releases/download/1.19/htslib-1.19.tar.bz2
-	CONFIGURE_COMMAND ./configure --prefix=${installDir} --enable-libcurl --enable-s3 --enable-gcs
+	CONFIGURE_COMMAND ./configure --prefix=${installDir} --enable-libcurl --enable-s3 --enable-gcs --with-libdeflate
 	BUILD_COMMAND $(MAKE) lib-static
 )
 
