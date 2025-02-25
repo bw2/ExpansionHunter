@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.13)
 project(ExpansionHunter LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 11)
+
+set(CMAKE_CXX_STANDARD 17)
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_VERBOSE_MAKEFILE ON)
+#set(CMAKE_BUILD_TYPE Debug)
 
 if (NOT CMAKE_BUILD_TYPE)
     set(DEFAULT_CMAKE_BUILD_TYPE Release)
@@ -13,7 +17,7 @@ endif ()
 message(STATUS "BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
 set(Boost_USE_STATIC_LIBS ON)
-find_package(Boost 1.73 REQUIRED COMPONENTS program_options filesystem system iostreams)
+find_package(Boost 1.84 REQUIRED COMPONENTS program_options filesystem system iostreams)
 
 
 add_compile_options(-Wall -Werror -Wextra)
@@ -98,7 +102,6 @@ add_library(ExpansionHunterLib
         sample/MateExtractor.hh sample/MateExtractor.cpp
         )
 
-
 set(CTPL_INCLUDE_DIRS thirdparty/ctpl/ctpl-0.0.2)
 target_include_directories(ExpansionHunterLib PUBLIC ${CMAKE_SOURCE_DIR})
 target_include_directories(ExpansionHunterLib SYSTEM PUBLIC
@@ -120,7 +123,7 @@ target_link_libraries(ExpansionHunterLib PUBLIC
         ${Boost_LIBRARIES}
         ${LIBLZMA_LIBRARIES}
         ${CURL_LIBRARIES}
-	libdeflate::libdeflate_shared
+        libdeflate::libdeflate_static
         ZLIB::ZLIB
         BZip2::BZip2
         Threads::Threads

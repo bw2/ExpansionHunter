@@ -386,7 +386,7 @@ void processLocus(
 
             spdlog::info("Analyzing {}", locusId);
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
-            auto analyzer(make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter));
+            auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter));
             locusAnalyzers.emplace_back(std::move(analyzer));
             AnalyzerFinder analyzerFinder(locusAnalyzers);
 

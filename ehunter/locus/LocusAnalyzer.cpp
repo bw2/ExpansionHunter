@@ -185,14 +185,14 @@ void LocusAnalyzer::addIrrPairFinder(std::string motif) { irrPairFinder_ = IrrPa
 
 void LocusAnalyzer::addRepeatAnalyzer(std::string variantId, graphtools::NodeId nodeId)
 {
-    variantAnalyzers_.emplace_back(make_unique<RepeatAnalyzer>(
+    variantAnalyzers_.emplace_back(std::make_unique<RepeatAnalyzer>(
         std::move(variantId), locusSpec_.regionGraph(), nodeId, locusSpec_.genotyperParameters()));
 }
 
 void LocusAnalyzer::addSmallVariantAnalyzer(
     string variantId, VariantSubtype subtype, vector<NodeId> nodes, optional<NodeId> refNode)
 {
-    variantAnalyzers_.emplace_back(make_unique<SmallVariantAnalyzer>(
+    variantAnalyzers_.emplace_back(std::make_unique<SmallVariantAnalyzer>(
         std::move(variantId), subtype, locusSpec_.regionGraph(), std::move(nodes), refNode,
         locusSpec_.genotyperParameters()));
 }

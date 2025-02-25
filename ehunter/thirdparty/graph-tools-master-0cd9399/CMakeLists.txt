@@ -4,7 +4,8 @@ project(graphtools CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -62,3 +63,5 @@ if (BUILD_TESTS)
     include(GetGoogleTest)
     add_subdirectory(tests)
 endif (BUILD_TESTS)
+
+add_definitions(-DBOOST_MATH_DISABLE_STD_FPCLASSIFY)
