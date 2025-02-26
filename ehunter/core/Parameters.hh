@@ -179,7 +179,7 @@ public:
     ProgramParameters(
         InputPaths inputPaths, OutputPaths outputPaths, SampleParameters sample, HeuristicParameters heuristics,
         AnalysisMode analysisMode, LogLevel logLevel, const int initThreadCount, const bool initDisableBamletOutput,
-        bool recordTiming, bool cacheMates, std::string locusIds)
+        bool cacheMates, std::string locusIds)
         : threadCount(initThreadCount)
         , disableBamletOutput(initDisableBamletOutput)
         , inputPaths_(std::move(inputPaths))
@@ -188,7 +188,6 @@ public:
         , heuristics_(std::move(heuristics))
         , analysisMode_(analysisMode)
         , logLevel_(logLevel)
-        , recordTiming_(recordTiming)
         , cacheMates_(cacheMates)
         , locusIds_(locusIds)
     {
@@ -200,7 +199,6 @@ public:
     const HeuristicParameters& heuristics() const { return heuristics_; }
     AnalysisMode analysisMode() const { return analysisMode_; }
     LogLevel logLevel() const { return logLevel_; }
-    bool recordTiming() const { return recordTiming_; }
     bool cacheMates() const { return cacheMates_; }
     std::string locusIds() const { return locusIds_; }
 
@@ -214,7 +212,6 @@ private:
     HeuristicParameters heuristics_;
     AnalysisMode analysisMode_;
     LogLevel logLevel_;
-    bool recordTiming_;
     bool cacheMates_;
     std::string locusIds_;
 };

@@ -66,8 +66,6 @@ struct UserParameters
     string logLevel;
     int threadCount;
     bool disableBamletOutput = false;
-
-    bool recordTiming = false;
     bool cacheMates = false;
 
     string locusId;
@@ -100,7 +98,6 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
         ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use (seeking or streaming)")
-        ("record-timing", po::bool_switch(&params.recordTiming), "Write out a table of processing time per locus")
         ("cache-mates", po::bool_switch(&params.cacheMates), "Cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "trace, debug, info, warn, or error")
@@ -367,7 +364,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
 
     return ProgramParameters(
         inputPaths, outputPaths, sampleParameters, heuristicParameters, analysisMode, logLevel, userParams.threadCount,
-        userParams.disableBamletOutput, userParams.recordTiming, userParams.cacheMates, userParams.locusId);
+        userParams.disableBamletOutput, userParams.cacheMates, userParams.locusId);
 }
 
 }

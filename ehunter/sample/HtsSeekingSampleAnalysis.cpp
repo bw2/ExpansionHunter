@@ -24,8 +24,6 @@
 
 #include <atomic>
 #include <cassert>
-#include <chrono>
-#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -170,11 +168,6 @@ void recoverMates(
             readPairs.AddMateToExistingRead(mate);
         }
     }
-}
-
-std::chrono::system_clock::rep millisecSinceEpoch() {
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
 ReadPairs collectCandidateReads(
@@ -329,22 +322,6 @@ void processLocus(
 
     LocusThreadLocalData& locusThreadData(locusThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
-    std::ofstream timing_tsv_file;
-    if (programParams.recordTiming()) {
-        const std::string timingPath = programParams.outputPaths().timing();
-        timing_tsv_file.open(timingPath, std::ios::out);
-        timing_tsv_file
-            << "locusNumber"
-            << "\t" << "sampleId"
-            << "\t" << "locusId"
-            << "\t" << "motif"
-            << "\t" << "cacheMates"
-            << "\t" << "collectReads (millisec)"
-            << "\t" << "processReads (millisec)"
-            << "\t" << "analyze (millisec)"
-            << "\t" << "total (millisec)"
-            << std::endl;
-    }
 
     try
     {
@@ -352,7 +329,6 @@ void processLocus(
         htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference(), programParams.cacheMates());
         graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
 
-        int locusCounter = 0;
         const unsigned size(regionCatalog.size());
         while (true)
         {
@@ -366,24 +342,8 @@ void processLocus(
                 return;
             }
 
-            locusCounter += 1;
-
-            auto time0 = millisecSinceEpoch();
-
             const auto& locusSpec(regionCatalog[locusIndex]);
             locusId = locusSpec.locusId();
-
-            std::string locusMotif = "";
-            const auto& graph = locusSpec.regionGraph();
-            for (const auto& variantSpec : locusSpec.variantSpecs()) {
-                const int repeatNodeId = static_cast<int>(variantSpec.nodes().front());
-                const auto& motif = graph.nodeSeq(repeatNodeId);
-                if (locusMotif.length() > 0) {
-                    locusMotif += "/";
-                }
-                locusMotif += motif;
-            }
-
             spdlog::info("Analyzing {}", locusId);
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
             auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter));
@@ -395,30 +355,8 @@ void processLocus(
                 locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(), alignmentStats,
                 htsFileSeeker, mateExtractor);
 
-            auto time1 = millisecSinceEpoch();
             processReads(locusAnalyzers, readPairs, alignmentStats, analyzerFinder, alignerSelector);
-            auto time2 = millisecSinceEpoch();
             sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(sampleSex, boost::none);
-            auto time3 = millisecSinceEpoch();
-
-            spdlog::info("Analyzing locus #{}: {} {} took {} sec", locusCounter, locusId, locusMotif, (time3 - time0)/1000.0);
-
-            if (programParams.recordTiming()) {
-                timing_tsv_file
-                    << locusCounter
-                    << "\t" << programParams.sample().id()
-                    << "\t" << locusId
-                    << "\t" << locusMotif
-                    << "\t" << programParams.cacheMates()
-                    << "\t" << time1 - time0
-                    << "\t" << time2 - time1
-                    << "\t" << time3 - time2
-                    << "\t" << time3 - time0
-                    << std::endl;
-            }
-        }
-        if (programParams.recordTiming()) {
-            timing_tsv_file.close();
         }
     }
     catch (const std::exception& e)
