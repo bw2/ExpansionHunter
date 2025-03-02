@@ -51,17 +51,21 @@ struct MateRegionToRecover {
     std::unordered_set<ReadId, boost::hash<ReadId>> mateReadIds;
 };
 
-using MateCache = std::unordered_map<ReadId, std::pair<Read, LinearAlignmentStats>, boost::hash<ReadId>>;
+using MateCache = std::unordered_map<ReadId, FullRead, boost::hash<ReadId>>;
 
 class MateExtractor
 {
 public:
-    MateExtractor(const std::string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates);
+    MateExtractor(const std::string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates,
+                  const int farAwayMateDistanceThreshold = 1000);
     ~MateExtractor();
 
-    boost::optional<Read>
-    extractMate(const Read& read, const LinearAlignmentStats& alignmentStats, LinearAlignmentStats& mateStats);
-    std::vector<std::pair<Read, LinearAlignmentStats>> extractMates(const MateRegionToRecover& mateRegionToRecover);
+    boost::optional<FullRead> extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion);
+    std::vector<FullRead> extractMates(const MateRegionToRecover& mateRegionToRecover);
+    void addMateToCache(const ReadId& readId, const FullRead& mate);
+    size_t mateCacheSize() const { return mateCache_.size(); }
+    uint64_t extractedMatesCounter() const { return extractedTotalCounter_; }
+    uint64_t extractedMatesFromDiskCounter() const { return extractedFromDiskCounter_; }
 
 private:
     void openFile();
@@ -78,6 +82,12 @@ private:
     bam_hdr_t* htsHeaderPtr_ = nullptr;
     hts_idx_t* htsIndexPtr_ = nullptr;
     bam1_t* htsAlignmentPtr_ = nullptr;
+
+    int farAwayMateDistanceThreshold_ = 1000;
+
+    uint64_t extractedTotalCounter_ = 0;
+    uint64_t extractedFromDiskCounter_ = 0;
+
 };
 
 }

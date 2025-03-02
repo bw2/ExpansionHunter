@@ -29,17 +29,17 @@ using std::vector;
 namespace ehunter
 {
 
-void ReadPairs::Add(Read read)
+void FullReadPairs::Add(FullRead read)
 {
-    ReadPair& readPair = readPairs_[read.fragmentId()];
+    FullReadPair& readPair = fragmentIdToReadPair_[read.r.fragmentId()];
     const int originalMateCount = readPair.numMatesSet();
 
-    if (read.isFirstMate() && readPair.firstMate == boost::none)
+    if (read.r.isFirstMate() && readPair.firstMate == std::nullopt)
     {
         readPair.firstMate = std::move(read);
     }
 
-    if (read.isSecondMate() && readPair.secondMate == boost::none)
+    if (read.r.isSecondMate() && readPair.secondMate == std::nullopt)
     {
         readPair.secondMate = std::move(read);
     }
@@ -49,15 +49,15 @@ void ReadPairs::Add(Read read)
     numReads_ += mateCountAfterAdd - originalMateCount;
 }
 
-void ReadPairs::AddMateToExistingRead(Read mate)
+void FullReadPairs::AddMateToExistingRead(FullRead mate)
 {
-    ReadPair& readPair = readPairs_.at(mate.fragmentId());
-    if (mate.isFirstMate() && readPair.firstMate == boost::none)
+    FullReadPair& readPair = fragmentIdToReadPair_.at(mate.r.fragmentId());
+    if (mate.r.isFirstMate() && readPair.firstMate == std::nullopt)
     {
         readPair.firstMate = std::move(mate);
         ++numReads_;
     }
-    else if (mate.isSecondMate() && readPair.secondMate == boost::none)
+    else if (mate.r.isSecondMate() && readPair.secondMate == std::nullopt)
     {
         readPair.secondMate = std::move(mate);
         ++numReads_;
@@ -68,22 +68,22 @@ void ReadPairs::AddMateToExistingRead(Read mate)
     }
 }
 
-const ReadPair& ReadPairs::operator[](const string& fragment_id) const
+const FullReadPair& FullReadPairs::operator[](const string& fragment_id) const
 {
-    if (readPairs_.find(fragment_id) == readPairs_.end())
+    if (fragmentIdToReadPair_.find(fragment_id) == fragmentIdToReadPair_.end())
     {
         throw std::logic_error("Fragment " + fragment_id + " does not exist");
     }
-    return readPairs_.at(fragment_id);
+    return fragmentIdToReadPair_.at(fragment_id);
 }
 
-int32_t ReadPairs::NumCompletePairs() const
+int32_t FullReadPairs::NumCompletePairs() const
 {
     int32_t numCompletePairs = 0;
-    for (const auto& fragmentIdAndReads : readPairs_)
+    for (const auto& fragmentIdAndReads : fragmentIdToReadPair_)
     {
-        const ReadPair& reads = fragmentIdAndReads.second;
-        if (reads.firstMate && reads.secondMate)
+        const FullReadPair& readPair = fragmentIdAndReads.second;
+        if (readPair.firstMate && readPair.secondMate)
         {
             ++numCompletePairs;
         }
@@ -92,17 +92,11 @@ int32_t ReadPairs::NumCompletePairs() const
     return numCompletePairs;
 }
 
-void ReadPairs::Clear()
+void FullReadPairs::Clear()
 {
-    readPairs_.clear();
+    fragmentIdToReadPair_.clear();
     numReads_ = 0;
 }
 
-bool operator==(const ReadPair& readPairA, const ReadPair& readPairB)
-{
-    const bool areFirstMatesEqual = readPairA.firstMate == readPairB.firstMate;
-    const bool areSecondMatesEqual = readPairA.secondMate == readPairB.secondMate;
-    return (areFirstMatesEqual && areSecondMatesEqual);
-}
 
 }

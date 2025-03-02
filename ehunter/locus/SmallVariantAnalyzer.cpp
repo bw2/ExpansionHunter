@@ -24,9 +24,7 @@
 #include <vector>
 
 #include <boost/optional.hpp>
-#include <boost/smart_ptr/make_unique.hpp>
 
-using boost::make_unique;
 using boost::optional;
 using graphtools::NodeId;
 using std::string;
@@ -70,7 +68,7 @@ std::unique_ptr<VariantFindings> SmallVariantAnalyzer::analyze(const LocusStats&
     {
         auto refStatus = AlleleCheckSummary(AlleleStatus::kUncertain, 0);
         auto altStatus = AlleleCheckSummary(AlleleStatus::kUncertain, 0);
-        return make_unique<SmallVariantFindings>(
+        return std::make_unique<SmallVariantFindings>(
             0, 0, refStatus, altStatus, stats.alleleCount(), boost::none, GenotypeFilter::kLowDepth);
     }
 
@@ -124,7 +122,7 @@ std::unique_ptr<VariantFindings> SmallVariantAnalyzer::analyze(const LocusStats&
         genotypeFilter = genotypeFilter | GenotypeFilter::kLowDepth;
     }
 
-    return make_unique<SmallVariantFindings>(
+    return std::make_unique<SmallVariantFindings>(
         refNodeSupport, altNodeSupport, refAlleleStatus, altAlleleStatus, stats.alleleCount(), genotype,
         genotypeFilter);
 }

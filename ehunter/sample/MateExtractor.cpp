@@ -37,11 +37,12 @@ namespace htshelpers
 {
 
 
-MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates)
+MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates, const int farAwayMateDistanceThreshold)
     : htsFilePath_(htsFilePath)
     , htsReferencePath_(htsReferencePath)
     , contigInfo_({})
     , cacheMates_(cacheMates)
+    , farAwayMateDistanceThreshold_(farAwayMateDistanceThreshold)
 {
     openFile();
     loadHeader();
@@ -67,6 +68,7 @@ MateExtractor::~MateExtractor()
 void MateExtractor::openFile()
 {
     htsFilePtr_ = sam_open(htsFilePath_.c_str(), "r");
+
     if (!htsFilePtr_)
     {
         throw std::runtime_error("Failed to read BAM file " + htsFilePath_);
@@ -93,29 +95,97 @@ void MateExtractor::loadHeader()
 
 void MateExtractor::loadIndex()
 {
-	htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
+    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
 
-	if (!htsIndexPtr_)
+    if (!htsIndexPtr_)
     {
         throw std::runtime_error("Failed to read index of " + htsFilePath_);
     }
 }
 
-std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(const MateRegionToRecover& mateRegionToRecover)
-{
 
+void MateExtractor::addMateToCache(const ReadId& mateReadId, const FullRead& mate) {
+    if (mateCache_.count(mateReadId) > 0) {
+        throw std::logic_error("Mate cache already contains mate with id " + mateReadId.fragmentId());
+    }
+    mateCache_.emplace(mateReadId, std::move(mate));
+}
+
+boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion) {
+    extractedTotalCounter_ += 1;
+    if (cacheMates_ && mateCache_.count(mateReadId) > 0) {
+        return mateCache_.at(mateReadId);
+    }
+
+    hts_itr_t* htsRegionPtr_ = sam_itr_queryi(htsIndexPtr_, genomicRegion.contigIndex(), genomicRegion.start(), genomicRegion.end());
+
+    if (!htsRegionPtr_)
+    {
+        const string& contigName = contigInfo_.getContigName(genomicRegion.contigIndex());
+        const string regionEncoding
+            = contigName + ":" + std::to_string(genomicRegion.start()) + "-" + std::to_string(genomicRegion.end());
+
+        throw std::logic_error("Unable to jump to " + regionEncoding + " to recover a mate");
+    }
+
+    boost::optional<FullRead> mate = boost::none;
+    while (sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_) >= 0)
+    {
+        const bool isSecondaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSECONDARY;
+        const bool isSupplementaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSUPPLEMENTARY;
+        const bool isPrimaryAlignment = !(isSecondaryAlignment || isSupplementaryAlignment);
+        if (!isPrimaryAlignment)
+        {
+            continue;
+        }
+
+        ReadId putativeMateReadId = decodeReadId(htsAlignmentPtr_);
+
+        // if this is one of the fragment ids we're looking for, check if forms a proper pair with the 1st read with
+        // this fragmentId. If it does, decode this read and add it to the list of mates to return
+        const bool foundRequestedMate = putativeMateReadId == mateReadId;
+        if (foundRequestedMate || cacheMates_) {
+            Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
+            LinearAlignmentStats mateStats = decodeAlignmentStats(htsAlignmentPtr_);
+            FullRead putativeFullMate = {std::move(putativeMate), std::move(mateStats)};
+
+            if (cacheMates_) {
+                // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the read
+                mateCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
+            }
+            if (foundRequestedMate) {
+                extractedFromDiskCounter_ += 1;
+                mate = putativeFullMate;
+                break;
+            }
+        }
+    }
+
+    hts_itr_destroy(htsRegionPtr_);
+
+    if (mate == boost::none) {
+        spdlog::warn("Failed to recover mate: {}", mateReadId.fragmentId());
+    }
+
+    return mate;
+}
+
+
+std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mateRegionToRecover)
+{
     std::unordered_set<ReadId, boost::hash<ReadId>> mateReadIdsNotFoundYet = mateRegionToRecover.mateReadIds;
-    std::vector<std::pair<Read, LinearAlignmentStats>> extractedMatesAndAlignmentStats;
+    std::vector<FullRead> extractedMates;
 
     if (cacheMates_) {
         for (ReadId mateReadId : mateRegionToRecover.mateReadIds) {
             if (mateCache_.count(mateReadId) > 0) {
-                extractedMatesAndAlignmentStats.push_back(mateCache_.at(mateReadId));
+                extractedMates.push_back(mateCache_.at(mateReadId));
                 mateReadIdsNotFoundYet.erase(mateReadId);
             }
         }
         if (mateReadIdsNotFoundYet.size() == 0) {
-            return extractedMatesAndAlignmentStats;
+            extractedTotalCounter_ += extractedMates.size();
+            return extractedMates;
         }
     }
 
@@ -156,20 +226,21 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
             // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the
             // read, suggesting there's a chance that it signals a large expansion at this locus
             bool shouldCacheThisMate = cacheMates_ && (
-                mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.pos - mateStats.matePos) > 1000);
+                mateStats.chromId != mateStats.mateChromId || std::abs(mateStats.pos - mateStats.matePos) >= farAwayMateDistanceThreshold_);
 
             if (foundRequestedMate || shouldCacheThisMate) {
                 Read putativeMate = htshelpers::decodeRead(htsAlignmentPtr_);
-                auto mateAndAlignmentStats = std::make_pair(putativeMate, mateStats);
-                if (shouldCacheThisMate) {
-                    mateCache_.emplace(putativeMate.readId(), mateAndAlignmentStats);
-                }
+                FullRead putativeFullMate = {std::move(putativeMate), std::move(mateStats)};
                 if (foundRequestedMate) {
-                    extractedMatesAndAlignmentStats.push_back(mateAndAlignmentStats);
-                    mateReadIdsNotFoundYet.erase(putativeMate.readId());
-                    if (mateReadIdsNotFoundYet.size() == 0 && !cacheMates_) {
-                        break;  // found all requested mates
-                    }
+                    extractedFromDiskCounter_ += 1;
+                    extractedMates.push_back(putativeFullMate);
+                    mateReadIdsNotFoundYet.erase(putativeFullMate.r.readId());
+                }
+                if (shouldCacheThisMate) {
+                    mateCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
+                }
+                if (foundRequestedMate && mateReadIdsNotFoundYet.size() == 0 && !cacheMates_) {
+                    break;  // found all requested mates
                 }
             }
 
@@ -186,7 +257,8 @@ std::vector<std::pair<Read, LinearAlignmentStats>> MateExtractor::extractMates(c
         spdlog::warn(out.str());
     }
 
-    return extractedMatesAndAlignmentStats;
+    extractedTotalCounter_ += extractedMates.size();
+    return extractedMates;
 }
 
 }

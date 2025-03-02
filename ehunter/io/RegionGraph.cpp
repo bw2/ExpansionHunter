@@ -97,10 +97,6 @@ void setOutgoingFeatureEdges(const GraphBlueprint& blueprint, int index, Graph& 
 
 Graph makeRegionGraph(const GraphBlueprint& blueprint, const std::string& locusId)
 {
-    // Implicit assumptions about the graph structure
-    assert(blueprint.front().type == GraphBlueprintFeatureType::kLeftFlank);
-    assert(blueprint.back().type == GraphBlueprintFeatureType::kRightFlank);
-
     Graph graph(getNumNodes(blueprint), locusId);
 
     for (const auto& feature : blueprint)

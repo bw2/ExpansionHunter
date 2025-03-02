@@ -73,7 +73,7 @@ void JsonWriter::write(std::ostream& out)
 
         Json locusRecord;
         locusRecord["LocusId"] = locusId;
-        locusRecord["Coverage"] = locusFindings.stats.depth();
+        locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
         locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
         locusRecord["FragmentLength"] = locusFindings.stats.medianFragLength();
         locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());

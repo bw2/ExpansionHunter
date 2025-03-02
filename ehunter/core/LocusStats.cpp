@@ -63,7 +63,7 @@ void LocusStatsCalculator::inspect(const GraphAlignment& readAlign, const GraphA
 
 void LocusStatsCalculator::inspectRead(const GraphAlignment& readAlign) { recordReadLen(readAlign); }
 
-static AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex)
+AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex)
 {
     switch (chromType)
     {
@@ -137,6 +137,91 @@ void LocusStatsCalculator::recordFragLen(const GraphAlignment& readAlign, const 
     {
         fragLengthAccumulator_(readEnd - mateStart);
     }
+}
+
+
+LocusStatsCalculatorFromReadAlignments::LocusStatsCalculatorFromReadAlignments(ChromType chromType, const GenomicRegion& locusRegion)
+    : chromType_(chromType), locusRegion_(locusRegion)
+{
+}
+
+static int64_t readBasesOverlapInterval(const Read& r, const LinearAlignmentStats& a, const GenomicRegion& region) {
+	if(a.chromId != region.contigIndex()) {
+		return 0;
+	}
+	const int64_t readStart = a.pos;
+	const int64_t readEnd = a.pos + r.sequence().size();
+	return std::max(int64_t(0), std::min(readEnd, region.end()) - std::max(readStart, region.start()));
+}
+
+void LocusStatsCalculatorFromReadAlignments::inspect(const FullReadPair& readPair)
+{
+    if (!readPair.firstMate || !readPair.secondMate) {
+        return;
+    }
+
+    const LinearAlignmentStats& readAlignmentStats = readPair.firstMate->s;
+    const LinearAlignmentStats& mateAlignmentStats = readPair.secondMate->s;
+
+	if (!readAlignmentStats.isMapped || !mateAlignmentStats.isMapped) {
+		return;
+	}
+
+    const Read& read = readPair.firstMate->r;
+    const Read& mate = readPair.secondMate->r;
+
+	const auto readBasesOverlapLocus = readBasesOverlapInterval(read, readAlignmentStats, locusRegion_);
+	if (readBasesOverlapLocus > 0) {
+    	recordReadLen(read);
+    	basesOverlappingLocus_ += readBasesOverlapLocus;
+   	}
+
+   	const auto mateBasesOverlapLocus = readBasesOverlapInterval(mate, mateAlignmentStats, locusRegion_);
+	if (mateBasesOverlapLocus > 0) {
+	    recordReadLen(mate);
+	    basesOverlappingLocus_ += mateBasesOverlapLocus;
+	}
+
+	if (readBasesOverlapLocus > 0 || mateBasesOverlapLocus > 0) {
+        const int start = std::min(
+            readAlignmentStats.pos,
+            mateAlignmentStats.pos);
+
+        const int end = std::max(
+            readAlignmentStats.pos + read.sequence().size(),
+            mateAlignmentStats.pos + mate.sequence().size());
+
+        if (end - start < 5000) {  // don't record fragment lengths from mates that are mapped far away from each other
+            fragLengthAccumulator_(end - start);
+        }
+    }
+}
+
+void LocusStatsCalculatorFromReadAlignments::recordReadLen(const Read& read)
+{
+    readLengthAccumulator_(read.sequence().size());
+}
+
+
+LocusStats LocusStatsCalculatorFromReadAlignments::estimate(Sex sampleSex)
+{
+    const int readCount = boost::accumulators::count(readLengthAccumulator_);
+    AlleleCount alleleCount = determineExpectedAlleleCount(chromType_, sampleSex);
+
+    if (readCount == 0)
+    {
+        return { alleleCount, 0, 0, 0.0 };
+    }
+
+    const int meanReadLength = boost::accumulators::mean(readLengthAccumulator_);
+    const int fragCount = boost::accumulators::count(fragLengthAccumulator_);
+    int meanFragLen = (fragCount != 0) ? boost::accumulators::mean(fragLengthAccumulator_) : 0;
+
+    // Compute depth as total bases aligned in region divided by region size
+    const int locusSize = locusRegion_.end() - locusRegion_.start();
+    const float depth = basesOverlappingLocus_ / static_cast<double>(locusSize);
+
+    return { alleleCount, meanReadLength, meanFragLen, depth };
 }
 
 }

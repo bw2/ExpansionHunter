@@ -4,7 +4,6 @@
 // All rights reserved.
 //
 // Author: Egor Dolzhenko <edolzhenko@illumina.com>
-// Concept: Michael Eberle <meberle@illumina.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,19 +21,36 @@
 
 #pragma once
 
-#include <string>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <fstream>
 
-#include "core/Common.hh"
 #include "core/Parameters.hh"
-#include "core/Reference.hh"
+#include "io/JsonWriter.hh"
+#include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
+
+#include "thirdparty/json/json.hpp"
 
 namespace ehunter
 {
 
-LocusDescriptionCatalog loadLocusDescriptions(
-	const ProgramParameters& params, const Reference& reference);
-RegionCatalog convertLocusDescriptionsToLocusSpecs(
-    LocusDescriptionCatalog& locusDescriptionCatalog, const HeuristicParameters& heuristicParams, Reference& reference);
+using Json = nlohmann::json;
+
+class IterativeJsonWriter
+{
+public:
+	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
+		const std::string& outputFilePath);
+
+	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
+    void close();  // Close the output file
+
+private:
+    const ReferenceContigInfo& contigInfo_;
+    std::ofstream outFile_;
+    boost::iostreams::filtering_ostream outStream_;
+    bool firstRecord_;
+};
 
 }

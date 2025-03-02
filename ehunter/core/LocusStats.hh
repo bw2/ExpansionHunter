@@ -33,6 +33,7 @@
 
 #include "core/Common.hh"
 #include "core/GenomicRegion.hh"
+#include "core/Read.hh"
 #include "core/Reference.hh"
 
 namespace ehunter
@@ -93,6 +94,32 @@ private:
     graphtools::NodeId rightFlankId_;
     int leftFlankLength_;
     int rightFlankLength_;
+};
+
+
+AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex);
+
+
+class LocusStatsCalculatorFromReadAlignments
+{
+public:
+    LocusStatsCalculatorFromReadAlignments(ChromType chromType, const GenomicRegion& locusRegion);
+
+    void inspect(const FullReadPair& readPair);
+    LocusStats estimate(Sex sampleSex);
+
+private:
+    using AccumulatorStats
+        = boost::accumulators::features<boost::accumulators::tag::count, boost::accumulators::tag::mean>;
+    using Accumulator = boost::accumulators::accumulator_set<int, AccumulatorStats>;
+
+    void recordReadLen(const Read& read);
+
+    ChromType chromType_;
+    unsigned int basesOverlappingLocus_;
+    Accumulator readLengthAccumulator_;
+    Accumulator fragLengthAccumulator_;
+    GenomicRegion locusRegion_;
 };
 
 }

@@ -61,10 +61,19 @@ void FastaReference::assertConsistency() const
     // 2. Same name refers to same chromosome (coordinate system)
 }
 
-FastaReference::~FastaReference() { fai_destroy(htsFastaIndexPtr_); }
+FastaReference::~FastaReference() {
+    fai_destroy(htsFastaIndexPtr_);
+}
 
-string FastaReference::getSequence(const string& contigName, int64_t start, int64_t end) const
+string FastaReference::getSequence(const string& contigName, int64_t start, int64_t end)
 {
+	if (contigCache_.find(contigName) != contigCache_.end())
+	{
+		return contigCache_[contigName].substr(start, end - start);
+	}
+
+	//std::cout << "getSequence cache miss: " << contigName << ":" << start << "-" << end << std::endl;
+
     const int contigIndex = fastaContigInfo_.getContigId(contigName);
     const char* contigNamePtr = faidx_iseq(htsFastaIndexPtr_, contigIndex);
 
@@ -86,7 +95,43 @@ string FastaReference::getSequence(const string& contigName, int64_t start, int6
     return sequence;
 }
 
-string FastaReference::getSequence(const GenomicRegion& region) const
+//std::unordered_map<std::string, std::string> contigCache_;
+//void loadContigIntoCache(const std::string& contigIndex) const;
+void FastaReference::loadContigIntoCache(const std::string& contigName)
+{
+	// if the contig is already in the cache, throw an error
+	if (contigCache_.find(contigName) != contigCache_.end())
+	{
+		throw std::runtime_error("Contig " + contigName + " is already in the cache");
+	}
+
+	const int contigIndex = fastaContigInfo_.getContigId(contigName);
+	const int contigSize = fastaContigInfo_.getContigSize(contigIndex);
+
+	const char* contigNamePtr = faidx_iseq(htsFastaIndexPtr_, contigIndex);
+
+	int extractedLength;
+	// This htslib function is 0-based closed but our coordinates are half open
+	char* sequencePtr = faidx_fetch_seq(htsFastaIndexPtr_, contigNamePtr, 0, contigSize - 1, &extractedLength);
+
+	if (!sequencePtr || extractedLength < 0 || extractedLength < contigSize)
+	{
+		throw std::runtime_error("Unable to load contig " + contigName + " from " + referencePath_);
+	}
+
+	string sequence(sequencePtr);
+	free(sequencePtr);
+	std::transform(sequence.begin(), sequence.end(), sequence.begin(), ::toupper);
+
+	contigCache_.emplace(string(contigName), std::move(sequence));
+}
+
+void FastaReference::clearContigCache()
+{
+	contigCache_.clear();
+}
+
+string FastaReference::getSequence(const GenomicRegion& region)
 {
     return getSequence(bamHeaderContigInfo_.getContigName(region.contigIndex()), region.start(), region.end());
 }

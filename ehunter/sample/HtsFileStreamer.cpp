@@ -46,6 +46,11 @@ void HtsFileStreamer::openHtsFile(const unsigned decompressionThreads)
         throw std::runtime_error("Failed to set index of: " + htsReferencePath_);
     }
 
+    // Optimize CRAM parsing by not decompressing the SAM_AUX field (tag data)
+    hts_set_opt(htsFilePtr_, CRAM_OPT_REQUIRED_FIELDS,
+        SAM_QNAME | SAM_FLAG | SAM_RNAME | SAM_POS | SAM_MAPQ | SAM_CIGAR |
+        SAM_RNEXT | SAM_PNEXT | SAM_TLEN | SAM_SEQ | SAM_QUAL);
+
     /// Create thread pool for bgzf block decompression. The behavior of htslib seems to be to use this pool instead of
     /// (not in addition to) the calling thread, therefore there is no point in creating a decompression thread-pool
     /// with less than 2 threads.
@@ -76,7 +81,7 @@ void HtsFileStreamer::loadHeader()
 
 void HtsFileStreamer::prepareForStreamingAlignments() { htsAlignmentPtr_ = bam_init1(); }
 
-bool HtsFileStreamer::trySeekingToNextPrimaryAlignment()
+bool HtsFileStreamer::tryReadingNextPrimaryAlignment()
 {
     if (status_ != Status::kStreamingReads)
     {
@@ -107,6 +112,12 @@ bool HtsFileStreamer::isStreamingAlignedReads() const
 }
 
 Read HtsFileStreamer::decodeRead() const { return htshelpers::decodeRead(htsAlignmentPtr_); }
+
+Read HtsFileStreamer::decodeRead(LinearAlignmentStats& alignmentStats) const
+{
+    alignmentStats = decodeAlignmentStats(htsAlignmentPtr_);
+    return htshelpers::decodeRead(htsAlignmentPtr_);
+}
 
 HtsFileStreamer::~HtsFileStreamer()
 {

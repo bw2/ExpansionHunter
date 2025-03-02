@@ -47,12 +47,34 @@ void initializeGenomeMask(GenomeMask& genomeMask, vector<unique_ptr<locus::Locus
         }
     }
 }
+
+void initializeGenomeMask(GenomeMask& genomeMask, LocusDescriptionCatalog locusDescriptions)
+{
+    for (auto& locusDescription : locusDescriptions)
+    {
+       genomeMask.addRegion(
+               locusDescription.locusContigIndex(),
+               locusDescription.locusAndFlanksStart(),
+               locusDescription.locusAndFlanksEnd());
+
+        for (const auto& region : locusDescription.offtargetRegions())
+        {
+               genomeMask.addRegion(region.contigIndex(), region.start(), region.end());
+        }
+    }
+}
 }
 
 GenomeQueryCollection::GenomeQueryCollection(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers)
     : analyzerFinder(locusAnalyzers)
 {
     initializeGenomeMask(targetRegionMask, locusAnalyzers);
+}
+
+GenomeQueryCollection::GenomeQueryCollection(LocusDescriptionCatalog locusDescriptions)
+    : analyzerFinder(locusDescriptions)
+{
+    initializeGenomeMask(targetRegionMask, locusDescriptions);
 }
 
 }

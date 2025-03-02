@@ -28,57 +28,41 @@
 #include <unordered_map>
 #include <vector>
 
-#include <boost/optional.hpp>
-
 #include "core/Read.hh"
 
 namespace ehunter
 {
-using ReadIdToReadReference = std::unordered_map<std::string, std::reference_wrapper<Read>>;
-
-struct ReadPair
-{
-    int numMatesSet() const
-    {
-        return static_cast<int>(firstMate != boost::none) + static_cast<int>(secondMate != boost::none);
-    }
-
-    boost::optional<Read> firstMate;
-    boost::optional<Read> secondMate;
-};
-
-bool operator==(const ReadPair& readPair_a, const ReadPair& readPair_b);
 
 /**
  * Read pair container class
  */
-class ReadPairs
+class FullReadPairs
 {
 public:
-    typedef std::unordered_map<std::string, ReadPair>::const_iterator const_iterator;
-    typedef std::unordered_map<std::string, ReadPair>::iterator iterator;
-    const_iterator begin() const { return readPairs_.begin(); }
-    const_iterator end() const { return readPairs_.end(); }
-    iterator begin() { return readPairs_.begin(); }
-    iterator end() { return readPairs_.end(); }
+    typedef std::unordered_map<std::string, FullReadPair>::const_iterator const_iterator;
+    typedef std::unordered_map<std::string, FullReadPair>::iterator iterator;
+    const_iterator begin() const { return fragmentIdToReadPair_.begin(); }
+    const_iterator end() const { return fragmentIdToReadPair_.end(); }
+    iterator begin() { return fragmentIdToReadPair_.begin(); }
+    iterator end() { return fragmentIdToReadPair_.end(); }
 
-    ReadPairs() = default;
+    FullReadPairs() = default;
     void Clear();
-    void Add(Read read);
-    void AddMateToExistingRead(Read mate);
+    void Add(FullRead read);
+    void AddMateToExistingRead(FullRead mate);
 
-    const ReadPair& operator[](const std::string& fragmentId) const;
+    const FullReadPair& operator[](const std::string& fragmentId) const;
 
     int32_t NumReads() const { return numReads_; }
     int32_t NumCompletePairs() const;
 
-    bool operator==(const ReadPairs& other) const
+    bool operator==(const FullReadPairs& other) const
     {
-        return (readPairs_ == other.readPairs_ && numReads_ == other.numReads_);
+        return (fragmentIdToReadPair_ == other.fragmentIdToReadPair_ && numReads_ == other.numReads_);
     }
 
 private:
-    std::unordered_map<std::string, ReadPair> readPairs_;
+    std::unordered_map<std::string, FullReadPair> fragmentIdToReadPair_;
     int32_t numReads_ = 0;
 };
 

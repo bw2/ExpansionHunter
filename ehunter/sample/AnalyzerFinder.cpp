@@ -210,6 +210,35 @@ AnalyzerFinder::AnalyzerFinder(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers
     }
 }
 
+AnalyzerFinder::AnalyzerFinder(LocusDescriptionCatalog locusDescriptions)
+{
+    using IntervalWithLocusTypeAndAnalyzer = Interval<std::size_t, AnalyzerBundle>;
+
+    unordered_map<int32_t, vector<IntervalWithLocusTypeAndAnalyzer>> contigToIntervals;
+
+    const unsigned locusDescriptionCount(locusDescriptions.size());
+    for (unsigned locusIndex(0); locusIndex < locusDescriptionCount; ++locusIndex)
+    {
+        const auto& locusDescription(locusDescriptions[locusIndex]);
+        AnalyzerBundle bundle(RegionType::kTarget, locusIndex);
+        contigToIntervals[locusDescription.locusContigIndex()].emplace_back(
+			locusDescription.locusAndFlanksStart(), locusDescription.locusAndFlanksEnd(), bundle);
+        for (const auto& region : locusDescription.offtargetRegions())
+        {
+            AnalyzerBundle bundle(RegionType::kOfftarget, locusIndex);
+            contigToIntervals[region.contigIndex()].emplace_back(region.start(), region.end(), bundle);
+        }
+    }
+
+    for (auto& contigAndIntervals : contigToIntervals)
+    {
+        int32_t contigIndex = contigAndIntervals.first;
+        auto intervals = contigAndIntervals.second;
+
+        intervalTrees_.emplace(std::make_pair(contigIndex, AnalyzerIntervalTree(std::move(intervals))));
+    }
+}
+
 vector<AnalyzerBundle> AnalyzerFinder::query(int32_t contigIndex, int64_t start, int64_t end) const
 {
     const auto contigTreeIterator = intervalTrees_.find(contigIndex);

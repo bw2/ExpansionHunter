@@ -21,6 +21,9 @@
 //
 //
 
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/device/file.hpp>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -45,6 +48,7 @@
 #include "io/SampleStats.hh"
 #include "io/VcfWriter.hh"
 #include "locus/VariantFindings.hh"
+#include "sample/HtsLowMemStreamingSampleAnalysis.hh"
 #include "sample/HtsSeekingSampleAnalysis.hh"
 #include "sample/HtsStreamingSampleAnalysis.hh"
 
@@ -54,15 +58,26 @@ using namespace ehunter;
 
 template <typename T> static void writeToFile(std::string fileName, T streamable)
 {
-    std::ofstream out;
+    std::ofstream outFile;
+    boost::iostreams::filtering_ostream outStream;
 
-    out.open(fileName.c_str());
-    if (!out.is_open())
+    outFile.open(fileName, std::ios::out | std::ios::binary);
+    if (!outFile.is_open())
     {
         throw std::runtime_error("Failed to open " + fileName + " for writing (" + strerror(errno) + ")");
     }
 
-    out << streamable;
+    if (fileName.size() > 2 && fileName.substr(fileName.size() - 2) == "gz")
+    {
+        outStream.push(boost::iostreams::gzip_compressor());
+    }
+
+    outStream.push(outFile);
+    outStream << streamable;
+    outStream.flush();
+    outStream.reset();  // Ensures proper flushing of data
+
+    outFile.close();
 }
 
 void setLogLevel(LogLevel logLevel)
@@ -108,13 +123,23 @@ int main(int argc, char** argv)
         const InputPaths& inputPaths = params.inputPaths();
 
         spdlog::info("Analyzing sample {} from {}", sampleParams.id(), inputPaths.htsFile());
-		spdlog::info("Initializing reference from {}", inputPaths.reference());
+        spdlog::info("Initializing reference from {}", inputPaths.reference());
         FastaReference reference(inputPaths.reference(), extractReferenceContigInfo(inputPaths.htsFile()));
 
-        spdlog::info("Loading variant catalog from {}", inputPaths.catalog());
+        spdlog::info("Loading catalog from {}", inputPaths.catalog());
+        LocusDescriptionCatalog locusDescriptionCatalog = loadLocusDescriptions(params, reference);
+
         const HeuristicParameters& heuristicParams = params.heuristics();
-        const RegionCatalog regionCatalog = loadLocusCatalogFromDisk(
-            inputPaths.catalog(), params.locusIds(), heuristicParams, reference);
+        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kFastLowMemStreaming)
+        {
+            spdlog::info("Running sample analysis in {} mode",
+                params.analysisMode() == AnalysisMode::kFastLowMemStreaming ? "fast-low-mem-streaming" : "low-mem-streaming");
+            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference);
+            return 0;
+        }
+
+        const RegionCatalog regionCatalog = convertLocusDescriptionsToLocusSpecs(
+            locusDescriptionCatalog, heuristicParams, reference);
 
         const OutputPaths& outputPaths = params.outputPaths();
 

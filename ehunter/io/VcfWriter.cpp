@@ -46,7 +46,7 @@ using std::vector;
 namespace ehunter
 {
 
-static string computeFilterSymbol(GenotypeFilter filter)
+string computeFilterSymbol(GenotypeFilter filter)
 {
     vector<string> encoding;
     if (static_cast<bool>(filter & GenotypeFilter::kLowDepth))
@@ -101,7 +101,7 @@ void VcfWriter::writeBody(ostream& out)
         const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
         const auto& variantFindings = locusFindings.findingsForEachVariant.at(variantId);
 
-        const double locusDepth = locusFindings.stats.depth();
+        const double locusDepth = std::round(locusFindings.stats.depth() * 100) / 100.0;
         VariantVcfWriter variantWriter(reference_, locusSpec, locusDepth, variantSpec, out);
         variantFindings->accept(&variantWriter);
     }
@@ -138,9 +138,9 @@ const std::vector<VcfWriter::LocusIndexAndVariantId> VcfWriter::getSortedIdPairs
     return idPairs;
 }
 
-static string createRepeatAlleleSymbol(int repeatSize) { return "<STR" + std::to_string(repeatSize) + ">"; }
+string createRepeatAlleleSymbol(int repeatSize) { return "<STR" + std::to_string(repeatSize) + ">"; }
 
-static string computeAltSymbol(const optional<RepeatGenotype>& optionalGenotype, int referenceSizeInUnits)
+string computeAltSymbol(const optional<RepeatGenotype>& optionalGenotype, int referenceSizeInUnits)
 {
     if (!optionalGenotype)
     {
@@ -169,7 +169,7 @@ static string computeAltSymbol(const optional<RepeatGenotype>& optionalGenotype,
     return boost::algorithm::join(alleleEncodings, ",");
 }
 
-static string computeInfoFields(const VariantSpecification& variantSpec, const string& repeatUnit)
+string computeInfoFields(const VariantSpecification& variantSpec, const string& repeatUnit)
 {
     const auto& referenceLocus = variantSpec.referenceLocus();
     const int referenceSizeInBp = referenceLocus.length();
@@ -186,7 +186,7 @@ static string computeInfoFields(const VariantSpecification& variantSpec, const s
     return boost::algorithm::join(fields, ";");
 }
 
-static ReadType determineSupportType(const CountTable& spanningCounts, const CountTable& flankingCounts, int repeatSize)
+ReadType determineSupportType(const CountTable& spanningCounts, const CountTable& flankingCounts, int repeatSize)
 {
     if (spanningCounts.countOf(repeatSize) != 0)
     {
@@ -200,7 +200,7 @@ static ReadType determineSupportType(const CountTable& spanningCounts, const Cou
     return ReadType::kRepeat;
 }
 
-static string computeAlleleFields(
+string computeAlleleFields(
     const VariantSpecification& variantSpec, const string& repeatUnit, const RepeatFindings& repeatFindings)
 {
     if (!repeatFindings.optionalGenotype())

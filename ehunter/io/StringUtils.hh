@@ -1,10 +1,3 @@
-//
-// Expansion Hunter
-// Copyright 2016-2019 Illumina, Inc.
-// All rights reserved.
-//
-// Author: Egor Dolzhenko <edolzhenko@illumina.com>
-//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -22,22 +15,9 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
-#include "boost/optional.hpp"
+std::string add_commas_at_thousands(int n);
 
-#include "core/GenomicRegion.hh"
-#include "core/Parameters.hh"
-#include "core/Reference.hh"
-#include "locus/LocusSpecification.hh"
+std::string add_commas_at_thousands(long n);
 
-namespace ehunter
-{
-
-void assertValidity(const LocusDescription& locusDescription);
-
-LocusSpecification decodeLocusSpecification(
-    const LocusDescription& locusDescription, Reference& reference,
-    const HeuristicParameters& heuristicParams, const bool extendFlanks);
-
-}
+std::string add_commas_at_thousands(unsigned long n);

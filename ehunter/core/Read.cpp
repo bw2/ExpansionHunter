@@ -37,6 +37,12 @@ bool operator==(const Read& read, const Read& mate)
     return (idsAreEqual && sequencesAreEqual);
 }
 
+bool operator==(const FullRead& read, const FullRead& mate)
+{
+    return read.r == mate.r;
+}
+
+
 bool operator==(const LinearAlignmentStats& statsA, const LinearAlignmentStats& statsB)
 {
     const bool contigsEqual = statsA.chromId == statsB.chromId;
@@ -73,5 +79,13 @@ std::ostream& operator<<(std::ostream& out, const Read& read)
     out << read.readId() << " " << read.sequence();
     return out;
 }
+
+bool operator==(const FullReadPair& readPairA, const FullReadPair& readPairB)
+{
+    const bool areFirstMatesEqual = readPairA.firstMate == readPairB.firstMate;
+    const bool areSecondMatesEqual = readPairA.secondMate == readPairB.secondMate;
+    return (areFirstMatesEqual && areSecondMatesEqual);
+}
+
 
 }

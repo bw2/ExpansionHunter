@@ -47,9 +47,13 @@ public:
      * @param end 0-based, exclusive
      * @return Reference sequence in upper case
      */
-    virtual std::string getSequence(const std::string& contigName, int64_t start, int64_t end) const = 0;
+    virtual std::string getSequence(const std::string& contigName, int64_t start, int64_t end) = 0;
 
-    virtual std::string getSequence(const GenomicRegion& region) const = 0;
+    virtual std::string getSequence(const GenomicRegion& region) = 0;
+
+	virtual void loadContigIntoCache(const std::string& contigIndex) = 0;
+
+	virtual void clearContigCache() = 0;
 
     virtual const ReferenceContigInfo& contigInfo() const = 0;
 };
@@ -63,10 +67,13 @@ public:
     explicit FastaReference(const std::string& referencePath, const ReferenceContigInfo& contigInfo);
     ~FastaReference();
 
-    std::string getSequence(const std::string& contigIndex, int64_t start, int64_t end) const override;
-    std::string getSequence(const GenomicRegion& region) const override;
+    std::string getSequence(const std::string& contigIndex, int64_t start, int64_t end) override;
+    std::string getSequence(const GenomicRegion& region) override;
 
     const ReferenceContigInfo& contigInfo() const override { return bamHeaderContigInfo_; }
+
+	void loadContigIntoCache(const std::string& contigIndex) override;
+	void clearContigCache() override;
 
 private:
     // A stub for verifying consistency of contig information in FASTA index and BAM header
@@ -79,6 +86,8 @@ private:
     ReferenceContigInfo fastaContigInfo_;
     // bamHeaderContigInfo_ is meant to be exposed through the public interface
     ReferenceContigInfo bamHeaderContigInfo_;
+
+    std::unordered_map<std::string, std::string> contigCache_;
 };
 
 }

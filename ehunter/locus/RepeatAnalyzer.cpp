@@ -21,7 +21,6 @@
 
 #include "locus/RepeatAnalyzer.hh"
 
-#include <boost/smart_ptr/make_unique.hpp>
 
 // clang-format off
 // Note that spdlog.h must be included before ostr.h
@@ -39,7 +38,6 @@
 namespace ehunter
 {
 
-using boost::make_unique;
 using boost::optional;
 using graphtools::GraphAlignment;
 using graphtools::NodeId;
@@ -63,7 +61,7 @@ unique_ptr<VariantFindings> RepeatAnalyzer::analyze(const LocusStats& stats)
 {
     if (isLowDepth(stats))
     {
-        return make_unique<RepeatFindings>(
+        return std::make_unique<RepeatFindings>(
             CountTable(), CountTable(), CountTable(), stats.alleleCount(), boost::none, GenotypeFilter::kLowDepth);
     }
 
@@ -93,7 +91,7 @@ unique_ptr<VariantFindings> RepeatAnalyzer::analyze(const LocusStats& stats)
     auto genotype = strgt::genotype(
         stats.alleleCount(), repeatUnit_.length(), stats.meanReadLength(), stats.medianFragLength(), alignMatrix_);
 
-    return make_unique<RepeatFindings>(
+    return std::make_unique<RepeatFindings>(
         countsOfSpanningReads, countsOfFlankingReads, countsOfInrepeatReads, stats.alleleCount(), genotype,
         genotypeFilter);
 }

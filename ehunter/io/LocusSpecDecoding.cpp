@@ -58,7 +58,7 @@ static vector<GenomicRegion> addFlankingRegions(int kExtensionLength, const vect
 }
 
 static string extendLocusStructure(
-    const Reference& reference, const vector<GenomicRegion>& referenceRegions, const string& flanklessLocusStructure)
+    Reference& reference, const vector<GenomicRegion>& referenceRegions, const string& flanklessLocusStructure)
 {
 
     const auto& leftFlankRegion = referenceRegions.front();
@@ -81,8 +81,7 @@ static string extendLocusStructure(
     return leftFlank + flanklessLocusStructure + rightFlank;
 }
 
-static vector<GenomicRegion>
-addReferenceRegionsForInterruptions(const GraphBlueprint& blueprint, const vector<GenomicRegion>& referenceRegions)
+static vector<GenomicRegion> addReferenceRegionsForInterruptions(const GraphBlueprint& blueprint, const vector<GenomicRegion>& referenceRegions)
 {
     int regionIndex = 0;
     vector<GenomicRegion> completedReferenceRegions;
@@ -124,21 +123,6 @@ static GenomicRegion mergeRegions(const vector<GenomicRegion>& regions)
     }
 
     return mergedReferenceRegions.front();
-}
-
-static ChromType determineChromosomeType(const string& chrom)
-{
-    if (chrom == "chrY" || chrom == "Y")
-    {
-        return ChromType::kY;
-    }
-
-    if (chrom == "chrX" || chrom == "X")
-    {
-        return ChromType::kX;
-    }
-
-    return ChromType::kAutosome;
 }
 
 static NodeToRegionAssociation associateNodesWithReferenceRegions(
@@ -183,7 +167,7 @@ static VariantType determineVariantType(GraphBlueprintFeatureType featureType)
 }
 
 static VariantSubtype determineVariantSubtype(
-    GraphBlueprintFeatureType featureType, VariantTypeFromUser userDescription, const GenomicRegion referenceRegion)
+    GraphBlueprintFeatureType featureType, VariantTypeFromUser variantTypeFromUser, const GenomicRegion referenceRegion)
 {
     if (featureType == GraphBlueprintFeatureType::kInsertionOrDeletion)
     {
@@ -198,7 +182,7 @@ static VariantSubtype determineVariantSubtype(
     }
     else if (featureType == GraphBlueprintFeatureType::kSwap)
     {
-        if (userDescription == VariantTypeFromUser::kSMN)
+        if (variantTypeFromUser == VariantTypeFromUser::kSMN)
         {
             return VariantSubtype::kSMN;
         }
@@ -207,11 +191,11 @@ static VariantSubtype determineVariantSubtype(
             return VariantSubtype::kSwap;
         }
     }
-    else if (userDescription == VariantTypeFromUser::kCommonRepeat)
+    else if (variantTypeFromUser == VariantTypeFromUser::kCommonRepeat)
     {
         return VariantSubtype::kCommonRepeat;
     }
-    else if (userDescription == VariantTypeFromUser::kRareRepeat)
+    else if (variantTypeFromUser == VariantTypeFromUser::kRareRepeat)
     {
         return VariantSubtype::kRareRepeat;
     }
@@ -224,7 +208,7 @@ static VariantSubtype determineVariantSubtype(
 }
 
 static optional<NodeId> determineReferenceNode(
-    const GraphBlueprintFeature& feature, const Reference& reference, const GenomicRegion& referenceRegion)
+    const GraphBlueprintFeature& feature, Reference& reference, const GenomicRegion& referenceRegion)
 {
 
     if (feature.type == GraphBlueprintFeatureType::kSkippableRepeat
@@ -250,68 +234,81 @@ static optional<NodeId> determineReferenceNode(
 }
 
 LocusSpecification decodeLocusSpecification(
-    const LocusDescriptionFromUser& userDescription, const Reference& reference,
-    const HeuristicParameters& heuristicParams)
+    const LocusDescription& locusDescription, Reference& reference,
+    const HeuristicParameters& heuristicParams,
+    const bool extendFlanks)
 {
+    /** Params:
+    * 		extendFlanks (bool): if true, extend the locus structure to add flanking sequences from the reference.
+    *            if false, skip this time- and memory-consuming step and create a LocusSpecification with just the
+    *            repeat regions as specified in the LocusDescription. This is useful for creating a stub LocusSpec for
+    *            testing or fast genotyping without using the full EH genotyping algorithm.
+    */
     try
     {
-        assertValidity(userDescription);
+        assertValidity(locusDescription);
 
         const int kExtensionLength = heuristicParams.regionExtensionLength();
-        auto referenceRegionsWithFlanks = addFlankingRegions(kExtensionLength, userDescription.referenceRegions);
-        auto completeLocusStructure
-            = extendLocusStructure(reference, referenceRegionsWithFlanks, userDescription.locusStructure);
 
-        GraphBlueprint blueprint = decodeFeaturesFromRegex(completeLocusStructure);
-        graphtools::Graph locusGraph = makeRegionGraph(blueprint, userDescription.locusId);
-        auto completeReferenceRegions = addReferenceRegionsForInterruptions(blueprint, referenceRegionsWithFlanks);
+        std::string locusStructure;
+        std::vector<GenomicRegion> referenceRegions;
+        if(extendFlanks) {
+            referenceRegions = addFlankingRegions(kExtensionLength, locusDescription.referenceRegions());
+            locusStructure = extendLocusStructure(reference, referenceRegions, locusDescription.locusStructure());
+        } else {
+            locusStructure = locusDescription.locusStructure();
+            referenceRegions = locusDescription.referenceRegions();
+        }
 
-        GenomicRegion referenceRegionForEntireLocus = mergeRegions(userDescription.referenceRegions);
+        GraphBlueprint blueprint = decodeFeaturesFromRegex(locusStructure);
+        graphtools::Graph locusGraph = makeRegionGraph(blueprint, locusDescription.locusId());
+        auto completeReferenceRegions = addReferenceRegionsForInterruptions(blueprint, referenceRegions);
+
+        GenomicRegion referenceRegionForEntireLocus = mergeRegions(locusDescription.referenceRegions());
 
         vector<GenomicRegion> targetReadExtractionRegions;
-        for (const GenomicRegion& region : userDescription.targetRegions)
+        for (const GenomicRegion& region : locusDescription.targetRegions())
         {
             targetReadExtractionRegions.push_back(region.extend(kExtensionLength));
         }
+
         if (targetReadExtractionRegions.empty())
         {
             targetReadExtractionRegions.push_back(referenceRegionForEntireLocus.extend(kExtensionLength));
         }
 
-        const auto& contigName = reference.contigInfo().getContigName(referenceRegionForEntireLocus.contigIndex());
-        ChromType chromType = determineChromosomeType(contigName);
-
         NodeToRegionAssociation referenceRegionsOfGraphNodes
             = associateNodesWithReferenceRegions(blueprint, locusGraph, completeReferenceRegions);
 
         GenotyperParameters parameters(heuristicParams.minLocusCoverage());
-        if (userDescription.errorRate)
+        if (locusDescription.errorRate())
         {
-            parameters.errorRate = *userDescription.errorRate;
+            parameters.errorRate = *locusDescription.errorRate();
         }
-        if (userDescription.likelihoodRatioThreshold)
+        if (locusDescription.likelihoodRatioThreshold())
         {
-            parameters.likelihoodRatioThreshold = *userDescription.likelihoodRatioThreshold;
+            parameters.likelihoodRatioThreshold = *locusDescription.likelihoodRatioThreshold();
         }
-        if (userDescription.minLocusCoverage)
+        if (locusDescription.minLocusCoverage())
         {
-            parameters.minLocusCoverage = *userDescription.minLocusCoverage;
+            parameters.minLocusCoverage = *locusDescription.minLocusCoverage();
         }
 
         LocusSpecification locusSpec(
-            userDescription.locusId, chromType, std::move(targetReadExtractionRegions), std::move(locusGraph),
-            std::move(referenceRegionsOfGraphNodes), std::move(parameters), userDescription.useRFC1MotifAnalysis);
-        locusSpec.setOfftargetReadExtractionRegions(userDescription.offtargetRegions);
+            locusDescription.locusId(), locusDescription.chromType(), std::move(targetReadExtractionRegions),
+            std::move(locusGraph), std::move(referenceRegionsOfGraphNodes), std::move(parameters),
+            locusDescription.useRFC1MotifAnalysis());
+        locusSpec.setOfftargetReadExtractionRegions(locusDescription.offtargetRegions());
 
         int variantIndex = 0;
         for (const auto& feature : blueprint)
         {
             if (doesFeatureDefineVariant(feature.type))
             {
-                const GenomicRegion& referenceRegion = userDescription.referenceRegions.at(variantIndex);
+                const GenomicRegion& referenceRegion = locusDescription.referenceRegions().at(variantIndex);
 
-                VariantTypeFromUser variantDescription = userDescription.variantTypesFromUser.at(variantIndex);
-                const string& variantId = userDescription.variantIds[variantIndex];
+                VariantTypeFromUser variantDescription = locusDescription.variantTypesFromUser().at(variantIndex);
+                const string& variantId = locusDescription.variantIds()[variantIndex];
                 VariantType variantType = determineVariantType(feature.type);
                 VariantSubtype variantSubtype
                     = determineVariantSubtype(feature.type, variantDescription, referenceRegion);
@@ -330,13 +327,13 @@ LocusSpecification decodeLocusSpecification(
     }
     catch (const std::exception& e)
     {
-        throw std::runtime_error("Error loading locus " + userDescription.locusId + ": " + e.what());
+        throw std::runtime_error("Error loading locus " + locusDescription.locusId() + ": " + e.what());
     }
 }
 
-void assertValidity(const LocusDescriptionFromUser& userDescription)
+void assertValidity(const LocusDescription& locusDescription)
 {
-    const GraphBlueprint blueprint = decodeFeaturesFromRegex(userDescription.locusStructure);
+    const GraphBlueprint blueprint = decodeFeaturesFromRegex(locusDescription.locusStructure());
     int numVariants = 0;
     for (const GraphBlueprintFeature& feature : blueprint)
     {
@@ -349,29 +346,29 @@ void assertValidity(const LocusDescriptionFromUser& userDescription)
     if (numVariants == 0)
     {
         throw std::runtime_error(
-            "Locus " + userDescription.locusId + " must encode at least one variant " + userDescription.locusStructure);
+            "Locus " + locusDescription.locusId() + " must encode at least one variant " + locusDescription.locusStructure());
     }
 
-    if (numVariants != static_cast<int>(userDescription.referenceRegions.size()))
+    if (numVariants != static_cast<int>(locusDescription.referenceRegions().size()))
     {
         throw std::runtime_error(
-            "Locus " + userDescription.locusId + " must specify reference regions for " + to_string(numVariants)
+            "Locus " + locusDescription.locusId() + " must specify reference regions for " + to_string(numVariants)
             + " variants");
     }
 
-    if (numVariants != static_cast<int>(userDescription.variantTypesFromUser.size()))
+    if (numVariants != static_cast<int>(locusDescription.variantTypesFromUser().size()))
     {
         throw std::runtime_error(
-            "Locus " + userDescription.locusId + " must specify variant types for " + to_string(numVariants)
+            "Locus " + locusDescription.locusId() + " must specify variant types for " + to_string(numVariants)
             + " variants");
     }
 
-    if (userDescription.useRFC1MotifAnalysis)
+    if (locusDescription.useRFC1MotifAnalysis())
     {
-        if ((numVariants != 1) or (userDescription.variantTypesFromUser[0] != VariantTypeFromUser::kCommonRepeat))
+        if ((numVariants != 1) or (locusDescription.variantTypesFromUser()[0] != VariantTypeFromUser::kCommonRepeat))
         {
             throw std::runtime_error(
-                "Locus " + userDescription.locusId
+                "Locus " + locusDescription.locusId()
                 + " has option 'useRFC1MotifAnalysis' enabled, which requires that"
                   " exactly one variant of type 'Repeat' is defined.");
         }

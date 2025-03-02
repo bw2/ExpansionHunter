@@ -19,6 +19,7 @@
 //
 //
 
+#include "core/Common.hh"
 #include "core/ReferenceContigInfo.hh"
 
 #include <memory>
@@ -34,6 +35,22 @@ namespace ehunter
 
 namespace
 {
+
+static ChromType determineChromosomeType(const string& chrom)
+{
+    if (chrom == "chrY" || chrom == "Y")
+    {
+        return ChromType::kY;
+    }
+
+    if (chrom == "chrX" || chrom == "X")
+    {
+        return ChromType::kX;
+    }
+
+    return ChromType::kAutosome;
+}
+
 // Removes "chr" prefix from contig names that contain it; adds it to contigs that don't
 string generateAlternativeContigName(const string& originalName)
 {
@@ -55,6 +72,7 @@ ReferenceContigInfo::ReferenceContigInfo(vector<pair<string, int64_t>> namesAndS
     {
         const auto& contigName = namesAndSizes_[index].first;
         nameToIndex_.emplace(std::make_pair(contigName, index));
+        chromTypes_.emplace_back(determineChromosomeType(contigName));
     }
 }
 
@@ -68,6 +86,13 @@ int64_t ReferenceContigInfo::getContigSize(int32_t contigIndex) const
 {
     assertValidIndex(contigIndex);
     return namesAndSizes_[contigIndex].second;
+}
+
+
+const ChromType& ReferenceContigInfo::getChromType(int32_t contigIndex) const
+{
+	assertValidIndex(contigIndex);
+	return chromTypes_[contigIndex];
 }
 
 int32_t ReferenceContigInfo::getContigId(const std::string& contigName) const

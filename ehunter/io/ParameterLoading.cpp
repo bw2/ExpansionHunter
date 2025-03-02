@@ -29,6 +29,7 @@
 #include <boost/program_options.hpp>
 
 #include "app/Version.hh"
+#include "graphcore/GraphReferenceMapping.hh"
 #include "io/SampleStats.hh"
 
 namespace po = boost::program_options;
@@ -48,6 +49,7 @@ struct UserParameters
     string htsFilePath;
     string referencePath;
     string catalogPath;
+    string sortCatalogBy;
 
     // Output prefix
     string outputPrefix;
@@ -63,13 +65,16 @@ struct UserParameters
     bool skipUnaligned;
 
     string analysisMode;
-    string logLevel;
-    int threadCount;
+    string locus;
+    string region;
+    size_t startWith;
+    size_t nLoci;
+    bool compressOutputFiles = false;
+    bool generateImages = false;
+    string logLevel = "info";
+    int threadCount = 1;
     bool disableBamletOutput = false;
     bool cacheMates = false;
-
-    string locusId;
-    bool generateImages;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -83,11 +88,16 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("version,v", "Print version number")
         ("reads", po::value<string>(&params.htsFilePath)->required(), "aligned reads BAM/CRAM file/URL")
         ("reference", po::value<string>(&params.referencePath)->required(), "reference genome FASTA file")
-        ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype. It can be plain-text or gzipped.")
-        ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "Prefix for the output files")
-        ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "Sex of the sample; must be either male or female")
-        ("locus,l", po::value<string>(&params.locusId), "Locus to analyze (or a list of comma-separated loci). If not specified, all loci in the variant catalog will be processed.")
-        //("generate-images", po::bool_switch(&params.generateImages), "Generate REViewer images for all loci, or just for the loci specified by the --locus argument")
+        ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype")
+        ("sort-catalog-by,b", po::value<string>(&params.sortCatalogBy)->default_value("position"), "sort the catalog by 'position' (to sort loci by their genomic coordinates), 'id' (to sort by LocusId), or 'none' (meaning don't sort). The sorting will happen before applying --start-with or --n-loci filters if specified.")
+        ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "prefix for the output files")
+        ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "sample sex; must be either 'male' or 'female'")
+        ("locus,l", po::value<string>(&params.locus), "filter the input catalog by LocusId (or a list of comma-separated LocusIds)")
+        ("region,L", po::value<string>(), "filter the input catalog to this genomic region (e.g. chr1:1000-2000)")
+        ("start-with,s", po::value<size_t>(&params.startWith)->default_value(0), "after sorting the catalog, skip this many loci")
+        ("n-loci,n", po::value<size_t>(&params.nLoci), "after sorting the catalog, process only this many loci after applying --start-with")
+        ("compress-output-files,z", po::bool_switch(&params.compressOutputFiles), "compress the vcf and json output files, adding .gz to their filenames")
+        //("generate-images", po::bool_switch(&params.generateImages), "Generate REViewer images for all genotyped loci")
     ;
     // clang-format on
 
@@ -97,10 +107,10 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
-        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use (seeking or streaming)")
-        ("cache-mates", po::bool_switch(&params.cacheMates), "Cache reads across loci to speed up execution")
+        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', or 'fast-low-mem-streaming')")
+        ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
-        ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "trace, debug, info, warn, or error")
+        ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
     ;
     // clang-format on
 
@@ -186,7 +196,10 @@ static void assertIndexExists(const string& htsFilePath)
 void assertValidity(const UserParameters& userParameters)
 {
     // Validate analysis Mode:
-    if ((userParameters.analysisMode != "seeking") and (userParameters.analysisMode != "streaming"))
+    if ((userParameters.analysisMode != "seeking")
+        and (userParameters.analysisMode != "low-mem-streaming")
+        and (userParameters.analysisMode != "fast-low-mem-streaming")
+        and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
     }
@@ -200,11 +213,24 @@ void assertValidity(const UserParameters& userParameters)
             assertIndexExists(userParameters.htsFilePath);
         }
     }
+
+    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "fast-low-mem-streaming")
+        and (userParameters.sortCatalogBy != "position"))
+    {
+        throw std::invalid_argument("--sort-catalog-by position must be specified when --analysis-mode is set to '" + userParameters.analysisMode);
+    }
+
     if (not isURL(userParameters.referencePath))
     {
-    	assertPathToExistingFile(userParameters.referencePath);
+        assertPathToExistingFile(userParameters.referencePath);
     }
     assertPathToExistingFile(userParameters.catalogPath);
+
+    if (userParameters.sortCatalogBy != "position" && userParameters.sortCatalogBy != "id"
+        && userParameters.sortCatalogBy != "none")
+    {
+        throw std::invalid_argument(userParameters.sortCatalogBy + " is not a valid sort order");
+    }
 
     // Validate output prefix
     assertWritablePath(userParameters.outputPrefix);
@@ -219,6 +245,14 @@ void assertValidity(const UserParameters& userParameters)
     if (userParameters.alignerType != "dag-aligner" && userParameters.alignerType != "path-aligner")
     {
         throw std::invalid_argument(userParameters.alignerType + " is not a valid aligner type");
+    }
+
+    if (!userParameters.region.empty()) {
+        try {
+            graphtools::ReferenceInterval::parseRegion(userParameters.region);
+        } catch (const std::exception& e) {
+            throw std::invalid_argument(userParameters.region + " is not a valid genomic region");
+        }
     }
 
     const int kMinExtensionLength = 500;
@@ -260,13 +294,21 @@ SampleParameters decodeSampleParameters(const UserParameters& userParams)
 
 AnalysisMode decodeAnalysisMode(const string& encoding)
 {
-    if (encoding == "streaming")
+    if (encoding == "seeking")
+    {
+        return AnalysisMode::kSeeking;
+    }
+    else if (encoding == "streaming")
     {
         return AnalysisMode::kStreaming;
     }
-    else if (encoding == "seeking")
+    else if (encoding == "low-mem-streaming")
     {
-        return AnalysisMode::kSeeking;
+        return AnalysisMode::kLowMemStreaming;
+    }
+    else if (encoding == "fast-low-mem-streaming")
+    {
+        return AnalysisMode::kFastLowMemStreaming;
     }
     else
     {
@@ -330,8 +372,13 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     assertValidity(userParams);
 
     InputPaths inputPaths(userParams.htsFilePath, userParams.referencePath, userParams.catalogPath);
-    const string vcfPath = userParams.outputPrefix + ".vcf";
-    const string jsonPath = userParams.outputPrefix + ".json";
+    string vcfPath = userParams.outputPrefix + ".vcf";
+    string jsonPath = userParams.outputPrefix + ".json";
+    if (userParams.compressOutputFiles)
+    {
+        vcfPath += ".gz";
+        jsonPath += ".gz";
+    }
     const string bamletPath = userParams.outputPrefix + "_realigned.bam";
     const string timingPath = userParams.outputPrefix + "_timing.tsv";
     OutputPaths outputPaths(vcfPath, jsonPath, bamletPath, timingPath);
@@ -363,8 +410,10 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     }
 
     return ProgramParameters(
-        inputPaths, outputPaths, sampleParameters, heuristicParameters, analysisMode, logLevel, userParams.threadCount,
-        userParams.disableBamletOutput, userParams.cacheMates, userParams.locusId);
+        inputPaths, userParams.sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
+        userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
+        userParams.generateImages, logLevel, userParams.threadCount, userParams.disableBamletOutput,
+        userParams.cacheMates);
 }
 
 }

@@ -24,7 +24,7 @@ RUN apt update && apt-get install --no-install-recommends -y \
     jq \
     time
 
-ENV SAMTOOLS_VERSION="1.17"
+ENV SAMTOOLS_VERSION="1.21"
 RUN wget https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 \
     && tar xjf htslib-${SAMTOOLS_VERSION}.tar.bz2 \
     && rm htslib-${SAMTOOLS_VERSION}.tar.bz2 \
@@ -46,7 +46,7 @@ RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VE
 RUN python3 -m pip install --upgrade cmake pip --no-cache-dir
 
 # install gcloud
-ENV GCLOUD_SDK_VERISON="458.0.1"
+ENV GCLOUD_SDK_VERISON="512.0.0"
 RUN wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${GCLOUD_SDK_VERISON}-linux-x86_64.tar.gz \
     && tar xzf google-cloud-sdk-${GCLOUD_SDK_VERISON}-linux-x86_64.tar.gz \
     && /google-cloud-sdk/install.sh -q \
@@ -54,8 +54,8 @@ RUN wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud
 
 ENV PATH=/google-cloud-sdk/bin:$PATH
 
-RUN apt update && apt-get install --no-install-recommends -y libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev libboost-all-dev  libgmock-dev
-RUN apt update && apt-get install --no-install-recommends -y libgtest-dev libspdlog-dev libabsl-dev
+RUN apt update && apt-get install --no-install-recommends -y libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev libgmock-dev
+RUN apt update && apt-get install --no-install-recommends -y libgtest-dev libspdlog-dev
 
 # install REViewer
 RUN wget -q https://github.com/bw2/REViewer/archive/refs/heads/master.zip \
@@ -69,13 +69,16 @@ RUN wget -q https://github.com/bw2/REViewer/archive/refs/heads/master.zip \
 	&& cd / \
 	&& rm -r REViewer-master master.zip
 
-COPY ehunter .
+COPY ehunter ehunter
+COPY CMakeLists.txt CMakeLists.txt
 
 RUN mkdir build \
     && cd build \
     && cmake .. \
     && make \
-    && make install 
+    && make install \
+    && cp /build/install/bin/ExpansionHunter /usr/bin/ \
+    && make clean
 
 ARG CACHEBUST=1 
 RUN git clone https://github.com/broadinstitute/str-analysis.git \

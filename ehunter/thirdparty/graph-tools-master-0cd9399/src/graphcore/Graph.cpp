@@ -183,4 +183,14 @@ const std::set<NodeId>& Graph::predecessors(NodeId node_id) const
     assertNodeExists(node_id);
     return reverse_adjacency_list_[node_id];
 }
+
+std::ostream& operator<<(std::ostream& out, const Graph& graph) {
+	out << "Graph: " << graph.nodes_.size() << " nodes" << std::endl;
+	for (const auto& node : graph.nodes_)
+	{
+		out << node.name << " " << node.sequence << std::endl;
+	}
+	return out;
+}
+
 }

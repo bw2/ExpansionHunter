@@ -30,6 +30,7 @@
 #include <boost/functional/hash.hpp>
 
 #include "alignment/AlignmentClassifier.hh"
+#include "core/GenomicRegion.hh"
 #include "graphalign/GraphAlignment.hh"
 #include "graphutils/SequenceOperations.hh"
 
@@ -72,6 +73,10 @@ public:
         boost::hash_combine(seed, static_cast<int>(readId.mateNumber_));
 
         return seed;
+    }
+
+    std::string toString() const {
+        return fragmentId_ + "/" + std::to_string(static_cast<int>(mateNumber_));
     }
 
 private:
@@ -130,12 +135,12 @@ struct LinearAlignmentStats
     bool isPaired = false;
     bool isMapped = false;
     bool isMateMapped = false;
+    bool isSupplementaryAlignment = false;
+    bool isSecondaryAlignment = false;
+    std::vector<uint32_t> cigar;
 };
 
 std::ostream& operator<<(std::ostream& out, const LinearAlignmentStats& alignmentStats);
-
-using ReadIdToLinearAlignmentStats = std::unordered_map<std::string, LinearAlignmentStats>;
-
 bool operator==(const Read& read, const Read& mate);
 bool operator==(const LinearAlignmentStats& statsA, const LinearAlignmentStats& statsB);
 
@@ -164,5 +169,31 @@ private:
 using ReadIdToRepeatAlignmentStats = std::unordered_map<std::string, RepeatAlignmentStats>;
 
 std::ostream& operator<<(std::ostream& out, const Read& read);
+
+struct FullRead {
+    FullRead(const Read& read, const LinearAlignmentStats& alignmentStats) :
+        r(std::move(read)), s(std::move(alignmentStats))
+    {}
+
+    Read r;
+    LinearAlignmentStats s;
+};
+
+struct FullReadPair
+{
+    FullReadPair() = default;
+    FullReadPair(FullRead read, FullRead mate) : firstMate(std::move(read)), secondMate(std::move(mate)) {}
+
+    int numMatesSet() const
+    {
+        return static_cast<int>(firstMate != std::nullopt) + static_cast<int>(secondMate != std::nullopt);
+    }
+
+    std::optional<FullRead> firstMate = std::nullopt;
+    std::optional<FullRead> secondMate = std::nullopt;
+};
+
+bool operator==(const FullRead& read_a, const FullRead& read_b);
+bool operator==(const FullReadPair& readPair_a, const FullReadPair& readPair_b);
 
 }

@@ -1,6 +1,7 @@
 IMAGE_NAME = eh-bw2:latest
-PREFIX1 = weisburd
+PREFIX1 = docker.io/weisburd
 PREFIX2 = gcr.io/bw2-rare-disease
+
 all: build push update_sha
 
 build:

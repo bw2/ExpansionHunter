@@ -4,7 +4,6 @@
 // All rights reserved.
 //
 // Author: Egor Dolzhenko <edolzhenko@illumina.com>
-// Concept: Michael Eberle <meberle@illumina.com>
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,19 +21,20 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
+#include <vector>
 
-#include "core/Common.hh"
+#include "graphio/AlignmentWriter.hh"
 #include "core/Parameters.hh"
-#include "core/Reference.hh"
+#include "locus/LocusAnalyzer.hh"
+#include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
 
 namespace ehunter
 {
 
-LocusDescriptionCatalog loadLocusDescriptions(
-	const ProgramParameters& params, const Reference& reference);
-RegionCatalog convertLocusDescriptionsToLocusSpecs(
-    LocusDescriptionCatalog& locusDescriptionCatalog, const HeuristicParameters& heuristicParams, Reference& reference);
+void htsLowMemStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionCatalog,
+	const ProgramParameters& programParams, Reference& reference);
 
 }

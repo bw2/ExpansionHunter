@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iostream>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -98,6 +99,8 @@ private:
     std::unordered_map<NodeIdPair, Labels> edge_labels_;
     AdjacencyList adjacency_list_;
     AdjacencyList reverse_adjacency_list_;
+
+    friend std::ostream& operator<<(std::ostream&, Graph const&);
 };
 
 class ReverseGraph
@@ -132,5 +135,9 @@ public:
 
     const std::set<NodeId>& successors(NodeId nodeId) const { return graph_.predecessors(nodeId); }
     const std::set<NodeId>& predecessors(NodeId nodeId) const { return graph_.successors(nodeId); }
+
 };
+
+std::ostream& operator<<(std::ostream& out, const Graph& graph);
+
 }

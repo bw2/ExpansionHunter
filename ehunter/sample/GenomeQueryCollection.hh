@@ -31,6 +31,7 @@ namespace ehunter
 struct GenomeQueryCollection
 {
     GenomeQueryCollection(std::vector<std::unique_ptr<locus::LocusAnalyzer>>& locusAnalyzers);
+    GenomeQueryCollection(LocusDescriptionCatalog locusDescriptions);
 
     AnalyzerFinder analyzerFinder; // Analyzers searchable by targeted region
     GenomeMask targetRegionMask; // Marks targeted regions to enable fast read screening

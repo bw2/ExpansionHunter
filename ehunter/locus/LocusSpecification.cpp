@@ -99,4 +99,42 @@ bool LocusSpecification::requiresGenomeWideDepth() const
     return false;
 }
 
+std::ostream& operator<<(std::ostream& out, const LocusDescription& locusDescription)
+{
+	out << "[" << locusDescription.locusId() << ": " << (locusDescription.locusContigIndex()+1) << ":" << locusDescription.locusAndFlanksStart() << "-" << locusDescription.locusAndFlanksEnd() << "]";
+
+	return out;
+}
+
+LocusDescription::LocusDescription(
+    std::string locusId, ChromType chromType, std::string locusStructure,
+    int32_t locusContigIndex,
+    int64_t locusAndFlanksStart, int64_t locusAndFlanksEnd,
+    int64_t locusWithoutFlanksStart, int64_t locusWithoutFlanksEnd,
+    bool useRFC1MotifAnalysis,
+    std::vector<std::string> variantIds, std::vector<GenomicRegion> referenceRegions,
+    std::vector<GenomicRegion> targetRegions, std::vector<GenomicRegion> offtargetRegions,
+    std::vector<VariantTypeFromUser> variantTypesFromUser,
+    std::optional<double> errorRate, std::optional<double> likelihoodRatioThreshold,
+    std::optional<double> minLocusCoverage)
+    : locusId_(std::move(locusId))
+    , chromType_(chromType)
+    , locusStructure_(std::move(locusStructure))
+    , locusContigIndex_(locusContigIndex)
+    , locusAndFlanksStart_(locusAndFlanksStart)
+    , locusAndFlanksEnd_(locusAndFlanksEnd)
+    , locusWithoutFlanksStart_(locusWithoutFlanksStart)
+    , locusWithoutFlanksEnd_(locusWithoutFlanksEnd)
+    , useRFC1MotifAnalysis_(useRFC1MotifAnalysis)
+    , variantIds_(std::move(variantIds))
+    , referenceRegions_(std::move(referenceRegions))
+    , targetRegions_(std::move(targetRegions))
+    , offtargetRegions_(std::move(offtargetRegions))
+    , variantTypesFromUser_(std::move(variantTypesFromUser))
+    , errorRate_(errorRate)
+    , likelihoodRatioThreshold_(likelihoodRatioThreshold)
+    , minLocusCoverage_(minLocusCoverage)
+{
+}
+
 }

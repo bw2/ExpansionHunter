@@ -47,21 +47,38 @@ namespace htshelpers
  * @param htsFilePath path of the .bam or .cram file
  */
 hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath) {
-	std::string indexFilePath = htsFilePath + (htsFilePtr->format.format == cram ? ".crai" : ".bai");
-	hts_idx_t* htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
+    std::string indexFilePath = htsFilePath + (htsFilePtr->format.format == cram ? ".crai" : ".bai");
+    hts_idx_t* htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
 
-	if (!htsIndexPtr_)
-	{
-		//try the alternative index filename, replacing the .cram or .bam suffix with .crai or .bai
-		if (htsFilePtr->format.format == cram) {
-			indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".crai";
-		} else {
-			indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 3) + ".bai";
-		}
-		htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
-	}
+    /*
+    // if file starts with gs://
+    if ( this->file_name.find("gs://") == 0 ) {
+        // run gcloud auth command to refresh the GCS_OAUTH_TOKEN environment variable with up to 5 retries
+        for(int32_t i=0; i < 5; ++i) {
+            std::string oauth_token = exec_cmd("gcloud auth application-default print-access-token");
+            //notice("Debug message: refreshed OAUTH TOKEN to %s", oauth_token.c_str());
+            if ( setenv("GCS_OAUTH_TOKEN",oauth_token.c_str(),1) != 0 ) {
+                error("Failed to update the environment variable GCS_OAUTH_TOKEN to %s", oauth_token.c_str());
+            }
+            notice("Successfully refreshed OAUTH TOKEN");
+            file = hts_open(this->file_name.c_str(), "r");
+            if ( file ) break;
+        }
+    }
+    */
 
-	return htsIndexPtr_;
+    if (!htsIndexPtr_)
+    {
+        //try the alternative index filename, replacing the .cram or .bam suffix with .crai or .bai
+        if (htsFilePtr->format.format == cram) {
+            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".crai";
+        } else {
+            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 3) + ".bai";
+        }
+        htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
+    }
+
+    return htsIndexPtr_;
 }
 
 string decodeQuals(bam1_t* htsAlignPtr)
@@ -98,7 +115,7 @@ LinearAlignmentStats decodeAlignmentStats(bam1_t* htsAlignPtr)
 {
     LinearAlignmentStats alignmentStats;
     alignmentStats.chromId = htsAlignPtr->core.tid;
-    alignmentStats.pos = htsAlignPtr->core.pos;
+    alignmentStats.pos = htsAlignPtr->core.pos; //0-based
     alignmentStats.mapq = htsAlignPtr->core.qual;
     alignmentStats.mateChromId = htsAlignPtr->core.mtid;
     alignmentStats.matePos = htsAlignPtr->core.mpos;
@@ -107,6 +124,15 @@ LinearAlignmentStats decodeAlignmentStats(bam1_t* htsAlignPtr)
     alignmentStats.isPaired = samFlag & BAM_FPAIRED;
     alignmentStats.isMapped = !(samFlag & BAM_FUNMAP);
     alignmentStats.isMateMapped = !(samFlag & BAM_FMUNMAP);
+    alignmentStats.isSecondaryAlignment = samFlag & BAM_FSECONDARY;
+    alignmentStats.isSupplementaryAlignment = samFlag & BAM_FSUPPLEMENTARY;
+
+    if (alignmentStats.isMapped && htsAlignPtr->core.n_cigar > 0) {
+        const uint32_t* cigarPtr = bam_get_cigar(htsAlignPtr);
+        if (cigarPtr) {
+            alignmentStats.cigar.assign(cigarPtr, cigarPtr + htsAlignPtr->core.n_cigar);
+        }
+    }
 
     return alignmentStats;
 }

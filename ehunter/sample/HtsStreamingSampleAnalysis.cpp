@@ -23,13 +23,14 @@
 #include "sample/HtsStreamingSampleAnalysis.hh"
 
 #include <memory>
+#include <unordered_map>
 
-#include "absl/container/flat_hash_set.h"
 #include "spdlog/spdlog.h"
 #include <boost/optional.hpp>
 
 #include "core/HtsHelpers.hh"
 #include "core/ThreadPool.hh"
+#include "io/StringUtils.hh"
 #include "locus/LocusAnalyzer.hh"
 #include "locus/LocusAnalyzerUtil.hh"
 #include "sample/GenomeQueryCollection.hh"
@@ -228,7 +229,7 @@ SampleFindings htsStreamingSampleAnalysis(
     }
     ctpl::thread_pool pool(threadCount);
 
-    spdlog::info("Initializing all {} loci", locusAnalyzerCount);
+    spdlog::info("Initializing all {} loci", add_commas_at_thousands((unsigned long) locusAnalyzerCount));
     graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
     locusAnalyzerThreadSharedData.locusAnalyzers
         = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount);
@@ -236,14 +237,13 @@ SampleFindings htsStreamingSampleAnalysis(
 
     spdlog::info("Streaming reads");
 
-    auto ReadHash = [](const Read& read) { return std::hash<std::string>()(read.fragmentId()); };
-    auto ReadEq = [](const Read& read1, const Read& read2) { return (read1.fragmentId() == read2.fragmentId()); };
-    using ReadCatalog = absl::flat_hash_set<Read, decltype(ReadHash), decltype(ReadEq)>;
-    ReadCatalog unpairedReads(1000, ReadHash, ReadEq);
+    using ReadCatalog = std::unordered_map<FragmentId, Read>;
+    ReadCatalog unpairedReads;
+    unpairedReads.reserve(1000);
 
     const unsigned htsDecompressionThreads(std::min(threadCount, 12));
     htshelpers::HtsFileStreamer readStreamer(inputPaths.htsFile(), inputPaths.reference(), htsDecompressionThreads);
-    while (readStreamer.trySeekingToNextPrimaryAlignment() && readStreamer.isStreamingAlignedReads())
+    while (readStreamer.tryReadingNextPrimaryAlignment() && readStreamer.isStreamingAlignedReads())
     {
         // Stop processing reads if an exception is thrown in the worker pool:
         if (locusAnalyzerThreadSharedData.isWorkerThreadException.load())
@@ -266,13 +266,13 @@ SampleFindings htsStreamingSampleAnalysis(
         }
 
         Read read = readStreamer.decodeRead();
-        const auto mateIterator = unpairedReads.find(read);
+        const auto mateIterator = unpairedReads.find(read.fragmentId());
         if (mateIterator == unpairedReads.end())
         {
-            unpairedReads.emplace(std::move(read));
+            unpairedReads.emplace(read.fragmentId(), std::move(read));
             continue;
         }
-        Read mate = std::move(*mateIterator);
+        Read mate = mateIterator->second;
         unpairedReads.erase(mateIterator);
 
         const int64_t readEnd = readStreamer.currentReadPosition() + read.sequence().length();

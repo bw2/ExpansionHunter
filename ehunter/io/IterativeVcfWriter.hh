@@ -22,73 +22,70 @@
 #pragma once
 
 #include <iostream>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <boost/algorithm/string/join.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
 
 #include "core/Parameters.hh"
 #include "core/Reference.hh"
 #include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
+#include "io/VcfHeader.hh"
 
 namespace ehunter
 {
 
-class VariantVcfWriter : public VariantFindingsVisitor
+class IterativeVariantVcfWriter : public VariantFindingsVisitor
 {
 public:
-    VariantVcfWriter(
+    IterativeVariantVcfWriter(
         Reference& reference, const LocusSpecification& locusSpec, double locusDepth,
-        const VariantSpecification& variantSpec, std::ostream& out)
+        const VariantSpecification& variantSpec)
         : reference_(reference)
         , locusSpec_(locusSpec)
         , locusDepth_(locusDepth)
         , variantSpec_(variantSpec)
-        , out_(out)
     {
     }
 
-    ~VariantVcfWriter() = default;
+    ~IterativeVariantVcfWriter() = default;
     void visit(const RepeatFindings* repeatFindingsPtr) override;
     void visit(const SmallVariantFindings* smallVariantFindingsPtr) override;
+    std::vector<std::string> getVcfLine() const { return vcfLine_; }
 
 private:
     Reference& reference_;
     const LocusSpecification& locusSpec_;
     double locusDepth_;
     const VariantSpecification& variantSpec_;
-    std::ostream& out_;
+    std::vector<std::string> vcfLine_;
 };
 
 // TODO: Document the code after multi-unit repeat format is finalized (GT-598)
-class VcfWriter
+class IterativeVcfWriter
 {
 public:
-    VcfWriter(
-        std::string sampleId, Reference& reference, const RegionCatalog& regionCatalog,
-        const SampleFindings& sampleFindings);
+    IterativeVcfWriter(
+        std::string sampleId, Reference& reference, const std::string& outputFilePath);
 
-    friend std::ostream& operator<<(std::ostream& out, VcfWriter& vcfWriter);
+    void addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
+    void close();  // Close output file
 
 private:
-    void writeHeader(std::ostream& out);
-    void writeBody(std::ostream& out);
-    using LocusIndexAndVariantId = std::pair<unsigned, std::string>;
-    const std::vector<LocusIndexAndVariantId> getSortedIdPairs();
+    void writeVcfLine(const std::vector<std::string>& vcfLine);
 
     std::string sampleId_;
     Reference& reference_;
-    const RegionCatalog& regionCatalog_;
-    const SampleFindings& sampleFindings_;
-};
+    FieldDescriptionCatalog fieldDescriptionCatalog_;
 
-std::ostream& operator<<(std::ostream& out, VcfWriter& vcfWriter);
-std::string computeFilterSymbol(GenotypeFilter filter);
-void writeBodyHeader(const std::string& sampleName, std::ostream& out);
-std::string createRepeatAlleleSymbol(int repeatSize);
-std::string computeAltSymbol(const boost::optional<RepeatGenotype>& optionalGenotype, int referenceSizeInUnits);
-std::string computeInfoFields(const VariantSpecification& variantSpec, const std::string& repeatUnit);
-std::string computeAlleleFields(const VariantSpecification& variantSpec, const std::string& repeatUnit, const RepeatFindings& repeatFindings);
+    std::ofstream outFile_;
+    boost::iostreams::filtering_ostream outStream_;
+    bool headerWritten_;
+};
 
 }

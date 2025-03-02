@@ -32,7 +32,6 @@ find_package(CURL REQUIRED)
 find_package(GTest REQUIRED)
 find_package(Threads REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(absl REQUIRED)
 
 if (NOT APPLE)
     find_package(OpenSSL REQUIRED)
@@ -83,10 +82,13 @@ add_library(ExpansionHunterLib
         io/CatalogLoading.hh io/CatalogLoading.cpp
         io/GraphBlueprint.hh io/GraphBlueprint.cpp
         io/JsonWriter.hh io/JsonWriter.cpp
+        io/IterativeJsonWriter.hh io/IterativeJsonWriter.cpp
+        io/IterativeVcfWriter.hh io/IterativeVcfWriter.cpp
         io/LocusSpecDecoding.hh io/LocusSpecDecoding.cpp
         io/ParameterLoading.hh io/ParameterLoading.cpp
         io/RegionGraph.hh io/RegionGraph.cpp
         io/SampleStats.hh io/SampleStats.cpp
+        io/StringUtils.hh io/StringUtils.cpp
         io/VcfHeader.hh io/VcfHeader.cpp
         io/VcfWriter.hh io/VcfWriter.cpp
         io/VcfWriterHelpers.hh io/VcfWriterHelpers.cpp
@@ -98,6 +100,8 @@ add_library(ExpansionHunterLib
         sample/HtsSeekingSampleAnalysis.hh sample/HtsSeekingSampleAnalysis.cpp
         sample/HtsStreamingReadPairQueue.hh sample/HtsStreamingReadPairQueue.cpp
         sample/HtsStreamingSampleAnalysis.hh sample/HtsStreamingSampleAnalysis.cpp
+        sample/HtsLowMemStreamingSampleAnalysis.hh sample/HtsLowMemStreamingSampleAnalysis.cpp
+        sample/HtsLowMemStreamingHelpers.hh sample/HtsLowMemStreamingHelpers.cpp
         sample/IndexBasedDepthEstimate.hh sample/IndexBasedDepthEstimate.cpp
         sample/MateExtractor.hh sample/MateExtractor.cpp
         )
@@ -127,8 +131,7 @@ target_link_libraries(ExpansionHunterLib PUBLIC
         ZLIB::ZLIB
         BZip2::BZip2
         Threads::Threads
-        spdlog::spdlog
-        absl::flat_hash_set)
+        spdlog::spdlog)
 
 if (NOT APPLE)
     target_link_libraries(ExpansionHunterLib PUBLIC

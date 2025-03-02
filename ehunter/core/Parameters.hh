@@ -40,7 +40,9 @@ namespace ehunter
 enum class AnalysisMode
 {
     kSeeking,
-    kStreaming
+    kStreaming,
+    kLowMemStreaming,
+    kFastLowMemStreaming
 };
 
 enum class LogLevel
@@ -177,43 +179,62 @@ class ProgramParameters
 {
 public:
     ProgramParameters(
-        InputPaths inputPaths, OutputPaths outputPaths, SampleParameters sample, HeuristicParameters heuristics,
-        AnalysisMode analysisMode, LogLevel logLevel, const int initThreadCount, const bool initDisableBamletOutput,
-        bool cacheMates, std::string locusIds)
+        InputPaths inputPaths, std::string sortCatalogBy, OutputPaths outputPaths, SampleParameters sample,
+        HeuristicParameters heuristics, AnalysisMode analysisMode, const std::string locus, const std::string region,
+        size_t startWith, size_t nLoci, bool compressOutputFiles, bool generateImages, LogLevel logLevel,
+        const int initThreadCount, const bool initDisableBamletOutput, bool cacheMates)
         : threadCount(initThreadCount)
         , disableBamletOutput(initDisableBamletOutput)
         , inputPaths_(std::move(inputPaths))
+        , sortCatalogBy_(std::move(sortCatalogBy))
         , outputPaths_(std::move(outputPaths))
         , sample_(std::move(sample))
         , heuristics_(std::move(heuristics))
         , analysisMode_(analysisMode)
+        , locus_(locus)
+        , region_(region)
+        , startWith_(startWith)
+        , nLoci_(nLoci)
+        , compressOutputFiles_(compressOutputFiles)
+        , generateImages_(generateImages)
         , logLevel_(logLevel)
         , cacheMates_(cacheMates)
-        , locusIds_(locusIds)
     {
     }
 
     const InputPaths& inputPaths() const { return inputPaths_; }
+    std::string sortCatalogBy() const { return sortCatalogBy_; }
     const OutputPaths& outputPaths() const { return outputPaths_; }
     const SampleParameters& sample() const { return sample_; }
     const HeuristicParameters& heuristics() const { return heuristics_; }
     AnalysisMode analysisMode() const { return analysisMode_; }
+    std::string locus() const { return locus_; }
+    std::string region() const { return region_; }
+    size_t startWith() const { return startWith_; }
+    size_t nLoci() const { return nLoci_; }
+    bool compressOutputFiles() const { return compressOutputFiles_; }
+    bool generateImages() const { return generateImages_; }
     LogLevel logLevel() const { return logLevel_; }
     bool cacheMates() const { return cacheMates_; }
-    std::string locusIds() const { return locusIds_; }
 
     int threadCount;
     bool disableBamletOutput;
 
 private:
     InputPaths inputPaths_;
+    std::string sortCatalogBy_;
     OutputPaths outputPaths_;
     SampleParameters sample_;
     HeuristicParameters heuristics_;
     AnalysisMode analysisMode_;
+    std::string locus_;
+    std::string region_;
+    size_t startWith_;
+    size_t nLoci_;
+    bool compressOutputFiles_;
+    bool generateImages_;
     LogLevel logLevel_;
     bool cacheMates_;
-    std::string locusIds_;
 };
 
 }

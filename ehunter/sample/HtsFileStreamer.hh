@@ -58,7 +58,7 @@ public:
     }
     ~HtsFileStreamer();
 
-    bool trySeekingToNextPrimaryAlignment();
+    bool tryReadingNextPrimaryAlignment();
 
     int32_t currentReadContigId() const { return htsAlignmentPtr_->core.tid; }
     hts_pos_t currentReadPosition() const { return htsAlignmentPtr_->core.pos; }
@@ -71,6 +71,7 @@ public:
     bool isStreamingAlignedReads() const;
 
     Read decodeRead() const;
+    Read decodeRead(LinearAlignmentStats& alignmentStats) const;
 
 private:
     enum class Status

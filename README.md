@@ -1,21 +1,31 @@
 ### Description
 
-This modified version of ExpansionHunter introduces the following changes:
-- adds an optional --locus arg for only processing a single locus from the variant catalog. 
-- changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning. 
+This modified version of ExpansionHunter introduces the following new features:
+
+New analysis modes:
+
+`--analysis-mode low-mem-streaming` - this mode is similar to the existing `streaming` mode and produces essentially the same output, but uses much less memory. 
+
+`--analysis-mode fast-low-mem-streaming` - this mode is similar to `low-mem-streaming` mode but adds aggressive optimizations to reduce overall runtime for large (>10,000 locus) catalogs. The 
+genotypes it outputs are slightly less sensitive than the other modes. It works by quickly deciding which loci can be genotyped using only spanning reads. For these loci, it quickly computes a genotype using simple heuristics. 
+For loci where it suspects a larger allele, it falls back on ExpansionHunter's original genotyping engine. 
+
+Other changes include:
+- adds support for gzip-compressed input catalogs, and provides a `-z` option to compress the output files
+- introduces `--start-with`, `--n-loci`, and `--sort-catalog-by` options to process only a fixed number of loci from the input catalog
+- introduces `--locus` to only process catalog loci with the given LocusId(s) 
+- introduces `--region` to only process catalog loci within a specific genomic region
+- changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning.
   - This allows ExpansionHunter to run to completion without exiting on these loci and makes it easier to process large catalogs without having to find and exclude these loci first.
-- supports gzip-compressed input catalogs
-- supports direct access to remote bam/cram and fasta files from Google Cloud Storage or S3, so they don't have to be downloaded first.
-  - for access to private buckets, set environment variable:  
-    `GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
-  - for access to requester-pays buckets, set environment variable:  
-    `GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
+- allows direct access to remote bam/cram files in Google Cloud Storage or S3
+  - for access to private buckets, set environment var. `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
+  - for access to requester-pays buckets, set environment var. `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
 - optimization of ExpansionHunter's "seeking" analysis mode that yields a 1.5x to 3x speed increase without changing the output.
   - it works by introducing an in-memory read cache that reduces the number of disk accesses required to retrieve mismapped mate pairs.
   - by default, the cache is reset after each locus, leading to a modest speedup with negligible memory overhead.
   - the new `--cache-mates` option activates reuse of the cache across loci, leading to a more significant speed increase, though at a cost of increased memory usage (typically in the range of 1-2GB of memory usage for catalogs with 100s to 1000s of loci). 
-  - if/when spliting a large variant catalog into multiple shards, it's important to presort the loci by their normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). 
-    This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed with this optimization.
+  - if/when splitting a large variant catalog into multiple shards, it's important to presort the loci by their normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). 
+    This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed for this optimization.
 
 
 ### Citation

@@ -44,11 +44,6 @@ void FieldDescriptionWriter::addCommonFields()
 void FieldDescriptionWriter::visit(const RepeatFindings* repeatFindingsPtr)
 {
     addCommonFields();
-    if (!repeatFindingsPtr->optionalGenotype())
-    {
-        return;
-    }
-
     tryAddingFieldDescription(FieldType::kInfo, "SVTYPE", "1", "String", "Type of structural variant");
     tryAddingFieldDescription(FieldType::kInfo, "END", "1", "Integer", "End position of the variant");
     tryAddingFieldDescription(FieldType::kInfo, "REF", "1", "Integer", "Reference copy number");
@@ -81,21 +76,23 @@ void FieldDescriptionWriter::visit(const RepeatFindings* repeatFindingsPtr)
     const auto& referenceLocus = variantSpec_.referenceLocus();
     const int referenceSize = referenceLocus.length() / repeatUnit.length();
 
-    const RepeatGenotype& genotype = repeatFindingsPtr->optionalGenotype().get();
+    if (repeatFindingsPtr->optionalGenotype()) {
+		const RepeatGenotype& genotype = repeatFindingsPtr->optionalGenotype().get();
 
-    if (genotype.shortAlleleSizeInUnits() != referenceSize)
-    {
-        const string sizeEncoding = std::to_string(genotype.shortAlleleSizeInUnits());
-        const string description = "Allele comprised of " + sizeEncoding + " repeat units";
-        tryAddingFieldDescription(FieldType::kAlt, "STR" + sizeEncoding, "", "", description);
-    }
+		if (genotype.shortAlleleSizeInUnits() != referenceSize)
+		{
+			const string sizeEncoding = std::to_string(genotype.shortAlleleSizeInUnits());
+			const string description = "Allele comprised of " + sizeEncoding + " repeat units";
+			tryAddingFieldDescription(FieldType::kAlt, "STR" + sizeEncoding, "", "", description);
+		}
 
-    if (genotype.longAlleleSizeInUnits() != referenceSize)
-    {
-        const string sizeEncoding = std::to_string(genotype.longAlleleSizeInUnits());
-        const string description = "Allele comprised of " + sizeEncoding + " repeat units";
-        tryAddingFieldDescription(FieldType::kAlt, "STR" + sizeEncoding, "", "", description);
-    }
+		if (genotype.longAlleleSizeInUnits() != referenceSize)
+		{
+			const string sizeEncoding = std::to_string(genotype.longAlleleSizeInUnits());
+			const string description = "Allele comprised of " + sizeEncoding + " repeat units";
+			tryAddingFieldDescription(FieldType::kAlt, "STR" + sizeEncoding, "", "", description);
+		}
+	}
 }
 
 void FieldDescriptionWriter::visit(const SmallVariantFindings* smallVariantFindingsPtr)

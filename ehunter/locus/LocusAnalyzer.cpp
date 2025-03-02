@@ -20,15 +20,11 @@
 //
 
 #include "locus/LocusAnalyzer.hh"
-
-#include <boost/smart_ptr/make_unique.hpp>
-
 #include "locus/LocusAligner.hh"
 #include "locus/RFC1MotifAnalysis.hh"
 #include "locus/RepeatAnalyzer.hh"
 #include "locus/SmallVariantAnalyzer.hh"
 
-using boost::make_unique;
 using boost::optional;
 using graphtools::AlignmentWriter;
 using graphtools::GraphAlignment;

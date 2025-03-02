@@ -98,6 +98,76 @@ private:
     bool useRFC1MotifAnalysis_;
 };
 
+enum class VariantTypeFromUser
+{
+    kRareRepeat,
+    kCommonRepeat,
+    kSmallVariant,
+    kSMN
+};
+
+class LocusDescription
+{
+public:
+    LocusDescription(
+        std::string locusId, ChromType chromType, std::string locusStructure,
+        int32_t locusContigIndex,
+        int64_t locusAndFlanksStart, int64_t locusAndFlanksEnd,
+        int64_t locusWithoutFlanksStart, int64_t locusWithoutFlanksEnd,
+        bool useRFC1MotifAnalysis = false,
+        std::vector<std::string> variantIds = {},
+        std::vector<GenomicRegion> referenceRegions = {},
+        std::vector<GenomicRegion> targetRegions = {},
+        std::vector<GenomicRegion> offtargetRegions = {},
+        std::vector<VariantTypeFromUser> variantTypesFromUser = {},
+        std::optional<double> errorRate = std::nullopt,
+        std::optional<double> likelihoodRatioThreshold = std::nullopt,
+        std::optional<double> minLocusCoverage = std::nullopt
+    );
+
+    // Getters
+    const std::string& locusId() const { return locusId_; }
+    ChromType chromType() const { return chromType_; }
+    const std::string& locusStructure() const { return locusStructure_; }
+    int32_t locusContigIndex() const { return locusContigIndex_; }
+    int64_t locusAndFlanksStart() const { return locusAndFlanksStart_; }
+    int64_t locusAndFlanksEnd() const { return locusAndFlanksEnd_; }
+    int64_t locusWithoutFlanksStart() const { return locusWithoutFlanksStart_; }
+    int64_t locusWithoutFlanksEnd() const { return locusWithoutFlanksEnd_; }
+    bool useRFC1MotifAnalysis() const { return useRFC1MotifAnalysis_; }
+    const std::vector<std::string>& variantIds() const { return variantIds_; }
+    const std::vector<GenomicRegion>& referenceRegions() const { return referenceRegions_; }
+    const std::vector<GenomicRegion>& targetRegions() const { return targetRegions_; }
+    const std::vector<GenomicRegion>& offtargetRegions() const { return offtargetRegions_; }
+    const std::vector<VariantTypeFromUser>& variantTypesFromUser() const { return variantTypesFromUser_; }
+    const std::optional<double>& errorRate() const { return errorRate_; }
+    const std::optional<double>& likelihoodRatioThreshold() const { return likelihoodRatioThreshold_; }
+    const std::optional<double>& minLocusCoverage() const { return minLocusCoverage_; }
+
+private:
+    std::string locusId_;
+    ChromType chromType_;
+    std::string locusStructure_;
+    int32_t locusContigIndex_;
+    int64_t locusAndFlanksStart_;
+    int64_t locusAndFlanksEnd_;
+    int64_t locusWithoutFlanksStart_;
+    int64_t locusWithoutFlanksEnd_;
+    bool useRFC1MotifAnalysis_;
+    std::vector<std::string> variantIds_;
+    std::vector<GenomicRegion> referenceRegions_;
+    std::vector<GenomicRegion> targetRegions_;
+    std::vector<GenomicRegion> offtargetRegions_;
+    std::vector<VariantTypeFromUser> variantTypesFromUser_;
+    std::optional<double> errorRate_;
+    std::optional<double> likelihoodRatioThreshold_;
+    std::optional<double> minLocusCoverage_;
+};
+
+std::ostream& operator<<(std::ostream& out, const LocusDescription& locusDescription);
+
 using RegionCatalog = std::vector<LocusSpecification>;
+
+using LocusDescriptionCatalog = std::vector<LocusDescription>;
 
 }

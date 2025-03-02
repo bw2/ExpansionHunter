@@ -89,17 +89,6 @@ ExternalProject_Add(googletest
 )
 
 
-# CMAKE_CXX_STANDARD is required for macOS 10.15
-ExternalProject_Add(abseil
-	URL https://github.com/abseil/abseil-cpp/releases/download/20250127.0/abseil-cpp-20250127.0.tar.gz
-	DOWNLOAD_EXTRACT_TIMESTAMP OLD
-	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${installDir}
-		-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-		-DCMAKE_CXX_STANDARD=11
-		-DBUILD_TESTING=OFF
-)
-
-
 ExternalProject_Add(ehunter
 	SOURCE_DIR ${CMAKE_SOURCE_DIR}/ehunter
 	BUILD_ALWAYS YES
@@ -112,5 +101,5 @@ ExternalProject_Add(ehunter
 
 
 ExternalProject_Add_StepDependencies(ehunter configure
-	Boost spdlog htslib googletest abseil)
+	Boost spdlog htslib googletest)
 

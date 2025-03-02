@@ -28,6 +28,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/Common.hh"
+
 namespace ehunter
 {
 
@@ -40,11 +42,13 @@ public:
     int32_t numContigs() const { return namesAndSizes_.size(); }
     const std::string& getContigName(int32_t contigIndex) const;
     int64_t getContigSize(int32_t contigIndex) const;
+    const ChromType& getChromType(int32_t contigIndex) const;
     int32_t getContigId(const std::string& contigName) const;
 
 private:
     void assertValidIndex(int32_t contigIndex) const;
 
+    std::vector<ChromType> chromTypes_;
     std::vector<std::pair<std::string, int64_t>> namesAndSizes_;
     std::unordered_map<std::string, int32_t> nameToIndex_;
 };
