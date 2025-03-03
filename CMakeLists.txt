@@ -27,6 +27,7 @@ ExternalProject_Add(libdeflate
 	CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
 	-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
 	-DCMAKE_INSTALL_PREFIX=${installDir}
+	-DCMAKE_C_FLAGS=-O2
 	-DLIBDEFLATE_BUILD_SHARED_LIB=OFF
 	-DLIBDEFLATE_BUILD_STATIC_LIB=ON
 	-DLIBDEFLATE_BUILD_GZIP=OFF
@@ -66,7 +67,7 @@ ExternalProject_Add(Boost
 	DOWNLOAD_EXTRACT_TIMESTAMP OLD
 	PATCH_COMMAND ${BOOST_PATCH_COMMAND}
 	CONFIGURE_COMMAND ./bootstrap.sh --prefix=${installDir}
-	BUILD_COMMAND ./b2 install -j8 cxxstd=17 -sNO_ZSTD=1 --with-filesystem --with-system --with-iostreams --with-program_options link=static ${B2_OPTIONS}
+	BUILD_COMMAND ./b2 install -j8 cxxstd=17 variant=release optimization=speed -sNO_ZSTD=1 --with-filesystem --with-system --with-iostreams --with-program_options link=static ${B2_OPTIONS}
 	INSTALL_COMMAND ""
 )
 
@@ -77,6 +78,7 @@ ExternalProject_Add(spdlog
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${installDir}
 		-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
 		-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+		-DCMAKE_C_FLAGS=-O2
 )
 
 
@@ -86,6 +88,7 @@ ExternalProject_Add(googletest
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${installDir}
 		-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
 		-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+		-DCMAKE_C_FLAGS=-O2
 )
 
 
@@ -96,7 +99,9 @@ ExternalProject_Add(ehunter
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${installDir}
 		-DCMAKE_PREFIX_PATH:PATH=${installDir}
 		-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
-		-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} ${CMAKE_SOURCE_DIR}/ehunter
+		-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+		-DCMAKE_CXX_FLAGS=-O2
+		${CMAKE_SOURCE_DIR}/ehunter
 )
 
 
