@@ -15,7 +15,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - it works by introducing an in-memory read cache that reduces the number of disk operations needed to retrieve mismapped mate pairs
   - by default, the cache is reset for each locus, leading to a modest speedup with negligible memory overhead
   - the new `--cache-mates` option activates reuse of the cache across loci, leading to a more significant speed increase, though at a cost of increased memory usage (typically in the range of 1-2GB of memory usage for catalogs with 100s to 1000s of loci)
-  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and use "seeeking" mode, it's important to presort the catalog by normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed for this optimization.
+  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and use "seeeking" mode, it's important to presort the catalog by normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
 
 ### Citation
