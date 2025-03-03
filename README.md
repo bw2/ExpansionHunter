@@ -8,7 +8,7 @@ This modified version of ExpansionHunter introduces the following new features:
 - introduces `--locus` to only process catalog loci with the given LocusId(s) 
 - introduces `--region` to only process catalog loci within a specific genomic region
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
-- allows direct access to remote bam/cram files in Google Cloud Storage or S3
+- allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3
   - for access to private buckets, set environment variable:  
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
