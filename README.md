@@ -1,6 +1,6 @@
 ### ExpansionHunter-dev
 
-This modified version of ExpansionHunter introduces new features:
+This modified version of ExpansionHunter introduces the following new features:
 
 - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
 - `--analysis-mode low-mem-streaming` which is like `streaming` mode and outputs roughly the same genotypes, but uses less memory 
