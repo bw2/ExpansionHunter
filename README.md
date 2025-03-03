@@ -2,16 +2,7 @@
 
 This modified version of ExpansionHunter introduces the following new features:
 
-New analysis modes:
-
-`--analysis-mode low-mem-streaming` - this mode is similar to the existing `streaming` mode and produces essentially the same output, but uses much less memory. 
-
-`--analysis-mode fast-low-mem-streaming` - this mode is similar to `low-mem-streaming` mode but adds aggressive optimizations to reduce overall runtime for large (>10,000 locus) catalogs. The 
-genotypes it outputs are slightly less sensitive than the other modes. It works by quickly deciding which loci can be genotyped using only spanning reads. For these loci, it quickly computes a genotype using simple heuristics. 
-For loci where it suspects a larger allele, it falls back on ExpansionHunter's original genotyping engine. 
-
-**Other changes:**
-
+- introduces a new analysis mode `--analysis-mode low-mem-streaming` which is like `streaming` mode but uses much less memory 
 - adds support for gzip-compressed input catalogs, and provides a `-z` option to compress the output files
 - introduces `--start-with`, `--n-loci`, and `--sort-catalog-by` options to process only a fixed number of loci from the input catalog
 - introduces `--locus` to only process catalog loci with the given LocusId(s) 
