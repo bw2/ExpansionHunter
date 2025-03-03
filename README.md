@@ -2,11 +2,11 @@
 
 This modified version of ExpansionHunter introduces the following new features:
 
-- introduces a new analysis mode `--analysis-mode low-mem-streaming` which is like `streaming` mode but uses much less memory 
-- adds support for gzip-compressed input catalogs, and provides a `-z` option to compress the output files
-- introduces `--start-with`, `--n-loci`, and `--sort-catalog-by` options to process only a fixed number of loci from the input catalog
-- introduces `--locus` to only process catalog loci with the given LocusId(s) 
-- introduces `--region` to only process catalog loci within a specific genomic region
+- a new analysis mode `--analysis-mode low-mem-streaming` which is like `streaming` mode but uses much less memory 
+- support for gzip-compressed input catalogs, and provides a `-z` option to compress the output files
+- `--start-with`, `--n-loci`, and `--sort-catalog-by` options to process only a fixed number of loci from the input catalog
+- `--locus` to only process catalog loci with the given LocusId(s) 
+- `--region` to only process catalog loci within a specific genomic region
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
 - allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3
   - for access to private buckets, set environment variable:  
