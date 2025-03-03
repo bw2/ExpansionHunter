@@ -13,7 +13,7 @@ This modified version of ExpansionHunter introduces the following new features:
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
-- `--cache-mates` option makes `--analysis-mode seeking` run 1.5x to 3x faster without changing the output
+- `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
   - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and use "seeeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
 
