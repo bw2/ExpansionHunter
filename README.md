@@ -17,6 +17,8 @@ This modified version of ExpansionHunter introduces the following new features:
   - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
 
+Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.
+
 ### Citation
 If you use this modified version of ExpansionHunter, please cite:
 ```
