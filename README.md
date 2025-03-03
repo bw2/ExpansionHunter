@@ -13,11 +13,8 @@ This modified version of ExpansionHunter introduces the following new features:
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
-- optimization of the default "seeking" analysis mode to make it 1.5x to 3x faster without changing the output
-  - it works by introducing an in-memory read cache that reduces the number of disk operations needed to retrieve mismapped mate pairs
-  - by default, the cache is reset for each locus, leading to a modest speedup with negligible memory overhead
-  - the new `--cache-mates` option activates reuse of the cache across loci, leading to a more significant speed increase, though at a cost of increased memory usage (typically in the range of 1-2GB of memory usage for catalogs with 100s to 1000s of loci)
-  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and use "seeeking" mode, it's important to presort the catalog by normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
+- `--cache-mates` option makes `--analysis-mode seeking` run 1.5x to 3x faster without changing the output
+  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and use "seeeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (which is the cyclic shift of a motif that is alphabetically first - ie. AGC rather than CAG). This ensures that loci with the same normalized motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
 
 ### Citation
