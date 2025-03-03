@@ -9,8 +9,10 @@ This modified version of ExpansionHunter introduces the following new features:
 - introduces `--region` to only process catalog loci within a specific genomic region
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
 - allows direct access to remote bam/cram files in Google Cloud Storage or S3
-  - for access to private buckets, set environment var. `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
-  - for access to requester-pays buckets, set environment var. `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
+  - for access to private buckets, set environment variable:  
+    `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
+  - for access to requester-pays buckets, also set environment variable  
+    `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
 - optimization of the default "seeking" analysis mode to make it 1.5x to 3x faster without changing the output
   - it works by introducing an in-memory read cache that reduces the number of disk operations needed to retrieve mismapped mate pairs
   - by default, the cache is reset for each locus, leading to a modest speedup with negligible memory overhead
