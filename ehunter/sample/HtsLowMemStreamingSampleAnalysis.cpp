@@ -608,36 +608,6 @@ void doTheAnalysis(
     vcfWriter.close();
 
     spdlog::info("Done processing {} loci", add_commas_at_thousands(processedLociCounter));
-
-    // write out locus read pair counts to a .txt file
-    std::ofstream outputFile1;
-    std::string filename1 = "processed_slowly_locus_read_pair_counts__" + std::to_string(locusDescriptionCatalog.size()) + "_catalog.tsv";
-    outputFile1.open(filename1);
-    outputFile1 << "LocusId" << "\t" << "ReadPairCount" << "\t" << "Processing Time (ms)" << "\n";
-    // iterate over keys, values in locusIndicesProcessedSlowlyReadCounts
-    for (auto const& locusIndexAndReadPairCount : locusIndicesProcessedSlowlyReadCounts) {
-        const LocusDescription* locusDescription = &locusDescriptionCatalog[locusIndexAndReadPairCount.first];
-        auto processingTime = locusIndicesProcessedSlowlyTiming[locusIndexAndReadPairCount.first];
-        outputFile1 << locusDescription->locusId() << "\t" << locusIndexAndReadPairCount.second << "\t" << processingTime << "\n";
-    }
-    outputFile1.close();
-    spdlog::info("Wrote {} rows to {}", locusIndicesProcessedSlowlyReadCounts.size(), filename1);
-
-    // write out locus read pair counts to a .txt file
-    std::ofstream outputFile2;
-    std::string filename2 = "processed_slowly__" + std::to_string(locusIndicesProcessedSlowlyReadCounts.size()) + "_out_of_" + std::to_string(locusDescriptionCatalog.size()) + "_catalog.bed";
-    outputFile2.open(filename2);
-    // iterate over keys, values in locusIndicesProcessedSlowlyReadCounts
-    for (auto const& locusIndexAndReadPairCount : locusIndicesProcessedSlowlyReadCounts) {
-        const LocusDescription* locusDescription = &locusDescriptionCatalog[locusIndexAndReadPairCount.first];
-        std::string chrom = reference.contigInfo().getContigName(locusDescription->locusContigIndex());
-        std::string start_0based = std::to_string(locusDescription->referenceRegions().front().start());
-        std::string end_1based = std::to_string(locusDescription->referenceRegions().front().end());
-
-        outputFile2 << chrom << "\t" << start_0based << "\t" << end_1based << "\t" << locusDescription->locusId() << "\t" << std::to_string(locusIndexAndReadPairCount.second) << "\n";
-    }
-    outputFile2.close();
-    spdlog::info("Wrote {} rows to {}", locusIndicesProcessedSlowlyReadCounts.size(), filename2);
 }
 
 
