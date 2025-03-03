@@ -3,8 +3,8 @@
 This modified version of ExpansionHunter introduces the following new features:
 
 - `--analysis-mode low-mem-streaming` which is like `streaming` mode and outputs roughly the same genotypes, but uses less memory 
-- support for gzip-compressed input catalogs, and provides a `-z` option to compress the output files
-- `--start-with`, `--n-loci`, and `--sort-catalog-by` options to process only a fixed number of loci from the input catalog
+- supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
+- `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
 - `--locus` to only process catalog loci with the given LocusId(s) 
 - `--region` to only process catalog loci within a specific genomic region
 - changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
