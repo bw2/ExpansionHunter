@@ -1,4 +1,4 @@
-### Description
+### ExpansionHunter-dev
 
 This modified version of ExpansionHunter introduces the following new features:
 
