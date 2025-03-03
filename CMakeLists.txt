@@ -38,7 +38,7 @@ ExternalProject_Add(htslib
 	DEPENDS libdeflate
 	URL https://github.com/samtools/htslib/releases/download/1.21/htslib-1.21.tar.bz2
 	DOWNLOAD_EXTRACT_TIMESTAMP OLD
-	CONFIGURE_COMMAND env CFLAGS=-I${installDir}/include LDFLAGS=-L${installDir}/${CMAKE_INSTALL_LIBDIR} ./configure --prefix=${installDir} --enable-libcurl --enable-s3 --enable-gcs --with-libdeflate
+	CONFIGURE_COMMAND env CFLAGS=-O2\ -g\ -I${installDir}/include LDFLAGS=-L${installDir}/${CMAKE_INSTALL_LIBDIR} ./configure --prefix=${installDir} --enable-libcurl --enable-s3 --enable-gcs --with-libdeflate
 	BUILD_COMMAND $(MAKE) lib-static
 )
 
