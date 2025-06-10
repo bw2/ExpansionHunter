@@ -95,7 +95,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("locus,l", po::value<string>(&params.locus), "filter the input catalog by LocusId (or a list of comma-separated LocusIds)")
         ("region,L", po::value<string>(), "filter the input catalog to this genomic region (e.g. chr1:1000-2000)")
         ("start-with,s", po::value<size_t>(&params.startWith)->default_value(0), "after sorting the catalog, skip this many loci")
-        ("n-loci,n", po::value<size_t>(&params.nLoci), "after sorting the catalog, process only this many loci after applying --start-with")
+        ("n-loci,n", po::value<size_t>(&params.nLoci)->default_value(0), "after sorting the catalog, process only this many loci after applying --start-with")
         ("compress-output-files,z", po::bool_switch(&params.compressOutputFiles), "compress the vcf and json output files, adding .gz to their filenames")
         //("generate-images", po::bool_switch(&params.generateImages), "Generate REViewer images for all genotyped loci")
     ;
