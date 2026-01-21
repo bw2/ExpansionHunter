@@ -1,30 +1,31 @@
 ### ExpansionHunter-dev
 
 This modified version of ExpansionHunter introduces the following new features:
-
-- supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
-- `--analysis-mode low-mem-streaming` which is like `streaming` mode and outputs roughly the same genotypes, but uses less memory 
-- `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
-- `--locus` for filtering the input catalog to specific LocusId(s) 
-- `--region` for filtering the input catalog to a specific genomic region
-- changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
-- allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3
+- **Converts N chars error to warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
+- **New analysis modes**:
+  - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory at runtime
+  - `--analysis-mode optimized-streaming` is like `low-mem-streaming` mode while permitting the output to differ at a small percentage of loci. It uses simple heuristics to detect which loci are almost certainly homozygous reference, and avoid running the full computationally-expensive genotyping algorithm on them. This makes it substantially faster than other modes for catalogs with more than ~10k loci. 
+- **Misc. new convenience features and options**:
+  - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
+  - `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
+  - `--locus` for filtering the input catalog to specific LocusId(s) 
+  - `--region` for filtering the input catalog to a specific genomic region
+  - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
+  - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
+- **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
-- `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
-  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
-- **Integrated read visualization**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
+- **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
   - `--plot-all` generates read visualizations for every locus
   - `--disable-all-plots` disables all image generation (overrides catalog settings)
   - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
 - **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
   - `--disable-quality-metrics` disables quality metrics computation if not needed
-- **Catalog field passthrough**: `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
-- **Skip homozygous reference**: `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
-
+- **Cache to speed up seeking mode**: `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
+  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
 Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.
 
