@@ -29,6 +29,7 @@
 #include "spdlog/spdlog.h"
 
 #include "reviewer/Aligns.hh"
+#include "reviewer/ConsensusSequence.hh"
 #include "reviewer/FragLenFilter.hh"
 #include "reviewer/GenerateSvg.hh"
 #include "reviewer/GenotypePaths.hh"
@@ -147,6 +148,23 @@ std::optional<ReviewerContext> runReviewerWorkflow(
 
     spdlog::debug("REViewer workflow: Processing locus {}", locusId);
 
+    // Check that the locus has at most one repeat variant.
+    // Consensus building with multiple repeat variants would produce a mixed consensus
+    // that doesn't correspond to any single variant.
+    int repeatVariantCount = 0;
+    for (const auto& variantSpec : locusSpec.variantSpecs())
+    {
+        if (variantSpec.classification().type == VariantType::kRepeat)
+        {
+            repeatVariantCount++;
+        }
+    }
+    if (repeatVariantCount > 1)
+    {
+        spdlog::warn("REViewer workflow: Locus {} has {} repeat variants; consensus building only supports single repeat variant loci",
+                     locusId, repeatVariantCount);
+    }
+
     // For reproducibility - same seed as standalone REViewer
     srand(14345);
 
@@ -197,15 +215,30 @@ std::optional<ReviewerContext> runReviewerWorkflow(
     auto fragPathAlignsById = resolveByFragLen(effectiveMeanFragLen, topDiplotype, pairPathAlignById);
     spdlog::debug("REViewer workflow: Resolved {} fragment alignments", fragPathAlignsById.size());
 
-    // Assign fragment origins
+    // Assign fragment origins (determines which alignment to use for each fragment)
+    // This must happen before consensus building so consensus uses the same alignments as visualization
     auto fragAssignment = getBestFragAssignment(topDiplotype, fragPathAlignsById);
     spdlog::debug("REViewer workflow: Assigned {} fragments", fragAssignment.fragIds.size());
+
+    // Build consensus sequences from anchor reads using the same alignment selection as visualization
+    auto consensusResult = buildConsensusFromAnchors(topDiplotype, fragById, fragPathAlignsById, fragAssignment);
+    spdlog::debug("REViewer workflow: Built consensus from {} anchors ({} total fragments)",
+                  consensusResult.totalAnchors, consensusResult.totalFragments);
+
+    // Log per-allele consensus details
+    for (size_t i = 0; i < consensusResult.alleleConsensuses.size(); ++i)
+    {
+        const auto& allele = consensusResult.alleleConsensuses[i];
+        spdlog::debug("REViewer workflow: Allele {} consensus: {} bp repeat, {} known positions, {} anchor reads",
+                      i, allele.repeatLength, allele.knownPositions(), allele.anchorReadCount);
+    }
 
     return ReviewerContext(
         std::move(topDiplotype),
         std::move(fragById),
         std::move(fragPathAlignsById),
-        std::move(fragAssignment));
+        std::move(fragAssignment),
+        std::move(consensusResult));
 }
 
 void runReviewer(

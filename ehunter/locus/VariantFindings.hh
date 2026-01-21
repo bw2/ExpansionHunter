@@ -22,7 +22,9 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <boost/optional.hpp>
 
@@ -95,11 +97,28 @@ public:
 
     boost::optional<RepeatAlleleQualityMetrics> alleleQualityMetrics() const { return alleleQualityMetrics_; }
 
+    void setConsensusSequences(const std::vector<std::string>& sequences) { consensusSequences_ = sequences; }
+
+    const std::vector<std::string>& consensusSequences() const { return consensusSequences_; }
+
+    void setConsensusReadSupport(const std::vector<std::string>& support) { consensusReadSupport_ = support; }
+
+    const std::vector<std::string>& consensusReadSupport() const { return consensusReadSupport_; }
+
+    // Compares core findings only: read counts and genotype.
+    // Deliberately excludes:
+    // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
+    // - genotypeFilter_: metadata about genotyping confidence, not the findings
+    // - rfc1Status_, alleleQualityMetrics_: post-hoc enrichment fields
+    // - consensusSequences_, consensusReadSupport_: derived consensus annotations
+    // These excluded fields are either metadata, derived from external context, or
+    // post-hoc annotations that don't represent the fundamental repeat findings.
     bool operator==(const RepeatFindings& other) const
     {
         return countsOfSpanningReads_ == other.countsOfSpanningReads_
             && countsOfFlankingReads_ == other.countsOfFlankingReads_
-            && countsOfInrepeatReads_ == other.countsOfInrepeatReads_ && optionalGenotype_ == other.optionalGenotype_;
+            && countsOfInrepeatReads_ == other.countsOfInrepeatReads_
+            && optionalGenotype_ == other.optionalGenotype_;
     }
 
 private:
@@ -111,6 +130,8 @@ private:
     GenotypeFilter genotypeFilter_;
     boost::optional<RFC1Status> rfc1Status_;
     boost::optional<RepeatAlleleQualityMetrics> alleleQualityMetrics_;
+    std::vector<std::string> consensusSequences_;   // One consensus sequence per allele
+    std::vector<std::string> consensusReadSupport_; // Per-position read support as digit string, one per allele
 };
 
 class SmallVariantFindings : public VariantFindings

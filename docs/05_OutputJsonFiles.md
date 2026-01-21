@@ -75,6 +75,38 @@ Example:
 }
 ```
 
+## Consensus sequences
+
+When the REViewer workflow is enabled, repeat records may include consensus
+sequence information derived from anchor reads. An anchor read is a fragment
+where all possible alignments map to the same allele (i.e., no alignment
+ambiguity between alleles). This typically occurs when a read spans into a
+flanking region that differs between alleles, allowing unambiguous assignment.
+
+* `ConsensusSequences` Array of consensus sequences, one per allele. Unknown
+  positions (no anchor read coverage) are represented as 'N'.
+* `ConsensusSequencesReadSupport` Array of strings, one per allele. Each string
+  has the same length as the corresponding consensus sequence, where each
+  character is a digit (0-9) representing the number of anchor reads supporting
+  that position. A value of '9' indicates 9 or more reads.
+
+Example:
+```json
+"ConsensusSequences": ["CAGCAG", "CAGCAGCAGCAGCAGCAGCAGCAGCTGCGG"],
+"ConsensusSequencesReadSupport": ["333333", "333333333333333333333333333333"]
+```
+
+These fields are useful for:
+- Analyzing repeat interruption patterns (e.g., CAA interruptions in CAG repeats)
+- Identifying sequence composition of expanded alleles
+- Validating genotype calls with sequence-level information
+- Assessing confidence at each position based on read support depth
+
+Note: Consensus sequences may have 'N' characters in regions not covered by
+anchor reads, particularly in the middle of long expansions where reads don't
+span fully. The corresponding position in `ConsensusSequencesReadSupport` will
+show '0' for these uncovered positions.
+
 ## Catalog field passthrough
 
 When `--copy-catalog-fields` is used, any extra fields from the input variant

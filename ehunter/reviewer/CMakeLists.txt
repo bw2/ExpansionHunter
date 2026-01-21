@@ -1,6 +1,7 @@
 target_sources(ExpansionHunterLib
     PRIVATE
     Aligns.hh Aligns.cpp
+    ConsensusSequence.hh ConsensusSequence.cpp
     FragLenFilter.hh FragLenFilter.cpp
     GenerateSvg.hh GenerateSvg.cpp
     GenotypePaths.hh GenotypePaths.cpp

@@ -152,6 +152,7 @@ add_executable(UnitTests
         tests/CatalogLoadingPlotTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
         tests/ConcurrentQueueTest.cpp
+        tests/ConsensusSequenceTest.cpp
         tests/CountTableTest.cpp
         tests/FragLogliksTest.cpp
         tests/GenomeMaskTest.cpp

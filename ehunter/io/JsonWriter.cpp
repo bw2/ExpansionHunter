@@ -200,6 +200,30 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
         metricsRecord["Alleles"] = allelesArray;
         record_["AlleleQualityMetrics"] = metricsRecord;
     }
+
+    // Output ConsensusSequences and related statistics if present
+    const auto& consensusSequences = repeatFindings.consensusSequences();
+    if (!consensusSequences.empty())
+    {
+        nlohmann::json consensusArray = nlohmann::json::array();
+        for (const auto& seq : consensusSequences)
+        {
+            consensusArray.push_back(seq);
+        }
+        record_["ConsensusSequences"] = consensusArray;
+
+        // Output ConsensusSequencesReadSupport if available
+        const auto& consensusReadSupport = repeatFindings.consensusReadSupport();
+        if (!consensusReadSupport.empty())
+        {
+            nlohmann::json supportArray = nlohmann::json::array();
+            for (const auto& support : consensusReadSupport)
+            {
+                supportArray.push_back(support);
+            }
+            record_["ConsensusSequencesReadSupport"] = supportArray;
+        }
+    }
 }
 
 void VariantJsonWriter::visit(const SmallVariantFindings* smallVariantFindingsPtr)

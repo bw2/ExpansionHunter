@@ -29,6 +29,7 @@
 #include "locus/LocusSpecification.hh"
 #include "locus/LocusFindings.hh"
 #include "reviewer/Aligns.hh"
+#include "reviewer/ConsensusSequence.hh"
 
 namespace ehunter
 {
@@ -43,6 +44,7 @@ struct ReviewerContext
     FragById fragById;                   // Fragments indexed by ID
     FragPathAlignsById fragPathAlignsById;  // Fragment path alignments
     FragAssignment fragAssignment;       // Assignment of fragments to haplotypes
+    ConsensusResult consensusResult;     // Consensus sequences built from anchor reads
 
     ReviewerContext()
         : fragAssignment({}, {})
@@ -53,11 +55,13 @@ struct ReviewerContext
         GraphPaths paths_,
         FragById fragById_,
         FragPathAlignsById fragPathAlignsById_,
-        FragAssignment fragAssignment_)
+        FragAssignment fragAssignment_,
+        ConsensusResult consensusResult_ = ConsensusResult())
         : paths(std::move(paths_))
         , fragById(std::move(fragById_))
         , fragPathAlignsById(std::move(fragPathAlignsById_))
         , fragAssignment(std::move(fragAssignment_))
+        , consensusResult(std::move(consensusResult_))
     {
     }
 };

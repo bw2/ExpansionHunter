@@ -383,6 +383,59 @@ LocusFindings LocusAnalyzer::analyze(
         }
     }
 
+    // Propagate consensus sequences and statistics from ReviewerContext to RepeatFindings
+    // NOTE: Consensus building currently only supports loci with a single repeat variant.
+    // For loci with multiple repeat variants, the consensus would be a mix of all variants,
+    // which is not meaningful to attach to individual variant findings.
+    if (reviewerContext && !reviewerContext->consensusResult.alleleConsensuses.empty())
+    {
+        // Count repeat variants and find the single repeat variant ID if there's only one
+        int repeatVariantCount = 0;
+        std::string singleRepeatVariantId;
+        for (const auto& variantSpec : locusSpec_.variantSpecs())
+        {
+            if (variantSpec.classification().type == VariantType::kRepeat)
+            {
+                repeatVariantCount++;
+                singleRepeatVariantId = variantSpec.id();
+            }
+        }
+
+        if (repeatVariantCount > 1)
+        {
+            spdlog::warn("Skipping consensus for locus {} - multiple repeat variants not supported",
+                         locusSpec_.locusId());
+        }
+        else if (repeatVariantCount == 1)
+        {
+            // Extract consensus strings and read support from the consensus result
+            std::vector<std::string> consensusStrings;
+            std::vector<std::string> consensusReadSupport;
+            for (const auto& alleleConsensus : reviewerContext->consensusResult.alleleConsensuses)
+            {
+                consensusStrings.push_back(alleleConsensus.toString());
+                consensusReadSupport.push_back(alleleConsensus.toReadSupportString());
+            }
+
+            // Attach consensus sequences and read support only to the single repeat variant
+            auto it = locusFindings.findingsForEachVariant.find(singleRepeatVariantId);
+            if (it != locusFindings.findingsForEachVariant.end())
+            {
+                RepeatFindings* repeatFindings = dynamic_cast<RepeatFindings*>(it->second.get());
+                if (repeatFindings)
+                {
+                    repeatFindings->setConsensusSequences(consensusStrings);
+                    repeatFindings->setConsensusReadSupport(consensusReadSupport);
+                }
+            }
+
+            spdlog::debug("Consensus sequences for locus {}: {} alleles, {} total anchors",
+                          locusSpec_.locusId(),
+                          consensusStrings.size(),
+                          reviewerContext->consensusResult.totalAnchors);
+        }
+    }
+
     // Generate SVG if visualization is requested (controlled separately from quality metrics)
     if (reviewerContext && reviewer::shouldPlotReadVisualization(locusSpec_, locusFindings))
     {
