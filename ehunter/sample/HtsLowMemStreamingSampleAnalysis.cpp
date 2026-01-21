@@ -49,6 +49,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "io/VcfWriter.hh"
 #include "locus/VariantFindings.hh"
 #include "locus/LocusAnalyzer.hh"
+#include "locus/LocusSpecification.hh"
 #include "locus/LocusAnalyzerUtil.hh"
 #include "sample/GenomeQueryCollection.hh"
 #include "sample/HtsFileStreamer.hh"
@@ -61,12 +62,10 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 
 using ehunter::locus::initializeLocusAnalyzers;
 using ehunter::locus::LocusAnalyzer;
-using graphtools::AlignmentWriter;
 using std::string;
 using std::vector;
 using std::unordered_map;
 using std::shared_ptr;
-using std::make_shared;
 
 namespace ehunter
 {
@@ -121,23 +120,34 @@ using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 void processLocus(const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
                   const std::vector<shared_ptr<FullReadPair>>& readPairs,
                   graphtools::AlignerSelector& alignerSelector,
+                  BamletWriterPtr bamletWriter,
                   IterativeJsonWriter& jsonWriter,
                   IterativeVcfWriter& vcfWriter) {
 
     const Sex& sampleSex = params.sample().sex();
-    shared_ptr<graphtools::AlignmentWriter> bamletWriter(new graphtools::BlankAlignmentWriter());
-
     // convert the lite-weight LocusDescription object into the heavier LocusSpecification
     LocusSpecification locusSpec = decodeLocusSpecification(locusDescription, reference, params.heuristics(), true);
 
+    // Apply plot policy from CLI flags
+    if (params.disableAllPlots())
+    {
+        locusSpec.setPlotPolicy(PlotPolicy::kNone);
+    }
+    else if (params.plotAll())
+    {
+        locusSpec.setPlotPolicy(PlotPolicy::kAll);
+    }
+
     // analyze the read data
-    LocusAnalyzer locusAnalyzer(locusSpec, params.heuristics(), bamletWriter);
+    LocusAnalyzer locusAnalyzer(locusSpec, params.heuristics(), bamletWriter,
+                                params.enableAlleleQualityMetrics());
     for (auto const& readPair : readPairs) {
         locusAnalyzer.processMates(readPair->firstMate->r, &readPair->secondMate->r, locus::RegionType::kTarget, alignerSelector);
     }
 
     // genotype the locus
-    LocusFindings locusFindings = locusAnalyzer.analyze(sampleSex, boost::none);
+    LocusFindings locusFindings = locusAnalyzer.analyze(
+        sampleSex, boost::none, params.outputPaths().outputPrefix());
 
     jsonWriter.addRecord(locusSpec, locusFindings);
 
@@ -229,9 +239,8 @@ void prepareCache(
 void doTheAnalysis(
     const ProgramParameters& params, Reference& reference, LocusDescriptionCatalog& locusDescriptionCatalog,
     const GenomeQueryCollection& genomeQuery, htshelpers::MateExtractor& mateExtractor,
-    const int farAwayMateDistanceThreshold)
+    BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold)
 {
-
     if (locusDescriptionCatalog.empty()) {
         return;
     }
@@ -249,7 +258,7 @@ void doTheAnalysis(
 
     const InputPaths& inputPaths = params.inputPaths();
     const OutputPaths& outputPaths = params.outputPaths();
-    IterativeJsonWriter jsonWriter(params.sample(), reference.contigInfo(), outputPaths.json());
+    IterativeJsonWriter jsonWriter(params.sample(), reference.contigInfo(), outputPaths.json(), params.copyCatalogFields());
     IterativeVcfWriter vcfWriter(params.sample().id(), reference, outputPaths.vcf());
 
     // nextLocusDescriptionIndex points to the first locusDescription in the locusDescriptionCatalog whose
@@ -470,7 +479,7 @@ void doTheAnalysis(
             shared_ptr<LocusCache> locusCache;
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
                 //create a new LocusCache object add it to the locusCachesMap and locusCaches list
-                locusCache = make_shared<LocusCache>(locusIndex, 
+                locusCache = std::make_shared<LocusCache>(locusIndex, 
                     GenomicRegion {
                         locusDescription->locusContigIndex(),
                         locusDescription->locusAndFlanksStart(),
@@ -480,7 +489,7 @@ void doTheAnalysis(
             }
 
             if (readPair == nullptr) {
-                readPair = make_shared<FullReadPair>(fullRead, fullMate);
+                readPair = std::make_shared<FullReadPair>(fullRead, fullMate);
             }
 
             locusCache = locusCachesMap[locusIndex];
@@ -572,7 +581,7 @@ void doTheAnalysis(
 					try {
                         graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
 						processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
-							         alignerSelector, jsonWriter, vcfWriter);
+							         alignerSelector, bamletWriter, jsonWriter, vcfWriter);
 					} catch (const std::exception& e) {
 						spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
 					}
@@ -614,8 +623,9 @@ void doTheAnalysis(
 
 void htsLowMemStreamingSampleAnalysis(
     LocusDescriptionCatalog& locusDescriptionCatalog,
-    const ProgramParameters& programParams, 
-    Reference& reference)
+    const ProgramParameters& programParams,
+    Reference& reference,
+    BamletWriterPtr bamletWriter)
 {
     if (locusDescriptionCatalog.empty()) {
         return;
@@ -649,7 +659,8 @@ void htsLowMemStreamingSampleAnalysis(
     prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
 
     //perform the main bam/cram traversal and analysis
-    doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
+    doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
+                  farAwayMateDistanceThreshold);
 
 }
 

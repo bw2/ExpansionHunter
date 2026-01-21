@@ -59,7 +59,7 @@ class JsonWriter
 public:
     JsonWriter(
         const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
-        const SampleFindings& sampleFindings);
+        const SampleFindings& sampleFindings, bool copyCatalogFields = false);
 
     void write(std::ostream& out);
 
@@ -68,6 +68,7 @@ private:
     const ReferenceContigInfo& contigInfo_;
     const RegionCatalog& regionCatalog_;
     const SampleFindings& sampleFindings_;
+    bool copyCatalogFields_;
 };
 
 std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter);

@@ -24,9 +24,11 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/device/file.hpp>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -43,6 +45,7 @@
 #include "core/Parameters.hh"
 #include "io/BamletWriter.hh"
 #include "io/CatalogLoading.hh"
+#include "locus/LocusSpecification.hh"
 #include "io/JsonWriter.hh"
 #include "io/ParameterLoading.hh"
 #include "io/SampleStats.hh"
@@ -117,6 +120,8 @@ int main(int argc, char** argv)
         }
         const ProgramParameters& params = *optionalProgramParameters;
 
+        srand(14345);  // For reproducibility
+
         setLogLevel(params.logLevel());
 
         const SampleParameters& sampleParams = params.sample();
@@ -130,27 +135,45 @@ int main(int argc, char** argv)
         LocusDescriptionCatalog locusDescriptionCatalog = loadLocusDescriptions(params, reference);
 
         const HeuristicParameters& heuristicParams = params.heuristics();
+        const OutputPaths& outputPaths = params.outputPaths();
         if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kFastLowMemStreaming)
         {
             spdlog::info("Running sample analysis in {} mode",
                 params.analysisMode() == AnalysisMode::kFastLowMemStreaming ? "fast-low-mem-streaming" : "low-mem-streaming");
-            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference);
+            BamletWriterPtr bamletWriter = params.enableBamletOutput
+                ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
+                : std::make_shared<BamletWriter>();
+            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
             return 0;
         }
 
-        const RegionCatalog regionCatalog = convertLocusDescriptionsToLocusSpecs(
+        RegionCatalog regionCatalog = convertLocusDescriptionsToLocusSpecs(
             locusDescriptionCatalog, heuristicParams, reference);
 
-        const OutputPaths& outputPaths = params.outputPaths();
-
-        locus::AlignWriterPtr bamletWriter;
-        if (params.disableBamletOutput)
+        // Apply plot policy from CLI flags to all loci
+        if (params.disableAllPlots())
         {
-            bamletWriter.reset(new graphtools::BlankAlignmentWriter());
+            for (auto& locusSpec : regionCatalog)
+            {
+                locusSpec.setPlotPolicy(PlotPolicy::kNone);
+            }
+        }
+        else if (params.plotAll())
+        {
+            for (auto& locusSpec : regionCatalog)
+            {
+                locusSpec.setPlotPolicy(PlotPolicy::kAll);
+            }
+        }
+
+        BamletWriterPtr bamletWriter;
+        if (params.enableBamletOutput)
+        {
+            bamletWriter = std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), regionCatalog);
         }
         else
         {
-            bamletWriter.reset(new BamletWriter(outputPaths.bamlet(), reference.contigInfo(), regionCatalog));
+            bamletWriter = std::make_shared<BamletWriter>();
         }
 
         SampleFindings sampleFindings;
@@ -169,7 +192,7 @@ int main(int argc, char** argv)
         VcfWriter vcfWriter(sampleParams.id(), reference, regionCatalog, sampleFindings);
         writeToFile(outputPaths.vcf(), vcfWriter);
 
-        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings);
+        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings, params.copyCatalogFields());
         writeToFile(outputPaths.json(), jsonWriter);
     }
     catch (const std::exception& e)

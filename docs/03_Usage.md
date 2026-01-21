@@ -45,6 +45,16 @@ optional arguments.
   `streaming`. The default mode is `seeking`. See further description of analysis
    modes below.
 
+* `--disable-quality-metrics` Disable per-allele quality metrics computation. By
+  default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
+  etc.) for each allele and outputs them in the JSON file. Use this flag to skip
+  this computation if the metrics are not needed.
+
+* `--copy-catalog-fields` Copy extra annotation fields from the input variant
+  catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
+  `PathogenicMin`, etc. to be preserved in the output, making it easier to
+  annotate results without a separate join step.
+
 
 Note that the full list of program options with brief explanations can be
 obtained by running `ExpansionHunter --help`.

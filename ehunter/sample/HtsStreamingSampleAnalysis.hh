@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "graphio/AlignmentWriter.hh"
+#include "io/BamletWriter.hh"
 
 #include "core/Parameters.hh"
 #include "locus/LocusAnalyzer.hh"
@@ -37,6 +37,6 @@ namespace ehunter
 
 SampleFindings htsStreamingSampleAnalysis(
     const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
-    const RegionCatalog& regionCatalog, locus::AlignWriterPtr alignmentWriter);
+    const RegionCatalog& regionCatalog, BamletWriterPtr alignmentWriter);
 
 }

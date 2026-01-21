@@ -41,7 +41,7 @@ class IterativeJsonWriter
 {
 public:
 	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
-		const std::string& outputFilePath);
+		const std::string& outputFilePath, bool copyCatalogFields = false);
 
 	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
     void close();  // Close the output file
@@ -51,6 +51,7 @@ private:
     std::ofstream outFile_;
     boost::iostreams::filtering_ostream outStream_;
     bool firstRecord_;
+    bool copyCatalogFields_;
 };
 
 }

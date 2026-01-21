@@ -43,6 +43,31 @@
 namespace ehunter
 {
 
+// Plot policy determines whether read visualizations are generated for a locus
+enum class PlotPolicy {
+    kAll,           // Generate read visualizations for all loci (--plot-all)
+    kNone,          // Don't generate any read visualizations (--disable-all-plots)
+    kConditional    // Generate based on plotConditions_ (default)
+};
+
+// Enums for plot conditions
+enum class PlotThresholdAppliedTo { kShortAllele, kLongAllele };
+enum class PlotThresholdComparisonOp {
+    kLessThan,
+    kLessThanOrEqual,
+    kEqual,
+    kNotEqual,
+    kGreaterThanOrEqual,
+    kGreaterThan
+};
+
+// Single plot condition for conditional image generation
+struct PlotReadVisualization {
+    PlotThresholdAppliedTo appliedTo;    // Which allele to compare
+    PlotThresholdComparisonOp op;        // Comparison operator
+    int threshold;                        // Value to compare against
+};
+
 using RegionId = std::string;
 using NodeToRegionAssociation = std::unordered_map<graphtools::NodeId, GenomicRegion>;
 
@@ -52,7 +77,9 @@ public:
     LocusSpecification(
         RegionId locusId, ChromType typeOfChromLocusLocatedOn, std::vector<GenomicRegion> targetReadExtractionRegions,
         graphtools::Graph regionGraph, NodeToRegionAssociation referenceRegions, GenotyperParameters genotyperParams,
-        bool useRFC1MotifAnalysis);
+        bool useRFC1MotifAnalysis,
+        std::vector<PlotReadVisualization> plotConditions = {},
+        std::optional<nlohmann::json> extraFields = std::nullopt);
 
     const RegionId& locusId() const { return locusId_; }
     ChromType typeOfChromLocusLocatedOn() const { return typeOfChromLocusLocatedOn_; }
@@ -87,6 +114,19 @@ public:
 
     bool useRFC1MotifAnalysis() const { return useRFC1MotifAnalysis_; }
 
+    const std::vector<PlotReadVisualization>& plotConditions() const { return plotConditions_; }
+    bool hasPlotConditions() const { return !plotConditions_.empty(); }
+    const std::optional<nlohmann::json>& extraFields() const { return extraFields_; }
+
+    PlotPolicy plotPolicy() const { return plotPolicy_; }
+    void setPlotPolicy(PlotPolicy policy) { plotPolicy_ = policy; }
+
+    /// Returns true if this locus requires an alignment buffer for post-genotyping analysis
+    /// (RFC1 motif analysis, plot-all policy, or conditional image generation)
+    bool requiresAlignmentBuffer() const {
+        return useRFC1MotifAnalysis_ || plotPolicy_ == PlotPolicy::kAll || hasPlotConditions();
+    }
+
 private:
     std::string locusId_;
     ChromType typeOfChromLocusLocatedOn_;
@@ -97,6 +137,9 @@ private:
     NodeToRegionAssociation referenceRegions_;
     GenotyperParameters parameters_;
     bool useRFC1MotifAnalysis_;
+    std::vector<PlotReadVisualization> plotConditions_;
+    PlotPolicy plotPolicy_ = PlotPolicy::kConditional;
+    std::optional<nlohmann::json> extraFields_;
 };
 
 enum class VariantTypeFromUser
@@ -123,7 +166,9 @@ public:
         std::vector<VariantTypeFromUser> variantTypesFromUser = {},
         std::optional<double> errorRate = std::nullopt,
         std::optional<double> likelihoodRatioThreshold = std::nullopt,
-        std::optional<double> minLocusCoverage = std::nullopt
+        std::optional<double> minLocusCoverage = std::nullopt,
+        std::vector<PlotReadVisualization> plotConditions = {},
+        std::optional<nlohmann::json> extraFields = std::nullopt
     );
 
     // Getters
@@ -144,6 +189,9 @@ public:
     const std::optional<double>& errorRate() const { return errorRate_; }
     const std::optional<double>& likelihoodRatioThreshold() const { return likelihoodRatioThreshold_; }
     const std::optional<double>& minLocusCoverage() const { return minLocusCoverage_; }
+    const std::vector<PlotReadVisualization>& plotConditions() const { return plotConditions_; }
+    bool hasPlotConditions() const { return !plotConditions_.empty(); }
+    const std::optional<nlohmann::json>& extraFields() const { return extraFields_; }
 
 private:
     std::string locusId_;
@@ -163,6 +211,8 @@ private:
     std::optional<double> errorRate_;
     std::optional<double> likelihoodRatioThreshold_;
     std::optional<double> minLocusCoverage_;
+    std::vector<PlotReadVisualization> plotConditions_;
+    std::optional<nlohmann::json> extraFields_;
 };
 
 std::ostream& operator<<(std::ostream& out, const LocusDescription& locusDescription);

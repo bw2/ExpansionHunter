@@ -60,9 +60,10 @@ struct LocusThreadLocalData
 ///
 void initializeLocusAnalyzerThread(
     const int threadIndex, const RegionCatalog& regionCatalog, const HeuristicParameters& heuristicParams,
-    AlignWriterPtr bamletWriter, std::vector<std::unique_ptr<LocusAnalyzer>>& locusAnalyzers,
+    BamletWriterPtr bamletWriter, std::vector<std::unique_ptr<LocusAnalyzer>>& locusAnalyzers,
     LocusInitThreadSharedData& locusInitThreadSharedData,
-    std::vector<LocusThreadLocalData>& locusInitThreadLocalDataPool)
+    std::vector<LocusThreadLocalData>& locusInitThreadLocalDataPool,
+    bool enableAlleleQualityMetrics)
 {
     LocusThreadLocalData& locusThreadData(locusInitThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
@@ -85,7 +86,7 @@ void initializeLocusAnalyzerThread(
             const auto& locusSpec(regionCatalog[locusIndex]);
             locusId = locusSpec.locusId();
 
-            locusAnalyzers[locusIndex].reset(new LocusAnalyzer(locusSpec, heuristicParams, bamletWriter));
+            locusAnalyzers[locusIndex].reset(new LocusAnalyzer(locusSpec, heuristicParams, bamletWriter, enableAlleleQualityMetrics));
         }
     }
     catch (const std::exception& e)
@@ -110,8 +111,8 @@ void initializeLocusAnalyzerThread(
 }
 
 std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
-    const RegionCatalog& regionCatalog, const HeuristicParameters& heuristicParams, AlignWriterPtr bamletWriter,
-    const int threadCount)
+    const RegionCatalog& regionCatalog, const HeuristicParameters& heuristicParams, BamletWriterPtr bamletWriter,
+    const int threadCount, bool enableAlleleQualityMetrics)
 {
     assert(threadCount >= 1);
 
@@ -127,7 +128,7 @@ std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
         initThreads.emplace_back(
             initializeLocusAnalyzerThread, threadIndex, std::cref(regionCatalog), std::cref(heuristicParams),
             bamletWriter, std::ref(locusAnalyzers), std::ref(locusInitThreadSharedData),
-            std::ref(locusInitThreadLocalDataPool));
+            std::ref(locusInitThreadLocalDataPool), enableAlleleQualityMetrics);
     }
 
     // Rethrow exceptions from worker pool in thread order:

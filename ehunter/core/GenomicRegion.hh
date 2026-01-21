@@ -64,6 +64,11 @@ public:
 
     GenomicRegion extend(int length) const;
 
+    std::string toString() const
+    {
+        return std::to_string(contigIndex()) + " start:" + std::to_string(start()) + " end:" + std::to_string(end());
+    }
+
 private:
     int32_t contigIndex_;
     int64_t start_;

@@ -55,7 +55,9 @@ namespace ehunter
 LocusSpecification::LocusSpecification(
     RegionId locusId, ChromType typeOfChromLocusLocatedOn, std::vector<GenomicRegion> targetReadExtractionRegions,
     graphtools::Graph regionGraph, NodeToRegionAssociation referenceRegions, GenotyperParameters genotyperParams,
-    const bool useRFC1MotifAnalysis)
+    const bool useRFC1MotifAnalysis,
+    std::vector<PlotReadVisualization> plotConditions,
+    std::optional<nlohmann::json> extraFields)
     : locusId_(std::move(locusId))
     , typeOfChromLocusLocatedOn_(typeOfChromLocusLocatedOn)
     , targetReadExtractionRegions_(std::move(targetReadExtractionRegions))
@@ -63,6 +65,8 @@ LocusSpecification::LocusSpecification(
     , referenceRegions_(std::move(referenceRegions))
     , parameters_(std::move(genotyperParams))
     , useRFC1MotifAnalysis_(useRFC1MotifAnalysis)
+    , plotConditions_(std::move(plotConditions))
+    , extraFields_(std::move(extraFields))
 {
 }
 
@@ -116,7 +120,9 @@ LocusDescription::LocusDescription(
     std::vector<GenomicRegion> targetRegions, std::vector<GenomicRegion> offtargetRegions,
     std::vector<VariantTypeFromUser> variantTypesFromUser,
     std::optional<double> errorRate, std::optional<double> likelihoodRatioThreshold,
-    std::optional<double> minLocusCoverage)
+    std::optional<double> minLocusCoverage,
+    std::vector<PlotReadVisualization> plotConditions,
+    std::optional<nlohmann::json> extraFields)
     : locusId_(std::move(locusId))
     , chromType_(chromType)
     , locusStructure_(std::move(locusStructure))
@@ -134,6 +140,8 @@ LocusDescription::LocusDescription(
     , errorRate_(errorRate)
     , likelihoodRatioThreshold_(likelihoodRatioThreshold)
     , minLocusCoverage_(minLocusCoverage)
+    , plotConditions_(std::move(plotConditions))
+    , extraFields_(std::move(extraFields))
 {
 }
 

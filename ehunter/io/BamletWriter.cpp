@@ -18,7 +18,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-//
 
 #include "io/BamletWriter.hh"
 
@@ -43,48 +42,66 @@ using std::vector;
 namespace ehunter
 {
 
-static GraphReferenceMapping generateMapping(const ReferenceContigInfo& contigInfo, const LocusSpecification& locusSpec)
+void BamletWriter::initLocusSpec([[maybe_unused]] const LocusSpecification& locusSpec) {}
+
+void BamletWriter::write(
+    [[maybe_unused]] const std::string& locusId,
+    [[maybe_unused]] const std::string& fragmentName,
+    [[maybe_unused]] const std::string& query,
+    [[maybe_unused]] bool isFirstMate,
+    [[maybe_unused]] bool isReversed,
+    [[maybe_unused]] bool isMateReversed,
+    [[maybe_unused]] const graphtools::GraphAlignment& alignment)
 {
-    GraphReferenceMapping mapping(&locusSpec.regionGraph());
-
-    for (const auto& nodeAndRegion : locusSpec.referenceProjectionOfNodes())
-    {
-        auto nodeId = nodeAndRegion.first;
-        const auto& region = nodeAndRegion.second;
-        const auto& regionEncoding = encode(contigInfo, region);
-        ReferenceInterval referenceInterval = ReferenceInterval::parseRegion(regionEncoding);
-        mapping.addMapping(nodeId, referenceInterval);
-    }
-
-    return mapping;
 }
 
 // Set a base in the bit-backed read sequence representation of a BAM record. (4 bits per base).
 // Sets position i to base c in sequence s.
 #define bam1_seq_seti(s, i, c) ((s)[(i) >> 1] = ((s)[(i) >> 1] & 0xf << (((i)&1) << 2)) | (c) << ((~(i)&1) << 2))
 
-BamletWriter::BamletWriter(
+BamletWriterImpl::BamletWriterImpl(
     const string& bamletPath, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog)
     : filePtr_(hts_open(bamletPath.c_str(), "wb"), hts_close)
     , bamHeader_(bam_hdr_init(), bam_hdr_destroy)
     , contigInfo_(contigInfo)
-    , writeThread_(&BamletWriter::writeHtsAlignments, this)
+    , writeThread_(&BamletWriterImpl::writeHtsAlignments, this)
 {
     for (const auto& locusSpec : regionCatalog)
     {
-        graphReferenceMappings_.emplace(locusSpec.locusId(), generateMapping(contigInfo, locusSpec));
+        initLocusSpec(locusSpec);
     }
 
     writeHeader();
 }
 
-BamletWriter::~BamletWriter()
+void BamletWriterImpl::initLocusSpec(const LocusSpecification& locusSpec)
+{
+    if (graphReferenceMappings_.find(locusSpec.locusId()) != graphReferenceMappings_.end())
+    {
+        return;
+    }
+
+    GraphReferenceMapping graphReferenceMapping(&locusSpec.regionGraph());
+
+    for (const auto& nodeAndRegion : locusSpec.referenceProjectionOfNodes())
+    {
+        const graphtools::NodeId nodeId = nodeAndRegion.first;
+        const auto& region = nodeAndRegion.second;
+        const auto& regionEncoding = encode(contigInfo_, region);
+        ReferenceInterval referenceInterval = ReferenceInterval::parseRegion(regionEncoding);
+        graphReferenceMapping.addMapping(nodeId, referenceInterval);
+    }
+
+    graphReferenceMappings_.emplace(locusSpec.locusId(), graphReferenceMapping);
+}
+
+BamletWriterImpl::~BamletWriterImpl()
 {
     writeQueue_.push(nullptr);
     writeThread_.join();
 }
 
-void BamletWriter::writeHeader()
+void BamletWriterImpl::writeHeader()
 {
     const string initHeader = "@HD\tVN:1.4\tSO:unknown\n";
     bamHeader_->l_text = strlen(initHeader.c_str());
@@ -109,10 +126,14 @@ void BamletWriter::writeHeader()
     }
 }
 
-void BamletWriter::write(
+void BamletWriterImpl::write(
     const string& locusId, const string& fragmentName, const string& query, bool isFirstMate, bool isReversed,
     bool isMateReversed, const GraphAlignment& alignment)
 {
+    if (graphReferenceMappings_.find(locusId) == graphReferenceMappings_.end())
+    {
+        return;
+    }
     const GraphReferenceMapping& referenceMapping = graphReferenceMappings_.at(locusId);
     auto optionalReferenceInterval = referenceMapping.map(alignment.path());
 
@@ -155,7 +176,7 @@ static vector<int> extractQualityScores(const string& query)
     return qualities;
 }
 
-void BamletWriter::write(
+void BamletWriterImpl::write(
     const ReferenceInterval& interval, const string& fragmentName, const string& query, bool isFirstMate,
     bool isReversed, bool isMateReversed, const GraphAlignment& alignment)
 {
@@ -228,7 +249,7 @@ void BamletWriter::write(
     writeQueue_.push(htsAlignmentPtr);
 }
 
-void BamletWriter::writeHtsAlignments()
+void BamletWriterImpl::writeHtsAlignments()
 {
     bam1_t* htsAlignmentPtr(nullptr);
     while (true)

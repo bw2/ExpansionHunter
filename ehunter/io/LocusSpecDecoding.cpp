@@ -297,7 +297,9 @@ LocusSpecification decodeLocusSpecification(
         LocusSpecification locusSpec(
             locusDescription.locusId(), locusDescription.chromType(), std::move(targetReadExtractionRegions),
             std::move(locusGraph), std::move(referenceRegionsOfGraphNodes), std::move(parameters),
-            locusDescription.useRFC1MotifAnalysis());
+            locusDescription.useRFC1MotifAnalysis(),
+            locusDescription.plotConditions(),
+            locusDescription.extraFields());
         locusSpec.setOfftargetReadExtractionRegions(locusDescription.offtargetRegions());
 
         int variantIndex = 0;

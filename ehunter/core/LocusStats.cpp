@@ -34,7 +34,7 @@ namespace ehunter
 bool LocusStats::operator==(const LocusStats& other) const
 {
     return alleleCount_ == other.alleleCount_ && meanReadLen_ == other.meanReadLen_
-        && medianFragLen_ == other.medianFragLen_ && depth_ == other.depth_;
+        && meanFragLen_ == other.meanFragLen_ && depth_ == other.depth_;
 }
 
 std::ostream& operator<<(std::ostream& out, const LocusStats& stats)
@@ -141,7 +141,7 @@ void LocusStatsCalculator::recordFragLen(const GraphAlignment& readAlign, const 
 
 
 LocusStatsCalculatorFromReadAlignments::LocusStatsCalculatorFromReadAlignments(ChromType chromType, const GenomicRegion& locusRegion)
-    : chromType_(chromType), locusRegion_(locusRegion)
+    : chromType_(chromType), basesOverlappingLocus_(0), locusRegion_(locusRegion)
 {
 }
 

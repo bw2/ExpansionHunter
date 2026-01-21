@@ -21,6 +21,8 @@
 
 #include "locus/AlignmentBuffer.hh"
 
+#include <utility>
+
 namespace ehunter
 {
 namespace locus
@@ -31,7 +33,7 @@ namespace locus
 /// Note this isn't generalized to recognize all segments which are repeats in more complex locus structures, it should
 /// only work with a single expansion like RFC1.
 ///
-static bool testRepeatMotifOverlap(const graphtools::GraphAlignment& readAlign)
+[[maybe_unused]] static bool testRepeatMotifOverlap(const graphtools::GraphAlignment& readAlign)
 {
     for (size_t index(0); index < readAlign.size(); ++index)
     {
@@ -43,16 +45,19 @@ static bool testRepeatMotifOverlap(const graphtools::GraphAlignment& readAlign)
     return false;
 }
 
-void AlignmentBuffer::testAndPushRead(
-    const std::string& read, const bool isReversed, const graphtools::GraphAlignment& readAlignment)
+bool AlignmentBuffer::tryInsertFragment(AlignedFragment fragment)
 {
-    // Test if the read should be included in the buffer, for now just check that the read touches the repeat at all
-    if (not testRepeatMotifOverlap(readAlignment))
+    // NOTE: Keep all fragments for visualization parity with the legacy REViewer BAM workflow.
+    // If needed, re-enable this filter to limit to fragments overlapping the repeat region.
+    /*
+    if (!testRepeatMotifOverlap(fragment.readAlignment) && !testRepeatMotifOverlap(fragment.mateAlignment))
     {
-        return;
+        return false;
     }
+    */
 
-    bufData_.emplace_back(AlignmentBufferData { read, isReversed, readAlignment });
+    bufData_.emplace(fragment.fragmentId, std::move(fragment));
+    return true;
 }
 
 }

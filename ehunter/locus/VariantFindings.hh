@@ -30,6 +30,7 @@
 #include "genotyping/AlleleChecker.hh"
 #include "genotyping/RepeatGenotype.hh"
 #include "genotyping/SmallVariantGenotype.hh"
+#include "locus/AlleleQualityMetrics.hh"
 #include "locus/RFC1Status.hh"
 
 namespace ehunter
@@ -90,6 +91,10 @@ public:
 
     boost::optional<RFC1Status> getRFC1Status() const { return rfc1Status_; }
 
+    void setAlleleQualityMetrics(const RepeatAlleleQualityMetrics& metrics) { alleleQualityMetrics_ = metrics; }
+
+    boost::optional<RepeatAlleleQualityMetrics> alleleQualityMetrics() const { return alleleQualityMetrics_; }
+
     bool operator==(const RepeatFindings& other) const
     {
         return countsOfSpanningReads_ == other.countsOfSpanningReads_
@@ -105,6 +110,7 @@ private:
     boost::optional<RepeatGenotype> optionalGenotype_;
     GenotypeFilter genotypeFilter_;
     boost::optional<RFC1Status> rfc1Status_;
+    boost::optional<RepeatAlleleQualityMetrics> alleleQualityMetrics_;
 };
 
 class SmallVariantFindings : public VariantFindings

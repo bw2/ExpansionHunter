@@ -127,6 +127,12 @@ itself.
 * `OfftargetRegions` Array of regions where informative reads may misalign;
    only used for variants of type `RareRepeat`.
 
+* `PlotReadVisualization` Optional array of conditions that determine when to
+  generate SVG read visualizations for a locus. Each condition specifies a
+  threshold comparison on an allele size. When any condition is met, an SVG
+  file showing read alignments is generated. See
+  [Read Visualization Conditions](#read-visualization-conditions) below.
+
 
 ## Using regular expressions to define locus structure
 
@@ -147,6 +153,74 @@ interrupting DNA sequences.
 
 For example, a CAG repeat flanked by a CAG/CAT swap	is defined by expression
 (CAG)+CTGT(CAG|CAT).
+
+
+## Read visualization conditions
+
+ExpansionHunter can generate SVG read visualization images (similar to the
+standalone REViewer tool) directly during analysis. The `PlotReadVisualization`
+field in the catalog allows you to specify conditions for when images should be
+generated for each locus.
+
+### Command-line options
+
+* `--plot-all` Generate read visualizations for all loci (ignores catalog conditions)
+* `--disable-all-plots` Disable all image generation (overrides catalog conditions)
+
+### PlotReadVisualization format
+
+The `PlotReadVisualization` field is an array of condition objects. Each condition
+has three required fields:
+
+| Field       | Description                                  | Allowed values                           |
+|-------------|----------------------------------------------|------------------------------------------|
+| `If`        | Which allele to compare                      | `ShortAllele` or `LongAllele`            |
+| `Is`        | Comparison operator                          | `<`, `<=`, `=`, `==`, `!=`, `<>`, `>=`, `>` |
+| `Threshold` | Value to compare against (in repeat units)   | Any integer                              |
+
+If **any** condition in the array evaluates to true for the genotyped allele sizes,
+an SVG file will be generated with the naming pattern `<output-prefix>.<LocusId>.svg`.
+
+### Examples
+
+Visualize Huntington's disease locus when in the pathogenic range:
+
+```json
+{
+    "LocusId": "HTT",
+    "LocusStructure": "(CAG)*CAACAG(CCG)*",
+    "ReferenceRegion": ["4:3076604-3076660", "4:3076666-3076693"],
+    "VariantType": ["Repeat", "Repeat"],
+    "PlotReadVisualization": [
+        { "If": "LongAllele", "Is": ">=", "Threshold": 36 }
+    ]
+}
+```
+
+Visualize Friedreich's ataxia locus when in the pathogenic range:
+
+```json
+{
+    "LocusId": "FXN",
+    "LocusStructure": "(GAA)*",
+    "ReferenceRegion": "9:69037286-69037304",
+    "VariantType": "RareRepeat",
+    "PlotReadVisualization": [
+        { "If": "ShortAllele", "Is": ">=", "Threshold": 66 }
+    ]
+}
+```
+
+Multiple conditions with OR logic (image generated if **either** condition is true):
+
+```json
+{
+    "PlotReadVisualization": [
+        { "If": "LongAllele", "Is": ">=", "Threshold": 55 },
+        { "If": "ShortAllele", "Is": ">", "Threshold": 40 }
+    ]
+}
+```
 
 
 ## A note on creating custom variant catalogs

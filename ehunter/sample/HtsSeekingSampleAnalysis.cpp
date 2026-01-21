@@ -50,7 +50,6 @@
 using boost::optional;
 using ehunter::htshelpers::HtsFileSeeker;
 using ehunter::locus::LocusAnalyzer;
-using graphtools::AlignmentWriter;
 using std::ostream;
 using std::string;
 using std::unique_ptr;
@@ -180,11 +179,11 @@ FullReadPairs collectCandidateReads(
             }
             else
             {
-                spdlog::warn("Skipping {} because it is unpaired", read.readId());
+                spdlog::warn("Skipping {} because it is unpaired", read.readId().toString());
             }
         }
         const int numReadsCollected = readPairs.NumReads() - numReadsBeforeCollection;
-        spdlog::debug("Collected {} reads from {}", numReadsCollected, regionWithReads);
+        spdlog::debug("Collected {} reads from {}", numReadsCollected, regionWithReads.toString());
     }
 
     const int numReadsBeforeRecovery = readPairs.NumReads();
@@ -283,7 +282,7 @@ struct LocusThreadLocalData
 void processLocus(
     const int threadIndex, const ProgramParameters& programParams,
     const HeuristicParameters& heuristicParams, const RegionCatalog& regionCatalog,
-    locus::AlignWriterPtr alignmentWriter, SampleFindings& sampleFindings, LocusThreadSharedData& locusThreadSharedData,
+    BamletWriterPtr alignmentWriter, SampleFindings& sampleFindings, LocusThreadSharedData& locusThreadSharedData,
     std::vector<LocusThreadLocalData>& locusThreadLocalDataPool)
 {
     const InputPaths& inputPaths = programParams.inputPaths();
@@ -327,7 +326,8 @@ void processLocus(
 
             spdlog::info("Analyzing {}", locusId);
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
-            auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter));
+            auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter,
+                                                          programParams.enableAlleleQualityMetrics()));
             locusAnalyzers.emplace_back(std::move(analyzer));
             AnalyzerFinder analyzerFinder(locusAnalyzers);
 
@@ -336,7 +336,9 @@ void processLocus(
                 htsFileSeeker, mateExtractor);
 
             processReads(locusAnalyzers, readPairs, analyzerFinder, alignerSelector);
-            sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(sampleSex, boost::none);
+            sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(
+                sampleSex, boost::none,
+                programParams.outputPaths().outputPrefix());
         }
     }
     catch (const std::exception& e)
@@ -360,7 +362,7 @@ void processLocus(
 
 SampleFindings htsSeekingSampleAnalysis(
     const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
-    const RegionCatalog& regionCatalog, locus::AlignWriterPtr alignmentWriter)
+    const RegionCatalog& regionCatalog, BamletWriterPtr alignmentWriter)
 {
     const int threadCount = programParams.threadCount;
     if (threadCount > 1)

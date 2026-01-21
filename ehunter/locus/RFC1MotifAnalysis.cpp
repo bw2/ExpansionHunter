@@ -30,7 +30,6 @@
 #include "boost/range/numeric.hpp"
 
 #include "graphalign/GraphAlignment.hh"
-#include "locus/AlignmentBuffer.hh"
 #include "locus/RFC1MotifAnalysisUtil.hh"
 #include "locus/RFC1Status.hh"
 
@@ -123,7 +122,7 @@ using MotifsWithQualWeight_t = std::vector<std::pair<std::string, double>>;
 /// The quality weight is the fraction of high-quality bases in the motif.
 ///
 MotifsWithQualWeight_t getAllMotifsWithQualWeight(
-    const locus::AlignmentBufferData& alignmentData, const std::vector<uint8_t>& binaryQuals,
+    const RFC1ReadAlignment& alignmentData, const std::vector<uint8_t>& binaryQuals,
     boost::optional<std::pair<unsigned, unsigned>> usableBaseRange, const unsigned expectedMotifSize)
 {
     // A motif most be found at least this far from the edge of a read for it to be counted
@@ -202,14 +201,14 @@ using MotifCountMap_t = std::map<std::string, unsigned>;
 /// region
 ///
 MotifCountMap_t getHighQMotifMap(
-    const locus::AlignmentBuffer& alignmentBuffer, const unsigned expectedMotifSize, const unsigned minRepatMotifSpan)
+    const std::vector<RFC1ReadAlignment>& readAlignments, const unsigned expectedMotifSize, const unsigned minRepatMotifSpan)
 {
     // Only include motifs with a motif quality weight at least this high, where the motif quality weight is the
     // fraction of motif bases that are quantized as the "high quality" state.
     static const double minMotifQualWeight(1.0);
 
     MotifCountMap_t highQMotifMap;
-    for (const auto& alignmentData : alignmentBuffer.getBuffer())
+    for (const auto& alignmentData : readAlignments)
     {
         // Only look at reads which align to the repeat unit at least minRepeatMotifSpan times:
         if (getRepeatMotifSpan(alignmentData.readAlignment) < minRepatMotifSpan)
@@ -278,12 +277,12 @@ using HighQMotif_t = std::set<std::string>;
 /// read to be used as evidence
 ///
 HighQMotif_t gethighQMotifs(
-    const locus::AlignmentBuffer& alignmentBuffer, const unsigned expectedMotifSize, const unsigned minRepeatMotifSpan)
+    const std::vector<RFC1ReadAlignment>& readAlignments, const unsigned expectedMotifSize, const unsigned minRepeatMotifSpan)
 {
     // A motif must have at least this many high-quality observations before it is included in the highQ motif set
     static const unsigned minHighQMotifObservations(2);
 
-    const auto highQMotifMap = getHighQMotifMap(alignmentBuffer, expectedMotifSize, minRepeatMotifSpan);
+    const auto highQMotifMap = getHighQMotifMap(readAlignments, expectedMotifSize, minRepeatMotifSpan);
 
     HighQMotif_t highQMotifs;
     for (const auto& elem : highQMotifMap)
@@ -330,18 +329,18 @@ unsigned getPathogenicMotifTotal(
 /// \param[in] pathogenicMotifs Container of pathogenic motif strings
 ///
 MotifAndPurityData getMotifAndPurityData(
-    const locus::AlignmentBuffer& alignmentBuffer, const unsigned expectedMotifSize, const unsigned minRepatMotifSpan,
+    const std::vector<RFC1ReadAlignment>& readAlignments, const unsigned expectedMotifSize, const unsigned minRepatMotifSpan,
     const std::vector<std::string>& pathogenicMotifs)
 {
     // For a read to be counted in the pathogen_purities list, at least this many repeat motifs must be processed from
     // the read alignment
     static const unsigned minPurityMotifCountsPerRead(5);
 
-    const auto highQMotifs(gethighQMotifs(alignmentBuffer, expectedMotifSize, minRepatMotifSpan));
+    const auto highQMotifs(gethighQMotifs(readAlignments, expectedMotifSize, minRepatMotifSpan));
 
     MotifAndPurityData mpData;
 
-    for (const auto& alignmentData : alignmentBuffer.getBuffer())
+    for (const auto& alignmentData : readAlignments)
     {
         // Only look at reads which align to the repeat unit at least minRepeatMotifSpan times:
         if (getRepeatMotifSpan(alignmentData.readAlignment) < minRepatMotifSpan)
@@ -396,7 +395,7 @@ MotifAndPurityData getMotifAndPurityData(
 ///
 /// \return Spanning read count
 ///
-unsigned countSpanningReads(const locus::AlignmentBuffer& alignmentBuffer)
+unsigned countSpanningReads(const std::vector<RFC1ReadAlignment>& readAlignments)
 {
     // To count as spanning reads, each flank alignment should be at least this long
     static const int minFlankLength(10);
@@ -407,7 +406,7 @@ unsigned countSpanningReads(const locus::AlignmentBuffer& alignmentBuffer)
     static const double minFlankHighQBaseFraction(0.7);
 
     unsigned numSpanningReads(0);
-    for (const auto& alignmentData : alignmentBuffer.getBuffer())
+    for (const auto& alignmentData : readAlignments)
     {
         const auto nodeAlignmentLengths = getGraphNodeAlignmentLengths(alignmentData.readAlignment);
 
@@ -469,7 +468,7 @@ unsigned countSpanningReads(const locus::AlignmentBuffer& alignmentBuffer)
 /// \param[in] pathogenicMotifs Container of pathogenic motif strings
 ///
 MotifAndPurityData getMotifAndPurityDataNoSpan(
-    const locus::AlignmentBuffer& alignmentBuffer, const std::vector<unsigned>& alleleRepeatMotifCounts,
+    const std::vector<RFC1ReadAlignment>& readAlignments, const std::vector<unsigned>& alleleRepeatMotifCounts,
     const unsigned expectedMotifSize, const std::vector<std::string>& pathogenicMotifs)
 {
     // If both alleles are predicted to be expanded by EH, then this is the min number of repeats the read must span to
@@ -487,7 +486,7 @@ MotifAndPurityData getMotifAndPurityDataNoSpan(
     //
     const unsigned minRepeatMotifSpan = std::min(minAlleleRepeatMotifCount, predefinedShortRepeatMotifCount) + 2;
 
-    return getMotifAndPurityData(alignmentBuffer, expectedMotifSize, minRepeatMotifSpan, pathogenicMotifs);
+    return getMotifAndPurityData(readAlignments, expectedMotifSize, minRepeatMotifSpan, pathogenicMotifs);
 }
 
 /// Loci where EH predicts at least one allele where the motif count is at least this long are treated as expanded
@@ -706,19 +705,22 @@ void runRFC1MotifAnalysis(const locus::AlignmentBuffer& alignmentBuffer, LocusFi
     RepeatFindings& repeatFindings(
         *dynamic_cast<RepeatFindings*>(locusFindings.findingsForEachVariant.begin()->second.get()));
 
+    // Convert paired-fragment buffer to single-read format for RFC1 analysis
+    const auto readAlignments = extractRFC1ReadAlignments(alignmentBuffer);
+
     // Get standard motif map (including any spanning reads)
     //
     static const unsigned standardMinRepeatMotifSpan(0);
     const auto mpData
-        = getMotifAndPurityData(alignmentBuffer, expectedMotifSize, standardMinRepeatMotifSpan, pathogenicMotifs);
+        = getMotifAndPurityData(readAlignments, expectedMotifSize, standardMinRepeatMotifSpan, pathogenicMotifs);
 
     // Get 'no-spanning' motif map (attempting to exclude spanning reads)
     //
     const std::vector<unsigned> alleleRepeatMotifCounts(getAlleleRepeatMotifCounts(repeatFindings));
     const auto mpDataNoSpan
-        = getMotifAndPurityDataNoSpan(alignmentBuffer, alleleRepeatMotifCounts, expectedMotifSize, pathogenicMotifs);
+        = getMotifAndPurityDataNoSpan(readAlignments, alleleRepeatMotifCounts, expectedMotifSize, pathogenicMotifs);
 
-    const unsigned numSpanningReads(countSpanningReads(alignmentBuffer));
+    const unsigned numSpanningReads(countSpanningReads(readAlignments));
     const RFC1Status rfc1Status = getRFC1Status(
         alleleRepeatMotifCounts, mpData, mpDataNoSpan, numSpanningReads, expectedMotifSize, pathogenicMotifs,
         readLength, averageDepth);

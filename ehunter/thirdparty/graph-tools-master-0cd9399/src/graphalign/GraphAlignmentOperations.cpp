@@ -23,6 +23,7 @@
 #include <stdexcept>
 
 #include <boost/range/adaptor/reversed.hpp>
+#include "spdlog/spdlog.h"
 
 #include "graphalign/LinearAlignmentOperations.hh"
 
@@ -202,12 +203,22 @@ list<string> getQuerySequencesForEachNode(const GraphAlignment& graph_alignment,
 {
     list<string> sequence_pieces;
 
-    uint32_t query_pos = 0;
-    for (const auto& linear_alignment : graph_alignment)
+    try
     {
-        const string query_piece = query.substr(query_pos, linear_alignment.queryLength());
-        sequence_pieces.push_back(query_piece);
-        query_pos += linear_alignment.queryLength();
+        uint32_t query_pos = 0;
+        for (const auto& linear_alignment : graph_alignment)
+        {
+            spdlog::debug(
+                "Getting query sequence for node {}. query: {}, start: {}, length: {}",
+                linear_alignment.referenceStart(), query, query_pos, linear_alignment.queryLength());
+            const string query_piece = query.substr(query_pos, linear_alignment.queryLength());
+            sequence_pieces.push_back(query_piece);
+            query_pos += linear_alignment.queryLength();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("Error getting query sequences for query: {}", query);
     }
 
     return sequence_pieces;

@@ -39,7 +39,6 @@
 
 using ehunter::locus::initializeLocusAnalyzers;
 using ehunter::locus::LocusAnalyzer;
-using graphtools::AlignmentWriter;
 using std::string;
 using std::vector;
 
@@ -162,7 +161,8 @@ struct SampleFindingsThreadLocalData
 void analyzeLocus(
     const int threadIndex, const Sex sampleSex, vector<std::unique_ptr<LocusAnalyzer>>& locusAnalyzers,
     SampleFindings& sampleFindings, SampleFindingsThreadSharedData& sampleFindingsThreadSharedData,
-    std::vector<SampleFindingsThreadLocalData>& sampleFindingsThreadLocalData)
+    std::vector<SampleFindingsThreadLocalData>& sampleFindingsThreadLocalData,
+    const std::string& outputPrefix)
 {
     SampleFindingsThreadLocalData& sampleFindingsThreadData(sampleFindingsThreadLocalData[threadIndex]);
     std::string locusId = "Unknown";
@@ -185,7 +185,7 @@ void analyzeLocus(
 
             auto& locusAnalyzer(*locusAnalyzers[locusIndex]);
             locusId = locusAnalyzer.locusId();
-            sampleFindings[locusIndex] = locusAnalyzer.analyze(sampleSex, boost::none);
+            sampleFindings[locusIndex] = locusAnalyzer.analyze(sampleSex, boost::none, outputPrefix);
         }
     }
     catch (const std::exception& e)
@@ -210,7 +210,7 @@ void analyzeLocus(
 
 SampleFindings htsStreamingSampleAnalysis(
     const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
-    const RegionCatalog& regionCatalog, locus::AlignWriterPtr bamletWriter)
+    const RegionCatalog& regionCatalog, BamletWriterPtr bamletWriter)
 {
     // Setup thread-specific data structures and thread pool
     const InputPaths& inputPaths = programParams.inputPaths();
@@ -232,7 +232,8 @@ SampleFindings htsStreamingSampleAnalysis(
     spdlog::info("Initializing all {} loci", add_commas_at_thousands((unsigned long) locusAnalyzerCount));
     graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
     locusAnalyzerThreadSharedData.locusAnalyzers
-        = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount);
+        = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount,
+                                   programParams.enableAlleleQualityMetrics());
     GenomeQueryCollection genomeQuery(locusAnalyzerThreadSharedData.locusAnalyzers);
 
     spdlog::info("Streaming reads");
@@ -337,7 +338,8 @@ SampleFindings htsStreamingSampleAnalysis(
         sampleFindingsThreads.emplace_back(
             analyzeLocus, threadIndex, sampleSex, std::ref(locusAnalyzerThreadSharedData.locusAnalyzers),
             std::ref(sampleFindings), std::ref(sampleFindingsThreadSharedData),
-            std::ref(sampleFindingsThreadLocalDataPool));
+            std::ref(sampleFindingsThreadLocalDataPool),
+            programParams.outputPaths().outputPrefix());
     }
 
     // Rethrow exceptions from worker pool in thread order:

@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "graphio/AlignmentWriter.hh"
+#include "io/BamletWriter.hh"
 #include "core/Parameters.hh"
 #include "locus/LocusAnalyzer.hh"
 #include "locus/LocusFindings.hh"
@@ -35,6 +35,6 @@ namespace ehunter
 {
 
 void htsLowMemStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionCatalog,
-	const ProgramParameters& programParams, Reference& reference);
+	const ProgramParameters& programParams, Reference& reference, BamletWriterPtr bamletWriter);
 
 }

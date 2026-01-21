@@ -45,3 +45,39 @@ Records for small variants contain the following fields.
 * `CountOfAltReads` Number of reads supporting the alt allele
 * `CountOfRefReads` Number of reads supporting the ref allele
 * `ReferenceRegion` Reference region of the variant
+
+## Allele quality metrics
+
+When quality metrics are enabled (the default), repeat records will also include
+an `AlleleQualityMetrics` field containing per-allele quality information. This
+provides detailed metrics useful for filtering and quality assessment. See
+[AlleleQualityMetrics](07_AlleleQualityMetrics.md) for full documentation.
+
+Example:
+```json
+"AlleleQualityMetrics": {
+    "VariantId": "HTT",
+    "Alleles": [
+        {
+            "AlleleNumber": 1,
+            "AlleleSize": 19,
+            "Depth": 15.0,
+            "QD": 0.92,
+            "MeanInsertedBasesWithinRepeats": 0.0,
+            "MeanDeletedBasesWithinRepeats": 0.0,
+            "StrandBiasBinomialPhred": 0.0,
+            "LeftFlankNormalizedDepth": 1.2,
+            "RightFlankNormalizedDepth": 1.1,
+            "HighQualityUnambiguousReads": 12,
+            "ConfidenceIntervalDividedByAlleleSize": 0.0
+        }
+    ]
+}
+```
+
+## Catalog field passthrough
+
+When `--copy-catalog-fields` is used, any extra fields from the input variant
+catalog will be copied to each locus record in the output JSON. This allows
+annotation fields like `Gene`, `Diseases`, `PathogenicMin`, etc. to flow through
+without a separate join step.

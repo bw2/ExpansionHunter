@@ -20,7 +20,7 @@ set(Boost_USE_STATIC_LIBS ON)
 find_package(Boost 1.84 REQUIRED COMPONENTS program_options filesystem system iostreams)
 
 
-add_compile_options(-Wall -Werror -Wextra)
+add_compile_options(-Wall -Werror -Wextra -O2)
 
 enable_testing()
 
@@ -145,9 +145,11 @@ target_link_libraries(ExpansionHunter ExpansionHunterLib)
 
 add_executable(UnitTests
         tests/AlignMatrixTest.cpp
+        tests/AlignmentBufferTest.cpp
         tests/AlignmentClassifierTest.cpp
         tests/AlignmentSummaryTest.cpp
         tests/AlleleCheckerTest.cpp
+        tests/CatalogLoadingPlotTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
         tests/ConcurrentQueueTest.cpp
         tests/CountTableTest.cpp
@@ -158,12 +160,21 @@ add_executable(UnitTests
         tests/GraphBlueprintTest.cpp
         tests/GreedyAlignmentIntersectorTest.cpp
         tests/HighQualityBaseRunFinderTest.cpp
+        tests/LocusSpecificationPlotTest.cpp
         tests/LocusStatsTest.cpp
         tests/ReadSupportCalculatorTest.cpp
         tests/ReadTest.cpp
         tests/RegionGraphTest.cpp
         tests/RepeatAnalyzerTest.cpp
         tests/RepeatGenotypeTest.cpp
+        tests/ReviewerAlignsTest.cpp
+        tests/ReviewerFragLenFilterTest.cpp
+        tests/ReviewerGenotypePathsTest.cpp
+        tests/ReviewerLanePlotTest.cpp
+        tests/ReviewerOriginTest.cpp
+        tests/ReviewerPhasingTest.cpp
+        tests/ReviewerProjectionTest.cpp
+        tests/ReviewerWorkflowTest.cpp
         tests/RFC1MotifAnalysisUtilTest.cpp
         tests/SmallVariantGenotyperTest.cpp
         tests/SoftclippingAlignerTest.cpp
@@ -173,6 +184,7 @@ add_executable(UnitTests
         tests/WeightedPurityCalculatorTest.cpp
         )
 add_subdirectory(locus)
+add_subdirectory(reviewer)
 
 target_link_libraries(UnitTests ExpansionHunterLib GTest::GTest GTest::Main)
 

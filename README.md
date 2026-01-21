@@ -15,6 +15,14 @@ This modified version of ExpansionHunter introduces the following new features:
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
 - `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
   - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
+- **Integrated read visualization**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
+  - `--plot-all` generates read visualizations for every locus
+  - `--disable-all-plots` disables all image generation (overrides catalog settings)
+  - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
+- **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
+  - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
+  - `--disable-quality-metrics` disables quality metrics computation if not needed
+- **Catalog field passthrough**: `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
 
 
 Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.

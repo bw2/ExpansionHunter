@@ -19,7 +19,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-//
 
 #pragma once
 
@@ -45,16 +44,31 @@
 namespace ehunter
 {
 
+class BamletWriter : public graphtools::AlignmentWriter
+{
+public:
+    BamletWriter() = default;
+    ~BamletWriter() override = default;
+
+    virtual void initLocusSpec(const LocusSpecification& locusSpec);
+
+    void write(
+        const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isFirstMate,
+        bool isReversed, bool isMateReversed, const graphtools::GraphAlignment& alignment) override;
+};
+
 /// Supports multiple threads calling the write() method on the same object. To make this more efficient for high
 /// thread counts, this object creates its own asynchronous write thread to prevent calling threads from blocking
 /// on the final bam record write operation.
 ///
-class BamletWriter : public graphtools::AlignmentWriter, private boost::noncopyable
+class BamletWriterImpl : public BamletWriter, private boost::noncopyable
 {
 public:
-    BamletWriter(
+    BamletWriterImpl(
         const std::string& bamletPath, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog);
-    ~BamletWriter() override;
+    ~BamletWriterImpl() override;
+
+    void initLocusSpec(const LocusSpecification& locusSpec) override;
 
     /// Thread safe
     void write(
@@ -81,5 +95,7 @@ private:
     ConcurrentQueue<bam1_t*> writeQueue_;
     std::thread writeThread_;
 };
+
+using BamletWriterPtr = std::shared_ptr<BamletWriter>;
 
 }

@@ -26,6 +26,46 @@
 namespace ehunter
 {
 
+/// \brief Return true if alignment overlaps with segment 1 in the LocusStructure
+///
+/// This is the same filtering logic used in the original AlignmentBuffer::testAndPushRead()
+///
+static bool testRepeatMotifOverlap(const graphtools::GraphAlignment& readAlign)
+{
+    for (size_t index(0); index < readAlign.size(); ++index)
+    {
+        if (readAlign.path().getNodeIdByIndex(index) == 1)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<RFC1ReadAlignment> extractRFC1ReadAlignments(const locus::AlignmentBuffer& alignmentBuffer)
+{
+    std::vector<RFC1ReadAlignment> result;
+    result.reserve(alignmentBuffer.size());
+
+    for (const auto& entry : alignmentBuffer.getBuffer())
+    {
+        const auto& fragment = entry.second;
+
+        // Only extract the read (not mate) to match original RFC1 behavior.
+        // The old AlignmentBuffer::testAndPushRead() only ever buffered the read side.
+        if (testRepeatMotifOverlap(fragment.readAlignment))
+        {
+            result.push_back(RFC1ReadAlignment {
+                fragment.readBases,
+                !fragment.readIsForwardStrand,
+                fragment.readAlignment
+            });
+        }
+    }
+
+    return result;
+}
+
 namespace
 {
 

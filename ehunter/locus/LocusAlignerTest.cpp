@@ -24,7 +24,7 @@
 #include "gmock/gmock.h"
 
 #include "graphalign/GraphAlignmentOperations.hh"
-#include "graphio/AlignmentWriter.hh"
+#include "io/BamletWriter.hh"
 
 #include "io/GraphBlueprint.hh"
 #include "io/RegionGraph.hh"
@@ -33,14 +33,13 @@ using namespace ehunter;
 using namespace locus;
 
 using boost::optional;
-using graphtools::BlankAlignmentWriter;
 using graphtools::decodeGraphAlignment;
 using graphtools::GraphAlignment;
 
 LocusAligner makeStrAligner(graphtools::Graph* graph)
 {
     HeuristicParameters params(1000, 10, 20, true, graphtools::AlignerType::DAG_ALIGNER, 4, 0, 0, 4, 1);
-    auto writer = std::make_shared<BlankAlignmentWriter>();
+    auto writer = std::make_shared<BamletWriter>();
     return { "str", graph, params, writer, {} };
 }
 

@@ -70,11 +70,14 @@ struct UserParameters
     size_t startWith;
     size_t nLoci;
     bool compressOutputFiles = false;
-    bool generateImages = false;
+    bool plotAll = false;
+    bool disableAllPlots = false;
     string logLevel = "info";
     int threadCount = 1;
-    bool disableBamletOutput = false;
+    bool enableBamletOutput = false;
     bool cacheMates = false;
+    bool disableQualityMetrics = false;
+    bool copyCatalogFields = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -88,16 +91,18 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("version,v", "Print version number")
         ("reads", po::value<string>(&params.htsFilePath)->required(), "aligned reads BAM/CRAM file/URL")
         ("reference", po::value<string>(&params.referencePath)->required(), "reference genome FASTA file")
-        ("variant-catalog", po::value<string>(&params.catalogPath)->required(), "JSON file with variants to genotype")
+        ("catalog", po::value<string>(&params.catalogPath), "JSON file with variants to genotype")
         ("sort-catalog-by,b", po::value<string>(&params.sortCatalogBy)->default_value("position"), "sort the catalog by 'position' (to sort loci by their genomic coordinates), 'id' (to sort by LocusId), or 'none' (meaning don't sort). The sorting will happen before applying --start-with or --n-loci filters if specified.")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "prefix for the output files")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "sample sex; must be either 'male' or 'female'")
         ("locus,l", po::value<string>(&params.locus), "filter the input catalog by LocusId (or a list of comma-separated LocusIds)")
-        ("region,L", po::value<string>(), "filter the input catalog to this genomic region (e.g. chr1:1000-2000)")
+        ("region,L", po::value<string>(&params.region), "filter the input catalog to this genomic region (e.g. chr1:1000-2000)")
         ("start-with,s", po::value<size_t>(&params.startWith)->default_value(0), "after sorting the catalog, skip this many loci")
         ("n-loci,n", po::value<size_t>(&params.nLoci)->default_value(0), "after sorting the catalog, process only this many loci after applying --start-with")
         ("compress-output-files,z", po::bool_switch(&params.compressOutputFiles), "compress the vcf and json output files, adding .gz to their filenames")
-        //("generate-images", po::bool_switch(&params.generateImages), "Generate REViewer images for all genotyped loci")
+        ("plot-all", po::bool_switch(&params.plotAll), "Generate REViewer images for all loci")
+        ("disable-all-plots", po::bool_switch(&params.disableAllPlots), "Disable read visualization output (overrides any PlotReadVisualization conditions specified in the catalog)")
+        ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
     ;
     // clang-format on
 
@@ -111,6 +116,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
+        ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
     ;
     // clang-format on
 
@@ -120,7 +126,8 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     // clang-format off
     po::options_description internalOptions("Internal options (not stable in future releases)");
     internalOptions.add_options()
-    ("disable-bamlet-output", "Disable bamlet output")
+    ("enable-bamlet-output", "Enable bamlet output (realigned reads BAM file)")
+    ("variant-catalog", po::value<string>(), "Alias for --catalog (deprecated)")
     ;
     // clang-format on
 
@@ -145,7 +152,29 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         return {};
     }
 
-    params.disableBamletOutput = argumentMap.count("disable-bamlet-output");
+    params.enableBamletOutput = argumentMap.count("enable-bamlet-output");
+
+    // Handle --catalog and --variant-catalog (the latter is a hidden alias)
+    bool hasCatalog = argumentMap.count("catalog") && !argumentMap["catalog"].defaulted();
+    bool hasVariantCatalog = argumentMap.count("variant-catalog");
+
+    if (hasCatalog && hasVariantCatalog)
+    {
+        throw std::invalid_argument("Cannot specify both --catalog and --variant-catalog");
+    }
+
+    if (hasVariantCatalog)
+    {
+        params.catalogPath = argumentMap["variant-catalog"].as<string>();
+    }
+    else if (hasCatalog)
+    {
+        params.catalogPath = argumentMap["catalog"].as<string>();
+    }
+    else
+    {
+        throw std::invalid_argument("--catalog is required");
+    }
 
     po::notify(argumentMap);
 
@@ -195,6 +224,12 @@ static void assertIndexExists(const string& htsFilePath)
 
 void assertValidity(const UserParameters& userParameters)
 {
+    // Validate plot options are mutually exclusive (check early to catch before file validation)
+    if (userParameters.plotAll && userParameters.disableAllPlots)
+    {
+        throw std::invalid_argument("--plot-all and --disable-all-plots are mutually exclusive");
+    }
+
     // Validate analysis Mode:
     if ((userParameters.analysisMode != "seeking")
         and (userParameters.analysisMode != "low-mem-streaming")
@@ -225,12 +260,6 @@ void assertValidity(const UserParameters& userParameters)
         assertPathToExistingFile(userParameters.referencePath);
     }
     assertPathToExistingFile(userParameters.catalogPath);
-
-    if (userParameters.sortCatalogBy != "position" && userParameters.sortCatalogBy != "id"
-        && userParameters.sortCatalogBy != "none")
-    {
-        throw std::invalid_argument(userParameters.sortCatalogBy + " is not a valid sort order");
-    }
 
     // Validate output prefix
     assertWritablePath(userParameters.outputPrefix);
@@ -360,6 +389,26 @@ static graphtools::AlignerType decodeAlignerType(const string& alignerType)
     }
 }
 
+static SortCatalogBy decodeSortCatalogBy(const string& encoding)
+{
+    if (encoding == "position")
+    {
+        return SortCatalogBy::kPosition;
+    }
+    else if (encoding == "id")
+    {
+        return SortCatalogBy::kLocusId;
+    }
+    else if (encoding == "none")
+    {
+        return SortCatalogBy::kNone;
+    }
+    else
+    {
+        throw std::logic_error(encoding + " is not a valid sort order");
+    }
+}
+
 boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** argv)
 {
     auto optionalUserParameters = tryParsingUserParameters(argc, argv);
@@ -381,7 +430,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     }
     const string bamletPath = userParams.outputPrefix + "_realigned.bam";
     const string timingPath = userParams.outputPrefix + "_timing.tsv";
-    OutputPaths outputPaths(vcfPath, jsonPath, bamletPath, timingPath);
+    OutputPaths outputPaths(vcfPath, jsonPath, bamletPath, timingPath, userParams.outputPrefix);
     SampleParameters sampleParameters = decodeSampleParameters(userParams);
     HeuristicParameters heuristicParameters(
         userParams.regionExtensionLength, userParams.minLocusCoverage, userParams.qualityCutoffForGoodBaseCall,
@@ -409,11 +458,22 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         throw std::invalid_argument(message);
     }
 
+    SortCatalogBy sortCatalogBy;
+    try
+    {
+        sortCatalogBy = decodeSortCatalogBy(userParams.sortCatalogBy);
+    }
+    catch (std::logic_error&)
+    {
+        const string message = "Sort catalog by must be set to either position, id, or none";
+        throw std::invalid_argument(message);
+    }
+
     return ProgramParameters(
-        inputPaths, userParams.sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
+        inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
-        userParams.generateImages, logLevel, userParams.threadCount, userParams.disableBamletOutput,
-        userParams.cacheMates);
+        userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
+        userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields);
 }
 
 }

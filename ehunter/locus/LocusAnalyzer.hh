@@ -28,7 +28,7 @@
 #include <boost/optional.hpp>
 
 #include "graphalign/GappedAligner.hh"
-#include "graphio/AlignmentWriter.hh"
+#include "io/BamletWriter.hh"
 
 #include "core/GenomicRegion.hh"
 #include "core/LocusStats.hh"
@@ -55,21 +55,22 @@ enum class RegionType
     kOfftarget
 };
 
-using AlignWriterPtr = std::shared_ptr<graphtools::AlignmentWriter>;
-
 class LocusAnalyzer
 {
 public:
     using Align = graphtools::GraphAlignment;
     using Node = graphtools::NodeId;
 
-    LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, AlignWriterPtr writer);
+    LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, BamletWriterPtr writer,
+                  bool enableAlleleQualityMetrics = true);
 
     const std::string& locusId() const { return locusSpec_.locusId(); }
     const LocusSpecification& locusSpec() const { return locusSpec_; }
 
     void processMates(Read& read, Read* mate, RegionType regionType, graphtools::AlignerSelector& alignerSelector);
-    LocusFindings analyze(Sex sampleSex, boost::optional<double> genomeWideDepth);
+    LocusFindings analyze(
+        Sex sampleSex, boost::optional<double> genomeWideDepth,
+        const std::string& outputPrefix = "");
 
     const boost::optional<IrrPairFinder>& irrPairFinder() const { return irrPairFinder_; }
     void addIrrPairFinder(std::string motif);
@@ -84,6 +85,9 @@ private:
     void runVariantAnalysis(const Read& read, const Align& readAlign, const Read& mate, const Align& mateAlign);
 
     LocusSpecification locusSpec_;
+
+    // Whether to compute allele quality metrics (controlled by --disable-quality-metrics flag)
+    bool enableAlleleQualityMetrics_;
 
     // Read alignments are optionally buffered for custom additional analysis at certain loci
     std::shared_ptr<locus::AlignmentBuffer> alignmentBuffer_;

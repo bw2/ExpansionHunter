@@ -41,6 +41,12 @@ using boost::optional;
 using std::to_string;
 using std::vector;
 
+// Round double to 3 decimal places for cleaner JSON output
+static double round3(double value)
+{
+    return std::round(value * 1000.0) / 1000.0;
+}
+
 std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter)
 {
     jsonWriter.write(out);
@@ -49,11 +55,12 @@ std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter)
 
 JsonWriter::JsonWriter(
     const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
-    const SampleFindings& sampleFindings)
+    const SampleFindings& sampleFindings, bool copyCatalogFields)
     : sampleParams_(sampleParams)
     , contigInfo_(contigInfo)
     , regionCatalog_(regionCatalog)
     , sampleFindings_(sampleFindings)
+    , copyCatalogFields_(copyCatalogFields)
 {
 }
 
@@ -72,10 +79,22 @@ void JsonWriter::write(std::ostream& out)
         const std::string& locusId(locusSpec.locusId());
 
         Json locusRecord;
+
+        // Copy extra annotation fields from input catalog first (if enabled),
+        // so computed values take precedence in case of field name collisions
+        if (copyCatalogFields_ && locusSpec.extraFields().has_value())
+        {
+            const nlohmann::json& extraFields = locusSpec.extraFields().value();
+            for (auto it = extraFields.begin(); it != extraFields.end(); ++it)
+            {
+                locusRecord[it.key()] = it.value();
+            }
+        }
+
         locusRecord["LocusId"] = locusId;
         locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
         locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
-        locusRecord["FragmentLength"] = locusFindings.stats.medianFragLength();
+        locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
         locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
 
         Json variantRecords;
@@ -151,6 +170,35 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
         rfc1Results["Call"] = label(rfc1Status->call);
         rfc1Results["Description"] = rfc1Status->description;
         record_["RFC1MotifAnalysis"] = rfc1Results;
+    }
+
+    // Output AlleleQualityMetrics if present
+    const auto alleleQualityMetrics = repeatFindings.alleleQualityMetrics();
+    if (alleleQualityMetrics && alleleQualityMetrics->hasMetrics)
+    {
+        nlohmann::json metricsRecord;
+        metricsRecord["VariantId"] = alleleQualityMetrics->variantId;
+
+        nlohmann::json allelesArray = nlohmann::json::array();
+        for (const auto& allele : alleleQualityMetrics->alleles)
+        {
+            nlohmann::json alleleRecord;
+            alleleRecord["AlleleNumber"] = allele.alleleNumber;
+            alleleRecord["AlleleSize"] = allele.alleleSize;
+            alleleRecord["Depth"] = round3(allele.depth);
+            alleleRecord["QD"] = round3(allele.qd);
+            alleleRecord["MeanInsertedBasesWithinRepeats"] = round3(allele.meanInsertedBasesWithinRepeats);
+            alleleRecord["MeanDeletedBasesWithinRepeats"] = round3(allele.meanDeletedBasesWithinRepeats);
+            alleleRecord["StrandBiasBinomialPhred"] = round3(allele.strandBiasBinomialPhred);
+            alleleRecord["LeftFlankNormalizedDepth"] = round3(allele.leftFlankNormalizedDepth);
+            alleleRecord["RightFlankNormalizedDepth"] = round3(allele.rightFlankNormalizedDepth);
+            alleleRecord["HighQualityUnambiguousReads"] = allele.highQualityUnambiguousReads;
+            alleleRecord["ConfidenceIntervalDividedByAlleleSize"] = round3(allele.confidenceIntervalDividedByAlleleSize);
+
+            allelesArray.push_back(alleleRecord);
+        }
+        metricsRecord["Alleles"] = allelesArray;
+        record_["AlleleQualityMetrics"] = metricsRecord;
     }
 }
 

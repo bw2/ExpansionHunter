@@ -30,7 +30,7 @@ namespace locus
 {
 
 LocusAligner::LocusAligner(
-    std::string locusId, GraphPtr graph, const HeuristicParameters& params, AlignmentWriterPtr writer,
+    std::string locusId, GraphPtr graph, const HeuristicParameters& params, BamletWriterPtr writer,
     AlignmentBufferPtr buffer)
     : locusId_(std::move(locusId))
     , aligner_(graph, params.kmerLenForAlignment(), params.paddingLength(), params.seedAffixTrimLength())
@@ -57,10 +57,19 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
 
     if (readAlign && mateAlign)
     {
-        // Optionally buffer reads for specialized caller extensions:
+        // Optionally buffer fragments for specialized caller extensions (RFC1, REViewer):
         if (alignmentBuffer_)
         {
-            alignmentBuffer_->testAndPushRead(read.sequence(), read.isReversed(), *readAlign);
+            AlignedFragment fragment {
+                read.fragmentId(),
+                read.sequence(),
+                *readAlign,
+                !read.isReversed(),
+                mate->sequence(),
+                *mateAlign,
+                !mate->isReversed()
+            };
+            alignmentBuffer_->tryInsertFragment(std::move(fragment));
         }
 
         // Output realigned reads to bam:

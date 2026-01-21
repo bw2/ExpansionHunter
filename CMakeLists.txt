@@ -73,7 +73,7 @@ ExternalProject_Add(Boost
 
 
 ExternalProject_Add(spdlog
-	URL https://github.com/gabime/spdlog/archive/refs/tags/v1.11.0.tar.gz
+	URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.1.tar.gz
 	DOWNLOAD_EXTRACT_TIMESTAMP OLD
 	CMAKE_ARGS -DCMAKE_INSTALL_PREFIX:PATH=${installDir}
 		-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}

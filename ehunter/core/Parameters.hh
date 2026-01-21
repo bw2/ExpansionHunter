@@ -54,6 +54,13 @@ enum class LogLevel
     kError
 };
 
+enum class SortCatalogBy
+{
+    kPosition,
+    kLocusId,
+    kNone
+};
+
 class InputPaths
 {
 public:
@@ -77,11 +84,12 @@ private:
 class OutputPaths
 {
 public:
-    OutputPaths(std::string vcf, std::string json, std::string bamlet, std::string timing)
+    OutputPaths(std::string vcf, std::string json, std::string bamlet, std::string timing, std::string outputPrefix = "")
         : vcf_(vcf)
         , json_(json)
         , bamlet_(bamlet)
         , timing_(timing)
+        , outputPrefix_(outputPrefix)
     {
     }
 
@@ -89,12 +97,14 @@ public:
     const std::string& json() const { return json_; }
     const std::string& bamlet() const { return bamlet_; }
     const std::string& timing() const { return timing_; }
+    const std::string& outputPrefix() const { return outputPrefix_; }
 
 private:
     std::string vcf_;
     std::string json_;
     std::string bamlet_;
     std::string timing_;
+    std::string outputPrefix_;
 };
 
 class SampleParameters
@@ -179,14 +189,17 @@ class ProgramParameters
 {
 public:
     ProgramParameters(
-        InputPaths inputPaths, std::string sortCatalogBy, OutputPaths outputPaths, SampleParameters sample,
+        InputPaths inputPaths, SortCatalogBy sortCatalogBy, OutputPaths outputPaths, SampleParameters sample,
         HeuristicParameters heuristics, AnalysisMode analysisMode, const std::string locus, const std::string region,
-        size_t startWith, size_t nLoci, bool compressOutputFiles, bool generateImages, LogLevel logLevel,
-        const int initThreadCount, const bool initDisableBamletOutput, bool cacheMates)
+        size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
+        const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
+        bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false)
         : threadCount(initThreadCount)
-        , disableBamletOutput(initDisableBamletOutput)
+        , enableBamletOutput(initEnableBamletOutput)
+        , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
+        , copyCatalogFields_(initCopyCatalogFields)
         , inputPaths_(std::move(inputPaths))
-        , sortCatalogBy_(std::move(sortCatalogBy))
+        , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
         , sample_(std::move(sample))
         , heuristics_(std::move(heuristics))
@@ -196,14 +209,15 @@ public:
         , startWith_(startWith)
         , nLoci_(nLoci)
         , compressOutputFiles_(compressOutputFiles)
-        , generateImages_(generateImages)
+        , plotAll_(plotAll)
+        , disableAllPlots_(disableAllPlots)
         , logLevel_(logLevel)
         , cacheMates_(cacheMates)
     {
     }
 
     const InputPaths& inputPaths() const { return inputPaths_; }
-    std::string sortCatalogBy() const { return sortCatalogBy_; }
+    SortCatalogBy sortCatalogBy() const { return sortCatalogBy_; }
     const OutputPaths& outputPaths() const { return outputPaths_; }
     const SampleParameters& sample() const { return sample_; }
     const HeuristicParameters& heuristics() const { return heuristics_; }
@@ -213,16 +227,21 @@ public:
     size_t startWith() const { return startWith_; }
     size_t nLoci() const { return nLoci_; }
     bool compressOutputFiles() const { return compressOutputFiles_; }
-    bool generateImages() const { return generateImages_; }
+    bool plotAll() const { return plotAll_; }
+    bool disableAllPlots() const { return disableAllPlots_; }
     LogLevel logLevel() const { return logLevel_; }
     bool cacheMates() const { return cacheMates_; }
+    bool copyCatalogFields() const { return copyCatalogFields_; }
+    bool enableAlleleQualityMetrics() const { return enableAlleleQualityMetrics_; }
 
     int threadCount;
-    bool disableBamletOutput;
+    bool enableBamletOutput;
 
 private:
+    bool enableAlleleQualityMetrics_;
+    bool copyCatalogFields_;
     InputPaths inputPaths_;
-    std::string sortCatalogBy_;
+    SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;
     SampleParameters sample_;
     HeuristicParameters heuristics_;
@@ -232,7 +251,8 @@ private:
     size_t startWith_;
     size_t nLoci_;
     bool compressOutputFiles_;
-    bool generateImages_;
+    bool plotAll_;
+    bool disableAllPlots_;
     LogLevel logLevel_;
     bool cacheMates_;
 };

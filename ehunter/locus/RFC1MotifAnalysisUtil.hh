@@ -32,8 +32,37 @@
 
 #include "boost/optional.hpp"
 
+#include "graphalign/GraphAlignment.hh"
+#include "locus/AlignmentBuffer.hh"
+
 namespace ehunter
 {
+
+/// \brief Single-read alignment data for RFC1 motif analysis
+///
+/// This structure preserves the original RFC1 interface which operates on individual reads.
+/// It is populated from the new paired-fragment AlignmentBuffer via extractRFC1ReadAlignments().
+///
+struct RFC1ReadAlignment
+{
+    std::string read;
+    bool isReversed;
+    graphtools::GraphAlignment readAlignment;
+};
+
+/// \brief Extract read alignments from paired-fragment buffer for RFC1 analysis
+///
+/// RFC1 motif analysis operates on individual reads, not paired fragments.
+/// This function converts the paired-fragment AlignmentBuffer to a vector of
+/// single-read alignments suitable for RFC1 analysis.
+///
+/// Only the read (not mate) from each fragment is extracted, matching the original
+/// RFC1 behavior where only the read side was buffered.
+///
+/// \param alignmentBuffer The paired-fragment alignment buffer
+/// \return Vector of read alignments that overlap the repeat region
+///
+std::vector<RFC1ReadAlignment> extractRFC1ReadAlignments(const locus::AlignmentBuffer& alignmentBuffer);
 
 /// \brief Division with divide by zero guard
 ///

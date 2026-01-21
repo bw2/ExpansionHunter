@@ -31,7 +31,7 @@
 #include "locus/AlignmentBuffer.hh"
 
 #include "graphalign/GappedAligner.hh"
-#include "graphio/AlignmentWriter.hh"
+#include "io/BamletWriter.hh"
 
 namespace ehunter
 {
@@ -45,7 +45,6 @@ public:
     using Align = graphtools::GraphAlignment;
     using OptionalAlign = boost::optional<Align>;
     using AlignedPair = std::pair<OptionalAlign, OptionalAlign>;
-    using AlignmentWriterPtr = std::shared_ptr<graphtools::AlignmentWriter>;
     using AlignmentBufferPtr = std::shared_ptr<AlignmentBuffer>;
 
     ///
@@ -53,12 +52,14 @@ public:
     /// calling scenarios. Buffering is skipped with this is null.
     ///
     LocusAligner(
-        std::string locusId, GraphPtr graph, const HeuristicParameters& params, AlignmentWriterPtr writer,
+        std::string locusId, GraphPtr graph, const HeuristicParameters& params, BamletWriterPtr writer,
         AlignmentBufferPtr buffer);
 
     /// \param[in,out] alignerSelector A per-thread alignment workspace which mutates during alignment
     ///
     AlignedPair align(Read& read, Read* mate, graphtools::AlignerSelector& alignerSelector);
+
+    BamletWriterPtr bamletWriter() { return writer_; }
 
 private:
     OptionalAlign align(Read& read, graphtools::AlignerSelector& alignerSelector) const;
@@ -66,7 +67,7 @@ private:
     std::string locusId_;
     graphtools::GappedGraphAligner aligner_;
     OrientationPredictor orientationPredictor_;
-    AlignmentWriterPtr writer_;
+    BamletWriterPtr writer_;
     AlignmentBufferPtr alignmentBuffer_;
 };
 

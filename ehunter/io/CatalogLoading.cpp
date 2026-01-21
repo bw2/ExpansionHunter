@@ -117,6 +117,48 @@ static VariantTypeFromUser decodeVariantTypeFromUser(const string& encoding)
     }
 }
 
+static PlotThresholdAppliedTo decodePlotThresholdAppliedTo(const string& encoding)
+{
+    if (encoding == "ShortAllele")
+    {
+        return PlotThresholdAppliedTo::kShortAllele;
+    }
+    if (encoding == "LongAllele")
+    {
+        return PlotThresholdAppliedTo::kLongAllele;
+    }
+    throw std::logic_error("PlotReadVisualization 'If' field must be 'ShortAllele' or 'LongAllele', got: " + encoding);
+}
+
+static PlotThresholdComparisonOp decodePlotThresholdComparisonOp(const string& encoding)
+{
+    if (encoding == "<")
+    {
+        return PlotThresholdComparisonOp::kLessThan;
+    }
+    if (encoding == "<=")
+    {
+        return PlotThresholdComparisonOp::kLessThanOrEqual;
+    }
+    if (encoding == "=" || encoding == "==")
+    {
+        return PlotThresholdComparisonOp::kEqual;
+    }
+    if (encoding == "!=" || encoding == "<>")
+    {
+        return PlotThresholdComparisonOp::kNotEqual;
+    }
+    if (encoding == ">=")
+    {
+        return PlotThresholdComparisonOp::kGreaterThanOrEqual;
+    }
+    if (encoding == ">")
+    {
+        return PlotThresholdComparisonOp::kGreaterThan;
+    }
+    throw std::logic_error("PlotReadVisualization 'Is' field must be '<', '<=', '=', '==', '!=', '<>', '>=', or '>', got: " + encoding);
+}
+
 static vector<string> generateIds(const std::string& locusId, const Json& variantRegionEncodings)
 {
     if (variantRegionEncodings.size() == 1)
@@ -247,6 +289,61 @@ static LocusDescription loadLocusDescription(
         }
     }
 
+    std::vector<PlotReadVisualization> plotConditions;
+    static const std::string plotReadVisualizationKey("PlotReadVisualization");
+    if (checkIfFieldExists(locusJson, plotReadVisualizationKey))
+    {
+        const Json& record(locusJson[plotReadVisualizationKey]);
+        if (!record.is_array())
+        {
+            std::stringstream out;
+            out << record;
+            throw std::logic_error(
+                "Key '" + plotReadVisualizationKey + "' must be an array, observed value is '" + out.str() + "'");
+        }
+        plotConditions.reserve(record.size());
+        for (const auto& conditionJson : record)
+        {
+            if (!conditionJson.is_object())
+            {
+                std::stringstream out;
+                out << conditionJson;
+                throw std::logic_error(
+                    "Each element in '" + plotReadVisualizationKey + "' must be an object with 'If', 'Is', and 'Threshold' fields, got: " + out.str());
+            }
+            if (!checkIfFieldExists(conditionJson, "If") ||
+                !checkIfFieldExists(conditionJson, "Is") ||
+                !checkIfFieldExists(conditionJson, "Threshold"))
+            {
+                std::stringstream out;
+                out << conditionJson;
+                throw std::logic_error(
+                    "Each element in '" + plotReadVisualizationKey + "' must have 'If', 'Is', and 'Threshold' fields, got: " + out.str());
+            }
+            PlotReadVisualization condition;
+            condition.appliedTo = decodePlotThresholdAppliedTo(conditionJson["If"].get<string>());
+            condition.op = decodePlotThresholdComparisonOp(conditionJson["Is"].get<string>());
+            condition.threshold = conditionJson["Threshold"].get<int>();
+            plotConditions.push_back(condition);
+        }
+    }
+
+    // Define known fields that ExpansionHunter processes
+    static const std::set<std::string> knownFields = {
+        "LocusId", "ReferenceRegion", "LocusStructure", "VariantType",
+        "TargetRegion", "VariantId", "OfftargetRegions", "ErrorRate",
+        "LikelihoodRatioThreshold", "MinimalLocusCoverage",
+        "RFC1MotifAnalysis", "PlotReadVisualization"
+    };
+
+    // Capture any extra fields not in the known set
+    Json extraFields;
+    for (auto it = locusJson.begin(); it != locusJson.end(); ++it) {
+        if (knownFields.find(it.key()) == knownFields.end()) {
+            extraFields[it.key()] = it.value();
+        }
+    }
+
     const int64_t kExtensionLength = heuristicParams.regionExtensionLength();
     const auto firstReferenceRegion = referenceRegions.front();
     const auto lastReferenceRegion = referenceRegions.back();
@@ -276,7 +373,9 @@ static LocusDescription loadLocusDescription(
         variantTypesFromUser,
         errorRate,
         likelihoodRatioThreshold,
-        minimalLocusCoverage
+        minimalLocusCoverage,
+        plotConditions,
+        extraFields
     );
 }
 
@@ -339,25 +438,33 @@ void sortAndFilterCatalog(
 	LocusDescriptionCatalog& locusDescriptionCatalog, const ProgramParameters& programParams, const Reference& reference)
 
 {
-	if (programParams.sortCatalogBy() == "position") {
-		spdlog::info("Sorting catalog by genomic coordinates");
-		auto sortComparator = [](
-			const LocusDescription& a, const LocusDescription& b
-		) {
-			return a.locusContigIndex() < b.locusContigIndex() || (
-				a.locusContigIndex() == b.locusContigIndex() && (
-					a.locusAndFlanksStart() < b.locusAndFlanksStart() || (
-						a.locusAndFlanksStart() == b.locusAndFlanksStart() && a.locusAndFlanksEnd() < b.locusAndFlanksEnd())));
-		};
-		std::sort(locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(), sortComparator);
-	} else if (programParams.sortCatalogBy() == "id") {
-		spdlog::info("Sorting catalog alphabetically by LocusId");
-		auto sortComparator = [](
-			const LocusDescription& a, const LocusDescription& b
-		) {
-			return a.locusId() < b.locusId();
-		};
-		std::sort(locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(), sortComparator);
+	switch (programParams.sortCatalogBy()) {
+		case SortCatalogBy::kPosition: {
+			spdlog::info("Sorting catalog by genomic coordinates");
+			auto sortComparator = [](
+				const LocusDescription& a, const LocusDescription& b
+			) {
+				return a.locusContigIndex() < b.locusContigIndex() || (
+					a.locusContigIndex() == b.locusContigIndex() && (
+						a.locusAndFlanksStart() < b.locusAndFlanksStart() || (
+							a.locusAndFlanksStart() == b.locusAndFlanksStart() && a.locusAndFlanksEnd() < b.locusAndFlanksEnd())));
+			};
+			std::sort(locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(), sortComparator);
+			break;
+		}
+		case SortCatalogBy::kLocusId: {
+			spdlog::info("Sorting catalog alphabetically by LocusId");
+			auto sortComparator = [](
+				const LocusDescription& a, const LocusDescription& b
+			) {
+				return a.locusId() < b.locusId();
+			};
+			std::sort(locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(), sortComparator);
+			break;
+		}
+		case SortCatalogBy::kNone:
+			// No sorting needed
+			break;
 	}
 
     //if specified, apply the program.interval (which is a string like "chr1:1241251-64542152") to the locusDescriptionCatalog

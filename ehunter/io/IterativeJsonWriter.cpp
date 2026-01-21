@@ -46,8 +46,9 @@ using std::vector;
 IterativeJsonWriter::IterativeJsonWriter(
     const SampleParameters& sampleParams,
     const ReferenceContigInfo& contigInfo,
-    const std::string& outputFilePath)
-    : contigInfo_(contigInfo), firstRecord_(true)
+    const std::string& outputFilePath,
+    bool copyCatalogFields)
+    : contigInfo_(contigInfo), firstRecord_(true), copyCatalogFields_(copyCatalogFields)
 {
 	outFile_.open(outputFilePath, std::ios::out | std::ios::binary);
 	if (!outFile_)
@@ -78,10 +79,22 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
 	const std::string& locusId(locusSpec.locusId());
 
     Json locusRecord;
+
+    // Copy extra annotation fields from input catalog first (if enabled),
+    // so computed values take precedence in case of field name collisions
+    if (copyCatalogFields_ && locusSpec.extraFields().has_value())
+    {
+        const nlohmann::json& extraFields = locusSpec.extraFields().value();
+        for (auto it = extraFields.begin(); it != extraFields.end(); ++it)
+        {
+            locusRecord[it.key()] = it.value();
+        }
+    }
+
     locusRecord["LocusId"] = locusId;
     locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
     locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
-    locusRecord["FragmentLength"] = locusFindings.stats.medianFragLength();
+    locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
     locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
 
     Json variantRecords;

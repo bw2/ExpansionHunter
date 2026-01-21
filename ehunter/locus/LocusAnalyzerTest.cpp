@@ -52,7 +52,7 @@ TEST(CreatingLocusAnalyzer, TypicalParameters_Created)
     auto locusSpec = buildStrSpec("ATTCGA(C)*ATGTCG");
 
     HeuristicParameters heuristicParams(1000, 10, 20, true, AlignerType::DAG_ALIGNER, 4, 1, 5, 4, 1);
-    auto writer = std::make_shared<graphtools::BlankAlignmentWriter>();
+    auto writer = std::make_shared<BamletWriter>();
 
     graphtools::AlignerSelector selector(heuristicParams.alignerType());
     LocusAnalyzer locusAnalyzer(locusSpec, heuristicParams, writer);

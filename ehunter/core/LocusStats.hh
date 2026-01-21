@@ -43,17 +43,17 @@ class LocusStats
 {
 public:
     LocusStats(
-        AlleleCount alleleCount = AlleleCount::kOne, int meanReadLen = 0, int medianFragLen = 0, double depth = 0)
+        AlleleCount alleleCount = AlleleCount::kOne, int meanReadLen = 0, int meanFragLen = 0, double depth = 0)
         : alleleCount_(alleleCount)
         , meanReadLen_(meanReadLen)
-        , medianFragLen_(medianFragLen)
+        , meanFragLen_(meanFragLen)
         , depth_(depth)
     {
     }
 
     AlleleCount alleleCount() const { return alleleCount_; }
     int meanReadLength() const { return meanReadLen_; }
-    int medianFragLength() const { return medianFragLen_; }
+    int meanFragLength() const { return meanFragLen_; }
     double depth() const { return depth_; }
     void setDepth(double depth) { depth_ = depth; }
 
@@ -62,7 +62,7 @@ public:
 private:
     AlleleCount alleleCount_;
     int meanReadLen_;
-    int medianFragLen_;
+    int meanFragLen_;
     double depth_;
 };
 

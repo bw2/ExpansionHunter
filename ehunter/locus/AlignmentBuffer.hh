@@ -21,8 +21,8 @@
 
 #pragma once
 
+#include <map>
 #include <string>
-#include <vector>
 
 #include "graphalign/GraphAlignment.hh"
 
@@ -31,29 +31,52 @@ namespace ehunter
 namespace locus
 {
 
-struct AlignmentBufferData
+/// \brief A paired-end fragment with both read and mate alignments
+///
+/// Stores both reads of a fragment along with their graph alignments.
+/// Used by REViewer for SVG visualization and by RFC1 motif analysis.
+///
+struct AlignedFragment
 {
-    std::string read;
-    bool isReversed;
+    std::string fragmentId;
+
+    // Read 1
+    std::string readBases;
     graphtools::GraphAlignment readAlignment;
+    bool readIsForwardStrand;
+
+    // Read 2 (mate)
+    std::string mateBases;
+    graphtools::GraphAlignment mateAlignment;
+    bool mateIsForwardStrand;
 };
 
-/// \brief Buffer for read alignments at a single locus
+/// \brief Buffer for paired-end fragment alignments at a single locus
 ///
-/// These read alignments are not needed for standard repeat expansion calling, but are stored for special
-/// locus-specific calling extensions.
+/// Stores fragments (read pairs) that have both mates successfully aligned to the locus graph.
+/// This buffer supports:
+/// - REViewer SVG visualization (needs paired data for fragment length and phasing)
+/// - RFC1 motif analysis (uses read data only, via adapter)
 ///
-/// This buffer has currently been written to fulfil the requirements of the RFC1 motif analyzer only.
+/// Fragments are stored in a map keyed by fragment ID to enable efficient lookup and
+/// to ensure each fragment is stored only once.
 ///
 class AlignmentBuffer
 {
 public:
-    using buffer_t = std::vector<AlignmentBufferData>;
+    using buffer_t = std::map<std::string, AlignedFragment>;
 
-    /// Test if the given read meets inclusion criteria, and if so, store it in the buffer
-    void testAndPushRead(const std::string& read, bool isReversed, const graphtools::GraphAlignment& readAlignment);
+    /// Insert a fragment into the buffer if at least one mate overlaps the repeat region
+    ///
+    /// \param fragment The aligned fragment to insert
+    /// \return true if fragment was inserted, false if it was filtered out
+    bool tryInsertFragment(AlignedFragment fragment);
 
     const buffer_t& getBuffer() const { return bufData_; }
+
+    size_t size() const { return bufData_.size(); }
+
+    bool empty() const { return bufData_.empty(); }
 
 private:
     buffer_t bufData_;
