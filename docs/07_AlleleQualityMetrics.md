@@ -115,7 +115,7 @@ from the expected 50/50 ratio. Higher values indicate greater strand bias.
 | 10-20 | Moderate bias |
 | > 20  | Strong bias (potential mapping artifact) |
 
-### LeftFlankNormalizedDepth / RightFlankNormalizedDepth
+### LeftFlankNormalizedDepth and RightFlankNormalizedDepth
 
 Coverage in the 20bp flanking regions normalized by allele depth.
 
