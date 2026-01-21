@@ -51,6 +51,7 @@
 #include "io/SampleStats.hh"
 #include "io/VcfWriter.hh"
 #include "locus/VariantFindings.hh"
+#include "sample/HtsLowMemStreamingHelpers.hh"
 #include "sample/HtsLowMemStreamingSampleAnalysis.hh"
 #include "sample/HtsSeekingSampleAnalysis.hh"
 #include "sample/HtsStreamingSampleAnalysis.hh"
@@ -58,6 +59,76 @@
 namespace spd = spdlog;
 
 using namespace ehunter;
+
+// Check if all variants in a locus are homozygous reference (for batch mode filtering)
+static bool isLocusHomRefBatch(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
+{
+    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
+    {
+        const std::string& variantId = variantIdAndFindings.first;
+        const VariantFindings* findings = variantIdAndFindings.second.get();
+
+        // Check if it's a repeat variant
+        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(findings);
+        if (repeatFindings != nullptr)
+        {
+            if (!repeatFindings->optionalGenotype())
+            {
+                return false;  // No genotype means we can't determine hom-ref status
+            }
+            const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
+            const auto repeatNodeId = variantSpec.nodes().front();
+            const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
+            const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
+
+            if (!isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            // Check if it's a small variant
+            const SmallVariantFindings* smallVariantFindings = dynamic_cast<const SmallVariantFindings*>(findings);
+            if (smallVariantFindings != nullptr)
+            {
+                if (!smallVariantFindings->optionalGenotype())
+                {
+                    return false;  // No genotype means we can't determine hom-ref status
+                }
+                if (!smallVariantFindings->optionalGenotype()->isHomRef())
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// Filter out hom-ref loci from regionCatalog and sampleFindings
+static void filterHomRefLoci(
+    RegionCatalog& regionCatalog, SampleFindings& sampleFindings)
+{
+    RegionCatalog filteredRegionCatalog;
+    SampleFindings filteredSampleFindings;
+
+    const size_t locusCount = sampleFindings.size();
+    for (size_t locusIndex = 0; locusIndex < locusCount; ++locusIndex)
+    {
+        const LocusSpecification& locusSpec = regionCatalog[locusIndex];
+        const LocusFindings& locusFindings = sampleFindings[locusIndex];
+
+        if (!isLocusHomRefBatch(locusSpec, locusFindings))
+        {
+            filteredRegionCatalog.push_back(locusSpec);
+            filteredSampleFindings.push_back(std::move(sampleFindings[locusIndex]));
+        }
+    }
+
+    regionCatalog = std::move(filteredRegionCatalog);
+    sampleFindings = std::move(filteredSampleFindings);
+}
 
 template <typename T> static void writeToFile(std::string fileName, T streamable)
 {
@@ -136,10 +207,10 @@ int main(int argc, char** argv)
 
         const HeuristicParameters& heuristicParams = params.heuristics();
         const OutputPaths& outputPaths = params.outputPaths();
-        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kFastLowMemStreaming)
+        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
         {
             spdlog::info("Running sample analysis in {} mode",
-                params.analysisMode() == AnalysisMode::kFastLowMemStreaming ? "fast-low-mem-streaming" : "low-mem-streaming");
+                params.analysisMode() == AnalysisMode::kOptimizedStreaming ? "optimized-streaming" : "low-mem-streaming");
             BamletWriterPtr bamletWriter = params.enableBamletOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
                 : std::make_shared<BamletWriter>();
@@ -186,6 +257,12 @@ int main(int argc, char** argv)
         {
             spdlog::info("Running sample analysis in streaming mode");
             sampleFindings = htsStreamingSampleAnalysis(params, heuristicParams, regionCatalog, bamletWriter);
+        }
+
+        // Filter out hom-ref loci if --skip-hom-ref is enabled
+        if (params.skipHomRef())
+        {
+            filterHomRefLoci(regionCatalog, sampleFindings);
         }
 
         spdlog::info("Writing output to disk");

@@ -78,6 +78,7 @@ struct UserParameters
     bool cacheMates = false;
     bool disableQualityMetrics = false;
     bool copyCatalogFields = false;
+    bool skipHomRef = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -103,6 +104,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("plot-all", po::bool_switch(&params.plotAll), "Generate REViewer images for all loci")
         ("disable-all-plots", po::bool_switch(&params.disableAllPlots), "Disable read visualization output (overrides any PlotReadVisualization conditions specified in the catalog)")
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
+        ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Skip output of homozygous reference genotypes")
     ;
     // clang-format on
 
@@ -112,7 +114,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
-        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', or 'fast-low-mem-streaming')")
+        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', or 'optimized-streaming')")
         ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
@@ -233,7 +235,7 @@ void assertValidity(const UserParameters& userParameters)
     // Validate analysis Mode:
     if ((userParameters.analysisMode != "seeking")
         and (userParameters.analysisMode != "low-mem-streaming")
-        and (userParameters.analysisMode != "fast-low-mem-streaming")
+        and (userParameters.analysisMode != "optimized-streaming")
         and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
@@ -249,7 +251,7 @@ void assertValidity(const UserParameters& userParameters)
         }
     }
 
-    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "fast-low-mem-streaming")
+    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "optimized-streaming")
         and (userParameters.sortCatalogBy != "position"))
     {
         throw std::invalid_argument("--sort-catalog-by position must be specified when --analysis-mode is set to '" + userParameters.analysisMode);
@@ -335,9 +337,9 @@ AnalysisMode decodeAnalysisMode(const string& encoding)
     {
         return AnalysisMode::kLowMemStreaming;
     }
-    else if (encoding == "fast-low-mem-streaming")
+    else if (encoding == "optimized-streaming")
     {
-        return AnalysisMode::kFastLowMemStreaming;
+        return AnalysisMode::kOptimizedStreaming;
     }
     else
     {
@@ -473,7 +475,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
-        userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields);
+        userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef);
 }
 
 }

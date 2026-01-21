@@ -42,7 +42,7 @@ enum class AnalysisMode
     kSeeking,
     kStreaming,
     kLowMemStreaming,
-    kFastLowMemStreaming
+    kOptimizedStreaming
 };
 
 enum class LogLevel
@@ -193,11 +193,12 @@ public:
         HeuristicParameters heuristics, AnalysisMode analysisMode, const std::string locus, const std::string region,
         size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
-        bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false)
+        bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
         , copyCatalogFields_(initCopyCatalogFields)
+        , skipHomRef_(initSkipHomRef)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -233,6 +234,7 @@ public:
     bool cacheMates() const { return cacheMates_; }
     bool copyCatalogFields() const { return copyCatalogFields_; }
     bool enableAlleleQualityMetrics() const { return enableAlleleQualityMetrics_; }
+    bool skipHomRef() const { return skipHomRef_; }
 
     int threadCount;
     bool enableBamletOutput;
@@ -240,6 +242,7 @@ public:
 private:
     bool enableAlleleQualityMetrics_;
     bool copyCatalogFields_;
+    bool skipHomRef_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

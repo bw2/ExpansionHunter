@@ -27,6 +27,13 @@ namespace ehunter
 {
 
 
+bool isRepeatGenotypeHomRef(const RepeatGenotype& genotype, int referenceSizeInUnits)
+{
+    return genotype.shortAlleleSizeInUnits() == referenceSizeInUnits
+        && genotype.longAlleleSizeInUnits() == referenceSizeInUnits;
+}
+
+
 bool isAToTheLeftOfB(int32_t contigIdA, int64_t posA, int32_t contigIdB, int64_t posB, bool allowEquals) {
     if (contigIdA < contigIdB) {
         return true;
@@ -483,6 +490,15 @@ bool processLocusFast(
 	if (!num_repeats.empty()) {
 		repeatGenotype = RepeatGenotype(locusMotifSize, num_repeats);
 	}
+
+    // Check if genotype is hom-ref and skip output if --skip-hom-ref is enabled
+    if (params.skipHomRef() && repeatGenotype) {
+        const int referenceSizeInUnits = locusReferenceRegion.length() / locusMotifSize;
+        if (isRepeatGenotypeHomRef(*repeatGenotype, referenceSizeInUnits)) {
+            return true;  // Skip output for hom-ref loci
+        }
+    }
+
 	std::unique_ptr<VariantFindings> variantFindingsPtr = std::make_unique<RepeatFindings>(
 		countsOfSpanningReads, countsOfFlankingReads, countsOfInrepeatReads,
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());

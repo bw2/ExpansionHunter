@@ -117,6 +117,54 @@ struct LocusCache {
 using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 
 
+// Check if all variants in a locus are homozygous reference
+bool isLocusHomRef(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
+{
+    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
+    {
+        const string& variantId = variantIdAndFindings.first;
+        const VariantFindings* findings = variantIdAndFindings.second.get();
+
+        // Check if it's a repeat variant
+        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(findings);
+        if (repeatFindings != nullptr)
+        {
+            if (!repeatFindings->optionalGenotype())
+            {
+                // No genotype means we can't determine hom-ref status
+                return false;
+            }
+            const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
+            const auto repeatNodeId = variantSpec.nodes().front();
+            const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
+            const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
+
+            if (!isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            // Check if it's a small variant
+            const SmallVariantFindings* smallVariantFindings = dynamic_cast<const SmallVariantFindings*>(findings);
+            if (smallVariantFindings != nullptr)
+            {
+                if (!smallVariantFindings->optionalGenotype())
+                {
+                    // No genotype means we can't determine hom-ref status
+                    return false;
+                }
+                if (!smallVariantFindings->optionalGenotype()->isHomRef())
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 void processLocus(const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
                   const std::vector<shared_ptr<FullReadPair>>& readPairs,
                   graphtools::AlignerSelector& alignerSelector,
@@ -148,6 +196,12 @@ void processLocus(const ProgramParameters& params, Reference& reference, const L
     // genotype the locus
     LocusFindings locusFindings = locusAnalyzer.analyze(
         sampleSex, boost::none, params.outputPaths().outputPrefix());
+
+    // Check if --skip-hom-ref is enabled and all variants are hom-ref
+    if (params.skipHomRef() && isLocusHomRef(locusSpec, locusFindings))
+    {
+        return;  // Skip output for hom-ref loci
+    }
 
     jsonWriter.addRecord(locusSpec, locusFindings);
 
@@ -527,7 +581,7 @@ void doTheAnalysis(
 				// TODO check if # of reads >= minLocusCoverage and skip locus if not
 				//if fast mode, check for active regions and downsample the reads
 				bool needToProcessSlowly = true;
-				if (params.analysisMode() == AnalysisMode::kFastLowMemStreaming) {
+				if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
                     const bool doneGenotyping = processLocusFast(params, reference,
                         locusDescriptionCatalog[locusIndex], locusCache->readPairs, jsonWriter, vcfWriter);
 

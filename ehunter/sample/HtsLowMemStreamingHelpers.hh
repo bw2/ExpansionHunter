@@ -1,6 +1,7 @@
 #include "core/GenomicRegion.hh"
 #include "core/Parameters.hh"
 #include "core/Read.hh"
+#include "genotyping/RepeatGenotype.hh"
 #include "io/IterativeJsonWriter.hh"
 #include "io/IterativeVcfWriter.hh"
 #include "locus/LocusAnalyzer.hh"
@@ -28,6 +29,9 @@ bool doesAcontainB(int32_t contigIdA, int64_t startA, int64_t endA, int32_t cont
 // Check if regions A and B overlap
 bool doesAoverlapB(int32_t contigIdA, int64_t startA, int64_t endA, int32_t contigIdB, int64_t startB, int64_t endB);
 
+
+// Check if a RepeatGenotype is homozygous reference
+bool isRepeatGenotypeHomRef(const RepeatGenotype& genotype, int referenceSizeInUnits);
 
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
