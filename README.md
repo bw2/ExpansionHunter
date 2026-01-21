@@ -3,7 +3,7 @@
 This modified version of ExpansionHunter introduces the following new features:
 - **Converts N chars error to warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
 - **New analysis modes**:
-  - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory at runtime
+  - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory.
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by uses simple heuristics to detect which loci are almost certainly homozygous reference, and avoids running the full computationally-expensive genotyping algorithm on them. Its memory usage is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
 - **Misc. new convenience features and options**:
   - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
