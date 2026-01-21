@@ -5,6 +5,14 @@ This modified version of ExpansionHunter introduces the following new features:
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory.
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by uses simple heuristics to detect which loci are almost certainly homozygous reference, and avoids running the full computationally-expensive genotyping algorithm on them. Its memory usage is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
+- **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
+  - `--plot-all` generates read visualizations for every locus
+  - `--disable-all-plots` disables all image generation (overrides catalog settings)
+  - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
+- **Consensus allele sequences**: Consensus neucleotide sequences are now reported for each allele. This is a simplistic first implementation that simply collapses confidentally-placed reads from the REViewer visualization into a nucleotide sequence. Positions not covered by confidentally-placed reads are reported as N's. Insertions and deletions within reads are not incorporated into the consensus sequence. 
+- **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
+  - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
+  - `--disable-quality-metrics` disables quality metrics computation if not needed
 - **Misc. new convenience features and options**:
   - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
   - `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
@@ -17,13 +25,6 @@ This modified version of ExpansionHunter introduces the following new features:
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
-- **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
-  - `--plot-all` generates read visualizations for every locus
-  - `--disable-all-plots` disables all image generation (overrides catalog settings)
-  - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
-- **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
-  - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
-  - `--disable-quality-metrics` disables quality metrics computation if not needed
 - **Cache to speed up seeking mode**: `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
   - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
 
