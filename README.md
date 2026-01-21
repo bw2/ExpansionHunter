@@ -1,4 +1,4 @@
-### ExpansionHunter-dev
+### ExpansionHunter fork - under active development
 
 This modified version of ExpansionHunter introduces the following new features:
 - **Converts N chars error to warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
