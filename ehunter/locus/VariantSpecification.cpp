@@ -35,8 +35,7 @@ void VariantSpecification::assertConsistency() const
 {
     const bool variantIsRepeat = classification_.type == VariantType::kRepeat;
     const bool variantIsDeletionOrSwap = classification_.type == VariantType::kSmallVariant
-        && (classification_.subtype == VariantSubtype::kDeletion || classification_.subtype == VariantSubtype::kSwap
-            || classification_.subtype == VariantSubtype::kSMN);
+        && (classification_.subtype == VariantSubtype::kDeletion || classification_.subtype == VariantSubtype::kSwap);
     const bool variantIsInsertion
         = classification_.type == VariantType::kSmallVariant && classification_.subtype == VariantSubtype::kInsertion;
 
@@ -96,9 +95,6 @@ std::ostream& operator<<(std::ostream& out, VariantSubtype subtype)
         break;
     case VariantSubtype::kSwap:
         out << "Swap";
-        break;
-    case VariantSubtype::kSMN:
-        out << "SMN";
         break;
     }
 

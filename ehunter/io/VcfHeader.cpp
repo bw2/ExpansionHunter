@@ -104,14 +104,6 @@ void FieldDescriptionWriter::visit(const SmallVariantFindings* smallVariantFindi
     addCommonFields();
     tryAddingFieldDescription(
         FieldType::kFormat, "AD", ".", "Integer", "Allelic depths for the ref and alt alleles in the order listed");
-    if (variantSpec_.classification().subtype == VariantSubtype::kSMN)
-    {
-        tryAddingFieldDescription(
-            FieldType::kFormat, "RPL", "1", "Float", "Log-Likelihood ratio for the presence of the reference allele");
-        tryAddingFieldDescription(
-            FieldType::kFormat, "DST", "1", "Character",
-            "Result ('+' detected, '-' undetected, '?' undetermined) of the test represented by the variant");
-    }
 }
 
 void FieldDescriptionWriter::tryAddingFieldDescription(

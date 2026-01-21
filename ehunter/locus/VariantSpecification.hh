@@ -51,8 +51,7 @@ enum class VariantSubtype
     kRareRepeat,
     kInsertion,
     kDeletion,
-    kSwap,
-    kSMN
+    kSwap
 };
 
 struct VariantClassification

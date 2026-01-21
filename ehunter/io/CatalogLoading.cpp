@@ -107,14 +107,7 @@ static VariantTypeFromUser decodeVariantTypeFromUser(const string& encoding)
     {
         return VariantTypeFromUser::kSmallVariant;
     }
-    if (encoding == "SMN")
-    {
-        return VariantTypeFromUser::kSMN;
-    }
-    else
-    {
-        throw std::logic_error("Encountered invalid variant type: " + encoding);
-    }
+    throw std::logic_error("Encountered invalid variant type: " + encoding);
 }
 
 static PlotThresholdAppliedTo decodePlotThresholdAppliedTo(const string& encoding)

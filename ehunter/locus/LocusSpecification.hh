@@ -146,8 +146,7 @@ enum class VariantTypeFromUser
 {
     kRareRepeat,
     kCommonRepeat,
-    kSmallVariant,
-    kSMN
+    kSmallVariant
 };
 
 class LocusDescription

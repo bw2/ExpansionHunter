@@ -92,14 +92,6 @@ const VariantSpecification& LocusSpecification::getVariantSpecById(const std::st
 
 bool LocusSpecification::requiresGenomeWideDepth() const
 {
-    for (const auto& variantSpec : variantSpecs_)
-    {
-        if (variantSpec.classification().subtype == VariantSubtype::kSMN)
-        {
-            return true;
-        }
-    }
-
     return false;
 }
 
