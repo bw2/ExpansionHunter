@@ -23,6 +23,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
   - `--disable-quality-metrics` disables quality metrics computation if not needed
 - **Catalog field passthrough**: `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
+- **Skip homozygous reference**: `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
 
 
 Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.
