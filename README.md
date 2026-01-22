@@ -5,12 +5,12 @@ This modified version of ExpansionHunter introduces the following new features:
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory.
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by uses simple heuristics to detect which loci are almost certainly homozygous reference, and avoids running the full computationally-expensive genotyping algorithm on them. Its memory usage is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
-- **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md))
+- **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md)).
   - `--plot-all` generates read visualizations for every locus
   - `--disable-all-plots` disables all image generation (overrides catalog settings)
   - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
-- **Consensus allele sequences**: Consensus nucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidently-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidently-placed reads are reported as N's.
-- **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
+- **Consensus allele sequences**: Consensus nucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidently-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidently-placed reads are reported as N's (see [Consensus Sequences docs](docs/05_OutputJsonFiles.md#consensus-sequences)).
+- **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md)).
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
   - `--disable-quality-metrics` disables quality metrics computation if not needed
 - **Misc. new convenience features and options**:
