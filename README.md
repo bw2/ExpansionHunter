@@ -9,7 +9,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--plot-all` generates read visualizations for every locus
   - `--disable-all-plots` disables all image generation (overrides catalog settings)
   - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
-- **Consensus allele sequences**: Consensus neucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidentally-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidentally-placed reads are reported as N's.
+- **Consensus allele sequences**: Consensus nucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidently-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidently-placed reads are reported as N's.
 - **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md))
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
   - `--disable-quality-metrics` disables quality metrics computation if not needed
