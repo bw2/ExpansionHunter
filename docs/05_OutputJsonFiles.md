@@ -93,7 +93,7 @@ Example:
 "ConsensusSequencesReadSupport": ["555566", "888877763333333333333333300022"]
 ```
 
-These fields are useful for:
+These fields may be useful for:
 - Analyzing repeat interruption patterns (e.g., CAA interruptions in CAG repeats)
 - Identifying sequence motif composition 
 - Assessing confidence at each position based on read support depth
