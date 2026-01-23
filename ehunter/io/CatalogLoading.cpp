@@ -460,22 +460,39 @@ void sortAndFilterCatalog(
 			break;
 	}
 
-    //if specified, apply the program.interval (which is a string like "chr1:1241251-64542152") to the locusDescriptionCatalog
+    //if specified, apply the program.interval (which is a string like "chr1:1241251-64542152" or just "chr1" or "1") to the locusDescriptionCatalog
     if (programParams.region().size() > 0) {
-        const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(programParams.region());
-        const auto intervalContigIndex = reference.contigInfo().getContigId(interval.contig);
+        const std::string& regionStr = programParams.region();
 
-        //apply filter
-        // interval.contig //interval.start //interval.end
-        locusDescriptionCatalog.erase(
-            std::remove_if(
-                locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(),
-                [&interval, &intervalContigIndex](const LocusDescription& locusDescription) {
-                    return locusDescription.locusContigIndex() != intervalContigIndex ||
-                        locusDescription.locusAndFlanksEnd() < interval.start ||
-                        locusDescription.locusAndFlanksStart() > interval.end;
-                }),
-            locusDescriptionCatalog.end());
+        // Check if region contains a colon (full region string) or is just a chromosome name
+        if (regionStr.find(':') != std::string::npos) {
+            // Full region string: chr:start-end
+            const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(regionStr);
+            const auto intervalContigIndex = reference.contigInfo().getContigId(interval.contig);
+
+            //apply filter
+            // interval.contig //interval.start //interval.end
+            locusDescriptionCatalog.erase(
+                std::remove_if(
+                    locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(),
+                    [&interval, &intervalContigIndex](const LocusDescription& locusDescription) {
+                        return locusDescription.locusContigIndex() != intervalContigIndex ||
+                            locusDescription.locusAndFlanksEnd() < interval.start ||
+                            locusDescription.locusAndFlanksStart() > interval.end;
+                    }),
+                locusDescriptionCatalog.end());
+        } else {
+            // Chromosome-only: filter to just that chromosome
+            const auto chromContigIndex = reference.contigInfo().getContigId(regionStr);
+
+            locusDescriptionCatalog.erase(
+                std::remove_if(
+                    locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(),
+                    [&chromContigIndex](const LocusDescription& locusDescription) {
+                        return locusDescription.locusContigIndex() != chromContigIndex;
+                    }),
+                locusDescriptionCatalog.end());
+        }
     }
 
     // discard the first userParams.startWith() loci

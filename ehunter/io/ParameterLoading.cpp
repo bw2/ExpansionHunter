@@ -279,11 +279,16 @@ void assertValidity(const UserParameters& userParameters)
     }
 
     if (!userParameters.region.empty()) {
-        try {
-            graphtools::ReferenceInterval::parseRegion(userParameters.region);
-        } catch (const std::exception& e) {
-            throw std::invalid_argument(userParameters.region + " is not a valid genomic region");
+        // If region contains a colon, it must be a full region string (chr:start-end)
+        // Otherwise, it's just a chromosome name (chr22 or 22)
+        if (userParameters.region.find(':') != std::string::npos) {
+            try {
+                graphtools::ReferenceInterval::parseRegion(userParameters.region);
+            } catch (const std::exception& e) {
+                throw std::invalid_argument(userParameters.region + " is not a valid genomic region");
+            }
         }
+        // If no colon, assume it's a chromosome name - will be validated during catalog loading
     }
 
     const int kMinExtensionLength = 500;
