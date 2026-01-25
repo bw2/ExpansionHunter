@@ -324,7 +324,7 @@ void processLocus(
                 locusMotif += motif;
             }
 
-            spdlog::info("Analyzing {}", locusId);
+            spdlog::info("Analyzing locus {}: {}", locusIndex + 1, locusId);
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
             auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter,
                                                           programParams.enableAlleleQualityMetrics()));

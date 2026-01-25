@@ -28,6 +28,6 @@
 namespace ehunter
 {
 
-const std::string kProgramVersion = "ExpansionHunter-dev v2025-03-03";
+const std::string kProgramVersion = "ExpansionHunter-bw2 v" GIT_COMMIT_DATE;
 
 }

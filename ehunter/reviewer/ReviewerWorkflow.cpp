@@ -187,7 +187,7 @@ std::optional<ReviewerContext> runReviewerWorkflow(
         }
         catch (const std::exception& e)
         {
-            spdlog::warn("REViewer workflow: Unable to determine fragment length for {}: {}", locusId, e.what());
+            // Silently fall back to default fragment length
             effectiveMeanFragLen = 350;  // Default fallback
         }
     }

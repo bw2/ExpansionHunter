@@ -206,7 +206,7 @@ LocusFindings LocusAnalyzer::analyze(
         }
         catch (const std::exception& e)
         {
-            spdlog::error("Failed to run reviewer workflow for locus {}: {}", locusSpec_.locusId(), e.what());
+            spdlog::debug("Failed to run reviewer workflow for locus {}: {}", locusSpec_.locusId(), e.what());
         }
     }
 

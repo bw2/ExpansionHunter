@@ -299,13 +299,10 @@ void doTheAnalysis(
         return;
     }
 
-    // -----  TODO remove these (only for debugging) -------
-    int processedLociCounter = 0;
-	std::unordered_map<int, int> locusIndicesProcessedSlowlyReadCounts;
-	std::unordered_map<int, float> locusIndicesProcessedSlowlyTiming;
+    int fastGenotypedCount = 0;
+    int fullGenotypedCount = 0;
 
     boost::timer::progress_display progressBar(locusDescriptionCatalog.size());
-    // -----  TODO remove these -------
 
     const int threadCount = params.threadCount;
     const unsigned htsDecompressionThreads(std::min(threadCount, 12));
@@ -567,10 +564,6 @@ void doTheAnalysis(
                 //std::cout << "Processing locusCache " << locusIndex << std::endl;
                 //delete the locusCache from the locusCachesMap
 
-                //TODO update a progress bar here
-
-                processedLociCounter += 1;
-
 				if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
 					//a locus with 0 coverage won't have a locusCache. Skip analyzing it.
 					//TODO handle missing / empty LocusCache?
@@ -586,6 +579,9 @@ void doTheAnalysis(
                         locusDescriptionCatalog[locusIndex], locusCache->readPairs, jsonWriter, vcfWriter);
 
                     needToProcessSlowly = !doneGenotyping;
+                    if (doneGenotyping) {
+                        fastGenotypedCount++;
+                    }
 
 					//downsampleReads(locusCache->readPairs, locusDescriptionCatalog[locusIndex])
 					//int readPairSignalCounter = 0;
@@ -628,10 +624,7 @@ void doTheAnalysis(
 				}
 
 				if (needToProcessSlowly) {
-					//std::cout << "\n";
-			        auto start = std::chrono::steady_clock::now();
-
-					//spdlog::info("Processing {} read pairs for locus {}", add_commas_at_thousands(locusCache->readPairs.size()), locusDescriptionCatalog[locusIndex].locusId);
+					fullGenotypedCount++;
 					try {
                         graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
 						processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
@@ -639,12 +632,7 @@ void doTheAnalysis(
 					} catch (const std::exception& e) {
 						spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
 					}
-			        auto end = std::chrono::steady_clock::now();
-					auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-					locusIndicesProcessedSlowlyReadCounts[locusIndex] = locusCache->readPairs.size();
-			        locusIndicesProcessedSlowlyTiming[locusIndex] = static_cast<float>(duration)/1000.0;
-
-				}	//spdlog::info("Processed  {} read pairs for locus {}", add_commas_at_thousands(locusCache->readPairs.size()), locusDescriptionCatalog[locusIndex].locusId);
+				}
 
 				try {
 					//TODO clear locusCache?
@@ -670,7 +658,14 @@ void doTheAnalysis(
     jsonWriter.close();
     vcfWriter.close();
 
-    spdlog::info("Done processing {} loci", add_commas_at_thousands(processedLociCounter));
+    const int totalProcessed = fastGenotypedCount + fullGenotypedCount;
+    if (totalProcessed > 0) {
+        const float fastPct = 100.0f * fastGenotypedCount / totalProcessed;
+        const float fullPct = 100.0f * fullGenotypedCount / totalProcessed;
+        spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
+            add_commas_at_thousands(fastGenotypedCount), fastPct,
+            add_commas_at_thousands(fullGenotypedCount), fullPct);
+    }
 }
 
 

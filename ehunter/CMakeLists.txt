@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.13)
 project(ExpansionHunter LANGUAGES CXX)
 
+# Get git commit date for version string
+execute_process(
+    COMMAND git log -1 --format=%cs
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_DATE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT GIT_COMMIT_DATE)
+    set(GIT_COMMIT_DATE "unknown")
+endif()
+add_compile_definitions(GIT_COMMIT_DATE="${GIT_COMMIT_DATE}")
+
 
 set(CMAKE_CXX_STANDARD 17)
 
