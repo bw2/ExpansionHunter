@@ -24,8 +24,10 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -373,6 +375,71 @@ static LocusDescription loadLocusDescription(
 }
 
 
+/// \brief Extract the next JSON object from a stream, handling nested braces
+///
+/// Returns true if an object was found, false if end of array/stream reached
+static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
+{
+    objectStr.clear();
+    char c;
+
+    // Skip whitespace and commas to find the start of next object or end of array
+    while (stream.get(c)) {
+        if (c == '{') {
+            break;  // Found start of object
+        }
+        if (c == ']') {
+            return false;  // End of array
+        }
+        // Skip whitespace, commas, and array start bracket
+        if (c == '[' || c == ',' || std::isspace(c)) {
+            continue;
+        }
+        // Unexpected character
+        throw std::runtime_error("Unexpected character in JSON array: " + std::string(1, c));
+    }
+
+    if (stream.eof()) {
+        return false;
+    }
+
+    // Now parse the complete object, tracking brace depth
+    objectStr = "{";
+    int braceDepth = 1;
+    bool inString = false;
+    bool escape = false;
+
+    while (stream.get(c) && braceDepth > 0) {
+        objectStr += c;
+
+        if (escape) {
+            escape = false;
+            continue;
+        }
+
+        if (c == '\\' && inString) {
+            escape = true;
+            continue;
+        }
+
+        if (c == '"') {
+            inString = !inString;
+            continue;
+        }
+
+        if (!inString) {
+            if (c == '{') {
+                braceDepth++;
+            } else if (c == '}') {
+                braceDepth--;
+            }
+        }
+    }
+
+    return braceDepth == 0;
+}
+
+
 void printMessageIfLocusArgNotFullyProcessed(
 	vector<std::string>& locusIdsFromArg, vector<std::string>& processedLocusIds, const std::string& locusArg) {
 
@@ -519,67 +586,149 @@ void sortAndFilterCatalog(
 
 LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, const Reference& reference)
 {
-
-	const std::string catalogPath = params.inputPaths().catalog();
+    const std::string catalogPath = params.inputPaths().catalog();
 
     vector<std::string> locusIdsFromArg;
     if (!params.locus().empty()) {
         boost::split(locusIdsFromArg, params.locus(), boost::is_any_of(","));
     }
 
-    std::ifstream inputStream(catalogPath.c_str());
-
-    if (!inputStream.is_open())
-    {
-        throw std::runtime_error("Failed to open catalog file " + catalogPath);
+    // Set up early filtering by region if specified (to avoid allocating memory for filtered loci)
+    std::optional<int32_t> filterContigIndex;
+    std::optional<int64_t> filterStart;
+    std::optional<int64_t> filterEnd;
+    if (!params.region().empty()) {
+        const std::string& regionStr = params.region();
+        if (regionStr.find(':') != std::string::npos) {
+            // Full region string: chr:start-end
+            const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(regionStr);
+            filterContigIndex = reference.contigInfo().getContigId(interval.contig);
+            filterStart = interval.start;
+            filterEnd = interval.end;
+        } else {
+            // Just chromosome name
+            std::string chromosomeName = regionStr;
+            // Try with and without "chr" prefix
+            if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
+                filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
+            } else if (chromosomeName.find("chr") == 0) {
+                chromosomeName = chromosomeName.substr(3);
+                if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
+                    filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
+                }
+            } else {
+                chromosomeName = "chr" + chromosomeName;
+                if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
+                    filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
+                }
+            }
+        }
     }
 
-    Json catalogJson;
+    LocusDescriptionCatalog catalog;
+    vector<std::string> processedLocusIds;
+    const auto& contigInfo = reference.contigInfo();
+    std::string objectStr;
+    size_t totalParsed = 0;
+    size_t keptAfterFilter = 0;
+
     if (boost::algorithm::ends_with(catalogPath, "gz"))
     {
+        // For gzipped files, we need to decompress to a stream first
         std::ifstream binaryInputStream(catalogPath.c_str(), std::ios::binary);
+        if (!binaryInputStream.is_open()) {
+            throw std::runtime_error("Failed to open catalog file " + catalogPath);
+        }
         boost::iostreams::filtering_istreambuf bufferedInputStream;
         bufferedInputStream.push(boost::iostreams::gzip_decompressor());
         bufferedInputStream.push(binaryInputStream);
-        std::istream(&bufferedInputStream) >> catalogJson;
+        std::istream decompressedStream(&bufferedInputStream);
 
-    } else {
+        while (extractNextJsonObject(decompressedStream, objectStr)) {
+            totalParsed++;
+            Json locusJson = Json::parse(objectStr);
+
+            // Early filter by locus ID if specified
+            if (!locusIdsFromArg.empty()) {
+                assertFieldExists(locusJson, "LocusId");
+                std::string currentLocusId = locusJson["LocusId"].get<string>();
+                if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
+                    continue;
+                }
+                processedLocusIds.push_back(currentLocusId);
+            }
+
+            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
+
+            // Early filter by region if specified
+            if (filterContigIndex.has_value()) {
+                if (locusDescription.locusContigIndex() != *filterContigIndex) {
+                    continue;
+                }
+                if (filterStart.has_value() && filterEnd.has_value()) {
+                    // Use locusWithoutFlanks coordinates for filtering (not extended coordinates)
+                    if (locusDescription.locusWithoutFlanksEnd() < *filterStart ||
+                        locusDescription.locusWithoutFlanksStart() > *filterEnd) {
+                        continue;
+                    }
+                }
+            }
+
+            keptAfterFilter++;
+            catalog.emplace_back(std::move(locusDescription));
+        }
+    }
+    else
+    {
         std::ifstream inputStream(catalogPath.c_str());
-
-        if (!inputStream.is_open())
-        {
+        if (!inputStream.is_open()) {
             throw std::runtime_error("Failed to open catalog file " + catalogPath);
         }
-        inputStream >> catalogJson;
-    }
-    makeArray(catalogJson);
 
-    LocusDescriptionCatalog catalog;
-    catalog.reserve(catalogJson.size());
+        while (extractNextJsonObject(inputStream, objectStr)) {
+            totalParsed++;
+            Json locusJson = Json::parse(objectStr);
 
-    vector<std::string> processedLocusIds;
-
-    const auto& contigInfo = reference.contigInfo();
-    for (auto& locusJson : catalogJson)
-    {
-
-        if (!locusIdsFromArg.empty()) {
-            assertFieldExists(locusJson, "LocusId");
-            std::string currentLocusId = locusJson["LocusId"].get<string>();
-            // check if currentLocusId is contained within the locusIdsFromArg vector
-            if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
-                continue;
+            // Early filter by locus ID if specified
+            if (!locusIdsFromArg.empty()) {
+                assertFieldExists(locusJson, "LocusId");
+                std::string currentLocusId = locusJson["LocusId"].get<string>();
+                if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
+                    continue;
+                }
+                processedLocusIds.push_back(currentLocusId);
             }
-            processedLocusIds.push_back(currentLocusId);
-        }
 
-        LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
-        catalog.emplace_back(std::move(locusDescription));
+            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
+
+            // Early filter by region if specified
+            if (filterContigIndex.has_value()) {
+                if (locusDescription.locusContigIndex() != *filterContigIndex) {
+                    continue;
+                }
+                if (filterStart.has_value() && filterEnd.has_value()) {
+                    // Use locusWithoutFlanks coordinates for filtering (not extended coordinates)
+                    if (locusDescription.locusWithoutFlanksEnd() < *filterStart ||
+                        locusDescription.locusWithoutFlanksStart() > *filterEnd) {
+                        continue;
+                    }
+                }
+            }
+
+            keptAfterFilter++;
+            catalog.emplace_back(std::move(locusDescription));
+        }
+    }
+
+    if (filterContigIndex.has_value()) {
+        spdlog::info("Parsed {} loci, kept {} after region filter", add_commas_at_thousands(totalParsed), add_commas_at_thousands(keptAfterFilter));
+    } else {
+        spdlog::info("Parsed {} loci", add_commas_at_thousands(totalParsed));
     }
 
     printMessageIfLocusArgNotFullyProcessed(locusIdsFromArg, processedLocusIds, params.locus());
 
-	sortAndFilterCatalog(catalog, params, reference);
+    sortAndFilterCatalog(catalog, params, reference);
 
     return catalog;
 }

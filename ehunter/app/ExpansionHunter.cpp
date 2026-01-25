@@ -202,7 +202,7 @@ int main(int argc, char** argv)
         spdlog::info("Initializing reference from {}", inputPaths.reference());
         FastaReference reference(inputPaths.reference(), extractReferenceContigInfo(inputPaths.htsFile()));
 
-        spdlog::info("Loading catalog from {}", inputPaths.catalog());
+        spdlog::info("Reading catalog from {}", inputPaths.catalog());
         LocusDescriptionCatalog locusDescriptionCatalog = loadLocusDescriptions(params, reference);
 
         const HeuristicParameters& heuristicParams = params.heuristics();
