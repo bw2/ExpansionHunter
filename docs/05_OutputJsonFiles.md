@@ -30,6 +30,12 @@ Repeat records contain the following fields.
   reads
 * `CountsOfInrepeatReads` An analog of `CountsOfSpanningReads` for spanning
   reads
+* `CountsOfHighQualityUnambiguousReads` (optional) Summary of high-quality
+  unambiguous reads by allele size, in the same format as `CountsOfSpanningReads`.
+  Only present when allele quality metrics are enabled. Only counts reads that
+  overlap the repeat region. High-quality means match rate ≥ 0.9; unambiguous
+  means the read is consistent with only one haplotype. See
+  [AlleleQualityMetrics](07_AlleleQualityMetrics.md) for details.
 * `ReferenceRegion` 0-based half-open reference coordinates of the repeat region
   (`chrom:start-end`)
 

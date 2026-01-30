@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "core/CountTable.hh"
 #include "graphalign/GraphAlignment.hh"
 #include "locus/LocusSpecification.hh"
 #include "reviewer/Aligns.hh"
@@ -78,6 +79,9 @@ struct Metrics
     // High-quality: matchRate >= 0.9 (same threshold as overhang filtering)
     // Unambiguous: fragment is consistent with only one haplotype (singlePath == true)
     std::vector<int> highQualityUnambiguousReads;
+    // Count of high-quality unambiguous reads by allele size (in repeat units)
+    // Same format as CountsOfSpanningReads etc: map from allele_size -> count
+    CountTable countsOfHighQualityUnambiguousReads;
 };
 
 using MetricsByVariant = std::vector<Metrics>;

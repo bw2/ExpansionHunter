@@ -44,30 +44,24 @@ using std::vector;
 // Per-haplotype accumulators for single-pass metrics computation
 struct HaplotypeAccumulators
 {
-    // For quality sums (QD)
-    double qualitySum = 0.0;
-
-    // For strand bias
-    int forwardStrandCount = 0;
-    int reverseStrandCount = 0;
-
     // For flank depth (20bp windows)
     int leftFlankCoveredBases = 0;
     int rightFlankCoveredBases = 0;
-
-    // For high-quality unambiguous reads
-    int highQualUnambiguousCount = 0;
 
     // Alignments for depth calculation
     vector<GraphAlignPtr> alignments;
 };
 
-// Per-variant-per-haplotype accumulators for insertion/deletion metrics
+// Per-variant-per-haplotype accumulators (only for reads overlapping the repeat)
 struct VariantHaplotypeAccumulators
 {
     int numReadsOverlappingRepeat = 0;
     int totalInsertedBases = 0;
     int totalDeletedBases = 0;
+    int highQualUnambiguousCount = 0;
+    double qualitySum = 0.0;        // For QD calculation
+    int forwardStrandCount = 0;     // For strand bias
+    int reverseStrandCount = 0;     // For strand bias
 };
 
 // All accumulated data from single pass
@@ -505,25 +499,16 @@ static AllAccumulators accumulateAllMetrics(
         {
             const auto& readAlign = *fragPathAlign.readAlign.align;
 
-            // Quality sum
-            hapAccum.qualitySum += computeReadQuality(readAlign);
-
-            // Depth: collect alignment
+            // Depth: collect alignment (includes all reads for depth calculation)
             hapAccum.alignments.push_back(fragPathAlign.readAlign.align);
 
-            // Flank depth
+            // Flank depth (includes all reads - intentionally about flanks)
             accumulateFlankDepth(
                 readAlign, leftFlankNode, rightFlankNode,
                 leftWindowStart, leftWindowEnd, rightWindowStart, rightWindowEnd,
                 hapAccum.leftFlankCoveredBases, hapAccum.rightFlankCoveredBases);
 
-            // High-quality unambiguous count
-            if (isUnambiguous && computeGraphAlignmentMatchRate(readAlign) >= matchRateThreshold)
-            {
-                hapAccum.highQualUnambiguousCount++;
-            }
-
-            // Per-variant insertion/deletion metrics
+            // Per-variant metrics (only for reads overlapping the repeat)
             for (const auto& variantSpec : locusSpec.variantSpecs())
             {
                 const auto repeatNodeId = repeatNodeByVariant.at(variantSpec.id());
@@ -531,8 +516,14 @@ static AllAccumulators accumulateAllMetrics(
                 {
                     auto& varHapAccum = accum.perVariantHaplotype[variantSpec.id()][hapIndex];
                     varHapAccum.numReadsOverlappingRepeat++;
+                    varHapAccum.qualitySum += computeReadQuality(readAlign);
                     varHapAccum.totalInsertedBases += countRepeatNodeInsertions(readAlign, repeatNodeId).insertedBases;
                     varHapAccum.totalDeletedBases += countRepeatNodeDeletions(readAlign, repeatNodeId).deletedBases;
+                    // High-quality unambiguous count
+                    if (isUnambiguous && computeGraphAlignmentMatchRate(readAlign) >= matchRateThreshold)
+                    {
+                        varHapAccum.highQualUnambiguousCount++;
+                    }
                 }
             }
         }
@@ -542,25 +533,16 @@ static AllAccumulators accumulateAllMetrics(
         {
             const auto& mateAlign = *fragPathAlign.mateAlign.align;
 
-            // Quality sum
-            hapAccum.qualitySum += computeReadQuality(mateAlign);
-
-            // Depth: collect alignment
+            // Depth: collect alignment (includes all reads for depth calculation)
             hapAccum.alignments.push_back(fragPathAlign.mateAlign.align);
 
-            // Flank depth
+            // Flank depth (includes all reads - intentionally about flanks)
             accumulateFlankDepth(
                 mateAlign, leftFlankNode, rightFlankNode,
                 leftWindowStart, leftWindowEnd, rightWindowStart, rightWindowEnd,
                 hapAccum.leftFlankCoveredBases, hapAccum.rightFlankCoveredBases);
 
-            // High-quality unambiguous count
-            if (isUnambiguous && computeGraphAlignmentMatchRate(mateAlign) >= matchRateThreshold)
-            {
-                hapAccum.highQualUnambiguousCount++;
-            }
-
-            // Per-variant insertion/deletion metrics
+            // Per-variant metrics (only for reads overlapping the repeat)
             for (const auto& variantSpec : locusSpec.variantSpecs())
             {
                 const auto repeatNodeId = repeatNodeByVariant.at(variantSpec.id());
@@ -568,23 +550,39 @@ static AllAccumulators accumulateAllMetrics(
                 {
                     auto& varHapAccum = accum.perVariantHaplotype[variantSpec.id()][hapIndex];
                     varHapAccum.numReadsOverlappingRepeat++;
+                    varHapAccum.qualitySum += computeReadQuality(mateAlign);
                     varHapAccum.totalInsertedBases += countRepeatNodeInsertions(mateAlign, repeatNodeId).insertedBases;
                     varHapAccum.totalDeletedBases += countRepeatNodeDeletions(mateAlign, repeatNodeId).deletedBases;
+                    // High-quality unambiguous count
+                    if (isUnambiguous && computeGraphAlignmentMatchRate(mateAlign) >= matchRateThreshold)
+                    {
+                        varHapAccum.highQualUnambiguousCount++;
+                    }
                 }
             }
         }
 
         // Strand bias: count only the read strand (not mate) to avoid balanced cancellation
+        // Only count if the read overlaps a repeat
         if (fragPathAlign.readAlign.align)
         {
+            const auto& readAlign = *fragPathAlign.readAlign.align;
             const auto& frag = fragById.at(fragId);
-            if (frag.read.read.isReversed())
+            for (const auto& variantSpec : locusSpec.variantSpecs())
             {
-                hapAccum.reverseStrandCount++;
-            }
-            else
-            {
-                hapAccum.forwardStrandCount++;
+                const auto repeatNodeId = repeatNodeByVariant.at(variantSpec.id());
+                if (readAlign.overlapsNode(repeatNodeId))
+                {
+                    auto& varHapAccum = accum.perVariantHaplotype[variantSpec.id()][hapIndex];
+                    if (frag.read.read.isReversed())
+                    {
+                        varHapAccum.reverseStrandCount++;
+                    }
+                    else
+                    {
+                        varHapAccum.forwardStrandCount++;
+                    }
+                }
             }
         }
     }
@@ -615,7 +613,7 @@ MetricsByVariant getMetrics(
     map<string, vector<double>> genotypeDepths;
     map<string, vector<double>> qualitySums;
 
-    // Initialize quality sums (same for all variants)
+    // Initialize quality sums per variant
     for (const auto& variantSpec : locusSpec.variantSpecs())
     {
         qualitySums[variantSpec.id()].resize(paths.size(), 0.0);
@@ -630,10 +628,10 @@ MetricsByVariant getMetrics(
             genotypeDepths[variantAndDepth.first].push_back(variantAndDepth.second);
         }
 
-        // Store quality sums (same value for all variants)
+        // Store quality sums (per-variant, only from reads overlapping the repeat)
         for (const auto& variantSpec : locusSpec.variantSpecs())
         {
-            qualitySums[variantSpec.id()][hapIndex] = accum.perHaplotype[hapIndex].qualitySum;
+            qualitySums[variantSpec.id()][hapIndex] = accum.perVariantHaplotype.at(variantSpec.id())[hapIndex].qualitySum;
         }
     }
 
@@ -664,17 +662,17 @@ MetricsByVariant getMetrics(
                 : 0.0;
         }
 
-        // Strand bias - same for all variants since strand is read-level
+        // Strand bias (only from reads overlapping the repeat)
         metrics.strandBiasBinomialPhred.resize(paths.size());
         metrics.forwardStrandReads.resize(paths.size());
         metrics.reverseStrandReads.resize(paths.size());
         for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
         {
-            const auto& hapAccum = accum.perHaplotype[hapIndex];
+            const auto& varHapAccum = varHapAccums[hapIndex];
             metrics.strandBiasBinomialPhred[hapIndex] = computeStrandBiasBinomialPhred(
-                hapAccum.forwardStrandCount, hapAccum.reverseStrandCount);
-            metrics.forwardStrandReads[hapIndex] = hapAccum.forwardStrandCount;
-            metrics.reverseStrandReads[hapIndex] = hapAccum.reverseStrandCount;
+                varHapAccum.forwardStrandCount, varHapAccum.reverseStrandCount);
+            metrics.forwardStrandReads[hapIndex] = varHapAccum.forwardStrandCount;
+            metrics.reverseStrandReads[hapIndex] = varHapAccum.reverseStrandCount;
         }
 
         // Normalize flank depths by allele depth
@@ -706,11 +704,23 @@ MetricsByVariant getMetrics(
             }
         }
 
-        // High-quality unambiguous reads - same for all variants
+        // High-quality unambiguous reads (only those overlapping the repeat)
         metrics.highQualityUnambiguousReads.resize(paths.size());
         for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
         {
-            metrics.highQualityUnambiguousReads[hapIndex] = accum.perHaplotype[hapIndex].highQualUnambiguousCount;
+            metrics.highQualityUnambiguousReads[hapIndex] = varHapAccums[hapIndex].highQualUnambiguousCount;
+        }
+
+        // Build CountTable of high-quality unambiguous reads by allele size
+        // Uses genotype to map haplotype index to allele size (in repeat units)
+        for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
+        {
+            int alleleSize = metrics.genotype[hapIndex];
+            int count = varHapAccums[hapIndex].highQualUnambiguousCount;
+            if (count > 0)
+            {
+                metrics.countsOfHighQualityUnambiguousReads.incrementCountOf(alleleSize, count);
+            }
         }
 
         metricsByVariant.push_back(metrics);

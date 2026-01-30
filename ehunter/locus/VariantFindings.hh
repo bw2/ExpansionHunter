@@ -105,6 +105,10 @@ public:
 
     const std::vector<std::string>& consensusReadSupport() const { return consensusReadSupport_; }
 
+    void setCountsOfHighQualityUnambiguousReads(const CountTable& counts) { countsOfHighQualityUnambiguousReads_ = counts; }
+
+    const CountTable& countsOfHighQualityUnambiguousReads() const { return countsOfHighQualityUnambiguousReads_; }
+
     // Compares core findings only: read counts and genotype.
     // Deliberately excludes:
     // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
@@ -132,6 +136,7 @@ private:
     boost::optional<RepeatAlleleQualityMetrics> alleleQualityMetrics_;
     std::vector<std::string> consensusSequences_;   // One consensus sequence per allele
     std::vector<std::string> consensusReadSupport_; // Per-position read support as digit string, one per allele
+    CountTable countsOfHighQualityUnambiguousReads_; // Counts by allele size (repeat units)
 };
 
 class SmallVariantFindings : public VariantFindings

@@ -373,6 +373,7 @@ LocusFindings LocusAnalyzer::analyze(
                         }
 
                         repeatFindings->setAlleleQualityMetrics(alleleQualityMetrics);
+                        repeatFindings->setCountsOfHighQualityUnambiguousReads(metrics.countsOfHighQualityUnambiguousReads);
                     }
                 }
             }

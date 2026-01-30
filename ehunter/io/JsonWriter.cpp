@@ -157,6 +157,13 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
     record_["CountsOfFlankingReads"] = streamToString(repeatFindings.countsOfFlankingReads());
     record_["CountsOfInrepeatReads"] = streamToString(repeatFindings.countsOfInrepeatReads());
 
+    // Only output CountsOfHighQualityUnambiguousReads when allele quality metrics were computed
+    const auto& hqUnambiguousCounts = repeatFindings.countsOfHighQualityUnambiguousReads();
+    if (!hqUnambiguousCounts.getElementsWithNonzeroCounts().empty())
+    {
+        record_["CountsOfHighQualityUnambiguousReads"] = streamToString(hqUnambiguousCounts);
+    }
+
     if (repeatFindings.optionalGenotype())
     {
         record_["Genotype"] = encodeGenotype(*repeatFindings.optionalGenotype());
