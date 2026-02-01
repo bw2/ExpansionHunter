@@ -97,6 +97,7 @@ add_library(ExpansionHunterLib
         io/JsonWriter.hh io/JsonWriter.cpp
         io/IterativeJsonWriter.hh io/IterativeJsonWriter.cpp
         io/IterativeVcfWriter.hh io/IterativeVcfWriter.cpp
+        io/MateCacheIO.hh io/MateCacheIO.cpp
         io/LocusSpecDecoding.hh io/LocusSpecDecoding.cpp
         io/ParameterLoading.hh io/ParameterLoading.cpp
         io/RegionGraph.hh io/RegionGraph.cpp

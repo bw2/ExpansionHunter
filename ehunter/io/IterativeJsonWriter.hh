@@ -44,6 +44,7 @@ public:
 		const std::string& outputFilePath, bool copyCatalogFields = false);
 
 	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
+    void addSkippedRecord(const std::string& locusId);
     void close();  // Close the output file
 
 private:

@@ -193,12 +193,14 @@ public:
         HeuristicParameters heuristics, AnalysisMode analysisMode, const std::string locus, const std::string region,
         size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
-        bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false)
+        bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
+        bool initHeuristicGenotypingOnly = false)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
         , copyCatalogFields_(initCopyCatalogFields)
         , skipHomRef_(initSkipHomRef)
+        , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -235,6 +237,7 @@ public:
     bool copyCatalogFields() const { return copyCatalogFields_; }
     bool enableAlleleQualityMetrics() const { return enableAlleleQualityMetrics_; }
     bool skipHomRef() const { return skipHomRef_; }
+    bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
 
     int threadCount;
     bool enableBamletOutput;
@@ -243,6 +246,7 @@ private:
     bool enableAlleleQualityMetrics_;
     bool copyCatalogFields_;
     bool skipHomRef_;
+    bool heuristicGenotypingOnly_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

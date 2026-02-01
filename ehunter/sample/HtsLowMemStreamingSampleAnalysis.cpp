@@ -43,6 +43,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "io/LocusSpecDecoding.hh"
 #include "io/IterativeJsonWriter.hh"
 #include "io/IterativeVcfWriter.hh"
+#include "io/MateCacheIO.hh"
 #include "io/ParameterLoading.hh"
 #include "io/SampleStats.hh"
 #include "io/StringUtils.hh"
@@ -301,6 +302,7 @@ void doTheAnalysis(
 
     int fastGenotypedCount = 0;
     int fullGenotypedCount = 0;
+    int skippedCount = 0;
 
     boost::timer::progress_display progressBar(locusDescriptionCatalog.size());
 
@@ -624,13 +626,18 @@ void doTheAnalysis(
 				}
 
 				if (needToProcessSlowly) {
-					fullGenotypedCount++;
-					try {
-                        graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
-						processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
-							         alignerSelector, bamletWriter, jsonWriter, vcfWriter);
-					} catch (const std::exception& e) {
-						spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
+					if (params.heuristicGenotypingOnly()) {
+						skippedCount++;
+						jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId());
+					} else {
+						fullGenotypedCount++;
+						try {
+							graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
+							processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
+								         alignerSelector, bamletWriter, jsonWriter, vcfWriter);
+						} catch (const std::exception& e) {
+							spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
+						}
 					}
 				}
 
@@ -658,13 +665,21 @@ void doTheAnalysis(
     jsonWriter.close();
     vcfWriter.close();
 
-    const int totalProcessed = fastGenotypedCount + fullGenotypedCount;
+    const int totalProcessed = fastGenotypedCount + fullGenotypedCount + skippedCount;
     if (totalProcessed > 0) {
         const float fastPct = 100.0f * fastGenotypedCount / totalProcessed;
         const float fullPct = 100.0f * fullGenotypedCount / totalProcessed;
-        spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
-            add_commas_at_thousands(fastGenotypedCount), fastPct,
-            add_commas_at_thousands(fullGenotypedCount), fullPct);
+        if (skippedCount > 0) {
+            const float skippedPct = 100.0f * skippedCount / totalProcessed;
+            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, {} ({:.1f}%) loci via full genotyping, and skipped {} ({:.1f}%) loci",
+                add_commas_at_thousands(fastGenotypedCount), fastPct,
+                add_commas_at_thousands(fullGenotypedCount), fullPct,
+                add_commas_at_thousands(skippedCount), skippedPct);
+        } else {
+            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
+                add_commas_at_thousands(fastGenotypedCount), fastPct,
+                add_commas_at_thousands(fullGenotypedCount), fullPct);
+        }
     }
 }
 
@@ -704,8 +719,39 @@ void htsLowMemStreamingSampleAnalysis(
 
     htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
 
-    // traverse the bam/cram file and cache all distant read pairs within the mateExtractor's in-memory read cache
-    prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
+    const std::string mateCachePath = programParams.outputPaths().outputPrefix() + ".mate-cache.bam";
+
+    bool cacheLoaded = false;
+
+    // Try to load existing cache if --cache-mates is enabled
+    if (programParams.cacheMates()) {
+        cacheLoaded = htshelpers::MateCacheIO::readCache(
+            mateCachePath,
+            reference.contigInfo(),
+            mateExtractor.mutableMateCache(),
+            locusDescriptionCatalog.size());
+
+        if (cacheLoaded) {
+            spdlog::info("Loaded {} cached mates from {}",
+                mateExtractor.mateCacheSize(), mateCachePath);
+        }
+    }
+
+    // Only run prepareCache if we didn't load from file
+    if (!cacheLoaded) {
+        prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
+
+        // Save cache if --cache-mates is enabled
+        if (programParams.cacheMates()) {
+            spdlog::info("Saving mate cache ({} reads) to {}",
+                mateExtractor.mateCacheSize(), mateCachePath);
+            htshelpers::MateCacheIO::writeCache(
+                mateCachePath,
+                reference.contigInfo(),
+                mateExtractor.mateCache(),
+                locusDescriptionCatalog.size());
+        }
+    }
 
     //perform the main bam/cram traversal and analysis
     doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,

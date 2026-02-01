@@ -66,6 +66,8 @@ public:
     size_t mateCacheSize() const { return mateCache_.size(); }
     uint64_t extractedMatesCounter() const { return extractedTotalCounter_; }
     uint64_t extractedMatesFromDiskCounter() const { return extractedFromDiskCounter_; }
+    const MateCache& mateCache() const { return mateCache_; }
+    MateCache& mutableMateCache() { return mateCache_; }
 
 private:
     void openFile();

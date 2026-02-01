@@ -79,6 +79,7 @@ struct UserParameters
     bool disableQualityMetrics = false;
     bool copyCatalogFields = false;
     bool skipHomRef = false;
+    bool heuristicGenotypingOnly = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -119,6 +120,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
         ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
+        ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
     ;
     // clang-format on
 
@@ -480,7 +482,8 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
-        userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef);
+        userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
+        userParams.heuristicGenotypingOnly);
 }
 
 }

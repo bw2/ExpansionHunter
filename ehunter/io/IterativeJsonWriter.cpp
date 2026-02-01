@@ -121,6 +121,18 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
     firstRecord_ = false;
 }
 
+void IterativeJsonWriter::addSkippedRecord(const std::string& locusId) {
+    Json locusRecord;
+    locusRecord["FullGenotyping"] = "TODO";
+
+    std::string jsonString = std::regex_replace(locusRecord.dump(2), std::regex("\n"), "\n    ");
+    if (!firstRecord_)
+        outStream_ << ", ";
+    outStream_ << "\n    \"" << locusId << "\": " << jsonString;
+
+    firstRecord_ = false;
+}
+
 void IterativeJsonWriter::close()
 {
     outStream_ << "\n  }\n}\n"; //close the "LocusRecords" and outer scope JSON objects.
