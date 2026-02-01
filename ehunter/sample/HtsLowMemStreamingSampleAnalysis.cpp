@@ -743,8 +743,7 @@ void htsLowMemStreamingSampleAnalysis(
 
         // Save cache if --cache-mates is enabled
         if (programParams.cacheMates()) {
-            spdlog::info("Saving mate cache ({} reads) to {}",
-                mateExtractor.mateCacheSize(), mateCachePath);
+            spdlog::info("Saving mate cache to {}", mateCachePath);
             htshelpers::MateCacheIO::writeCache(
                 mateCachePath,
                 reference.contigInfo(),
