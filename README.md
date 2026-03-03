@@ -22,6 +22,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--region` for filtering the input catalog to a specific genomic region
   - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
   - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
+- **`--reads-index` option**: explicitly specify the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
 - **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`

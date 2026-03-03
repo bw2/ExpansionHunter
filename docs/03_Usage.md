@@ -41,6 +41,11 @@ optional arguments.
 * `--region-extension-length <int>` Specifies how far from on/off-target regions
    to search for informative reads. Set to 1000 by default.
 
+* `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
+  path or URL explicitly, instead of auto-detecting it from the `--reads` path.
+  This is useful when the index file is in a different location than the reads
+  file, or when using cloud URLs where auto-detection may not work.
+
 * `--analysis-mode <mode>` Specify analysis mode, which can be either `seeking` or
   `streaming`. The default mode is `seeking`. See further description of analysis
    modes below.
