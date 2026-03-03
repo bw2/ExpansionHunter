@@ -1336,9 +1336,9 @@ private:
     void _init_val(mutable_value_type *p, reference val)
     {
 #if !defined(SPP_NO_CXX11_RVALUE_REFERENCES)
-        ::new (p) value_type(std::move((mutable_reference)val));
+        ::new (p) value_type(std::move(reinterpret_cast<mutable_reference>(val)));
 #else
-        ::new (p) value_type((mutable_reference)val);
+        ::new (p) value_type(reinterpret_cast<mutable_reference>(val));
 #endif
     }
 
@@ -1352,17 +1352,17 @@ private:
     void _set_val(value_type *p, reference val)
     {
 #if !defined(SPP_NO_CXX11_RVALUE_REFERENCES)
-        *(mutable_pointer)p = std::move((mutable_reference)val);
+        *reinterpret_cast<mutable_pointer>(p) = std::move(reinterpret_cast<mutable_reference>(val));
 #else
         using std::swap;
-        swap(*(mutable_pointer)p, *(mutable_pointer)&val);
+        swap(*reinterpret_cast<mutable_pointer>(p), *reinterpret_cast<mutable_pointer>(&val));
 #endif
     }
 
     // ------------------------------------------------ memory at *p is initialized
     void _set_val(value_type *p, const_reference val)
     {
-        *(mutable_pointer)p = *(const_mutable_pointer)&val;
+        *reinterpret_cast<mutable_pointer>(p) = *reinterpret_cast<const_mutable_pointer>(&val);
     }
 
     // Create space at _group[offset], assuming value_type is relocatable, and the 
