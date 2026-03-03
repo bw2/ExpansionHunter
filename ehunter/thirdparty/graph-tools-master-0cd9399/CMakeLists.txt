@@ -30,6 +30,9 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif ()
 
 add_compile_options(-Wall -Werror -pedantic -Wsign-compare -Wno-missing-braces -Wno-deprecated-copy -Wno-unknown-warning-option)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-Wno-array-bounds)
+endif()
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${GRAPHTOOLS_CXX_OPTIMIZATION_FLAGS}")
 
 if (USE_ASAN)
