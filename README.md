@@ -1,3 +1,5 @@
+[![Build](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml/badge.svg)](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml)
+
 ### ExpansionHunter fork - under active development
 
 This modified version of ExpansionHunter introduces the following new features:
