@@ -46,26 +46,14 @@ namespace htshelpers
  * @param htsFilePtr pointer to an already open .bam or .cram file
  * @param htsFilePath path of the .bam or .cram file
  */
-hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath) {
+hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath, const std::string& htsIndexPath) {
+    if (!htsIndexPath.empty())
+    {
+        return sam_index_load3(htsFilePtr, htsFilePath.c_str(), htsIndexPath.c_str(), HTS_IDX_SAVE_REMOTE);
+    }
+
     std::string indexFilePath = htsFilePath + (htsFilePtr->format.format == cram ? ".crai" : ".bai");
     hts_idx_t* htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
-
-    /*
-    // if file starts with gs://
-    if ( this->file_name.find("gs://") == 0 ) {
-        // run gcloud auth command to refresh the GCS_OAUTH_TOKEN environment variable with up to 5 retries
-        for(int32_t i=0; i < 5; ++i) {
-            std::string oauth_token = exec_cmd("gcloud auth application-default print-access-token");
-            //notice("Debug message: refreshed OAUTH TOKEN to %s", oauth_token.c_str());
-            if ( setenv("GCS_OAUTH_TOKEN",oauth_token.c_str(),1) != 0 ) {
-                error("Failed to update the environment variable GCS_OAUTH_TOKEN to %s", oauth_token.c_str());
-            }
-            notice("Successfully refreshed OAUTH TOKEN");
-            file = hts_open(this->file_name.c_str(), "r");
-            if ( file ) break;
-        }
-    }
-    */
 
     if (!htsIndexPtr_)
     {

@@ -47,6 +47,7 @@ struct UserParameters
 {
     // Input file paths
     string htsFilePath;
+    string htsIndexPath;
     string referencePath;
     string catalogPath;
     string sortCatalogBy;
@@ -92,6 +93,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("help,h", "Print help message")
         ("version,v", "Print version number")
         ("reads", po::value<string>(&params.htsFilePath)->required(), "aligned reads BAM/CRAM file/URL")
+        ("reads-index", po::value<string>(&params.htsIndexPath), "BAM/CRAM index file/URL (default: auto-detected from --reads path)")
         ("reference", po::value<string>(&params.referencePath)->required(), "reference genome FASTA file")
         ("catalog", po::value<string>(&params.catalogPath), "JSON file with variants to genotype")
         ("sort-catalog-by,b", po::value<string>(&params.sortCatalogBy)->default_value("position"), "sort the catalog by 'position' (to sort loci by their genomic coordinates), 'id' (to sort by LocusId), or 'none' (meaning don't sort). The sorting will happen before applying --start-with or --n-loci filters if specified.")
@@ -247,10 +249,15 @@ void assertValidity(const UserParameters& userParameters)
     if (not isURL(userParameters.htsFilePath))
     {
         assertPathToExistingFile(userParameters.htsFilePath);
-        if (userParameters.analysisMode != "streaming")
+        if (userParameters.analysisMode != "streaming" && userParameters.htsIndexPath.empty())
         {
             assertIndexExists(userParameters.htsFilePath);
         }
+    }
+
+    if (!userParameters.htsIndexPath.empty() && !isURL(userParameters.htsIndexPath))
+    {
+        assertPathToExistingFile(userParameters.htsIndexPath);
     }
 
     if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "optimized-streaming")
@@ -429,7 +436,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     const auto& userParams = *optionalUserParameters;
     assertValidity(userParams);
 
-    InputPaths inputPaths(userParams.htsFilePath, userParams.referencePath, userParams.catalogPath);
+    InputPaths inputPaths(userParams.htsFilePath, userParams.referencePath, userParams.catalogPath, userParams.htsIndexPath);
     string vcfPath = userParams.outputPrefix + ".vcf";
     string jsonPath = userParams.outputPrefix + ".json";
     if (userParams.compressOutputFiles)

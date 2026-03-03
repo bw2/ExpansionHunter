@@ -56,7 +56,8 @@ using MateCache = std::unordered_map<ReadId, FullRead, boost::hash<ReadId>>;
 class MateExtractor
 {
 public:
-    MateExtractor(const std::string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates,
+    MateExtractor(const std::string& htsFilePath, const std::string& htsIndexPath,
+                  const std::string& htsReferencePath, const bool cacheMates,
                   const int farAwayMateDistanceThreshold = 1000);
     ~MateExtractor();
 
@@ -76,6 +77,7 @@ private:
 
     std::string htsFilePath_;
     std::string htsReferencePath_;
+    std::string htsIndexPath_;
     ReferenceContigInfo contigInfo_;
     MateCache mateCache_;
     bool cacheMates_;

@@ -717,7 +717,7 @@ void htsLowMemStreamingSampleAnalysis(
     const int farAwayMateDistanceThreshold = 1000;  // base pairs
     const InputPaths& inputPaths = programParams.inputPaths();
 
-    htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
+    htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
 
     const std::string mateCachePath = programParams.outputPaths().outputPrefix() + ".mate-cache.bam";
 

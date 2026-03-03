@@ -26,6 +26,6 @@
 namespace ehunter
 {
 
-double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength);
+double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength, const std::string& htsIndexPath = "");
 
 }

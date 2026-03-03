@@ -37,9 +37,10 @@ namespace htshelpers
 {
 
 
-MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsReferencePath, const bool cacheMates, const int farAwayMateDistanceThreshold)
+MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsIndexPath, const std::string& htsReferencePath, const bool cacheMates, const int farAwayMateDistanceThreshold)
     : htsFilePath_(htsFilePath)
     , htsReferencePath_(htsReferencePath)
+    , htsIndexPath_(htsIndexPath)
     , contigInfo_({})
     , cacheMates_(cacheMates)
     , farAwayMateDistanceThreshold_(farAwayMateDistanceThreshold)
@@ -95,7 +96,7 @@ void MateExtractor::loadHeader()
 
 void MateExtractor::loadIndex()
 {
-    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
+    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_, htsIndexPath_);
 
     if (!htsIndexPtr_)
     {

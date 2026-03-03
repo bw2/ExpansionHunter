@@ -34,9 +34,10 @@ namespace ehunter
 namespace htshelpers
 {
 
-HtsFileSeeker::HtsFileSeeker(const string& htsFilePath, const std::string& htsReferencePath)
+HtsFileSeeker::HtsFileSeeker(const string& htsFilePath, const std::string& htsIndexPath, const std::string& htsReferencePath)
     : htsFilePath_(htsFilePath)
     , htsReferencePath_(htsReferencePath)
+    , htsIndexPath_(htsIndexPath)
     , contigInfo_({})
 {
     openFile();
@@ -96,7 +97,7 @@ void HtsFileSeeker::loadHeader()
 
 void HtsFileSeeker::loadIndex()
 {
-    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_);
+    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_, htsIndexPath_);
 
     if (!htsIndexPtr_)
     {

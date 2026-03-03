@@ -44,7 +44,7 @@ namespace htshelpers
 class HtsFileSeeker : private boost::noncopyable
 {
 public:
-    HtsFileSeeker(const std::string& htsFilePath, const std::string& htsReferencePath);
+    HtsFileSeeker(const std::string& htsFilePath, const std::string& htsIndexPath, const std::string& htsReferencePath);
     ~HtsFileSeeker();
     void setRegion(const GenomicRegion& region);
     bool trySeekingToNextPrimaryAlignment();
@@ -72,6 +72,7 @@ private:
 
     const std::string htsFilePath_;
     const std::string htsReferencePath_;
+    const std::string htsIndexPath_;
     ReferenceContigInfo contigInfo_;
     Status status_ = Status::kFinishedStreaming;
 

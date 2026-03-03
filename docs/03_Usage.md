@@ -67,9 +67,9 @@ obtained by running `ExpansionHunter --help`.
 ### URL support
 
 The aligned reads input BAM or CRAM file may be a local filesystem path or URL.
-Supported protocols for URL input include ftp, https and s3. S3 bucket access
-can be configured using the URL syntax and environment variables supported by
-samtools/htslib.
+Supported protocols for URL input include ftp, https, s3, and gs (Google Cloud
+Storage). S3 and GCS bucket access can be configured using the URL syntax and
+environment variables supported by samtools/htslib.
 
 ### Analysis modes
 

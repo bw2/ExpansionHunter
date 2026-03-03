@@ -293,8 +293,8 @@ void processLocus(
 
     try
     {
-        HtsFileSeeker htsFileSeeker(inputPaths.htsFile(), inputPaths.reference());
-        htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.reference(), programParams.cacheMates());
+        HtsFileSeeker htsFileSeeker(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference());
+        htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), programParams.cacheMates());
         graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
 
         const unsigned size(regionCatalog.size());
@@ -374,7 +374,7 @@ SampleFindings htsSeekingSampleAnalysis(
             // This is needed because htslib has no protection against the race condition created by multiple threads
             // independently downloading this index to the same file path.
             //
-            (void)HtsFileSeeker(inputPaths.htsFile(), inputPaths.reference());
+            (void)HtsFileSeeker(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference());
         }
     }
 

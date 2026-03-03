@@ -64,21 +64,24 @@ enum class SortCatalogBy
 class InputPaths
 {
 public:
-    InputPaths(std::string htsFile, std::string reference, std::string catalog)
+    InputPaths(std::string htsFile, std::string reference, std::string catalog, std::string htsIndexFile = "")
         : htsFile_(std::move(htsFile))
         , reference_(std::move(reference))
         , catalog_(std::move(catalog))
+        , htsIndexFile_(std::move(htsIndexFile))
     {
     }
 
     const std::string& htsFile() const { return htsFile_; }
     const std::string& reference() const { return reference_; }
     const std::string& catalog() const { return catalog_; }
+    const std::string& htsIndexFile() const { return htsIndexFile_; }
 
 private:
     std::string htsFile_;
     std::string reference_;
     std::string catalog_;
+    std::string htsIndexFile_;
 };
 
 class OutputPaths

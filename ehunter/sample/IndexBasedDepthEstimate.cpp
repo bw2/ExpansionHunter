@@ -61,7 +61,7 @@ static bool isAutosome(const string& contigName)
     return false;
 }
 
-double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength)
+double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength, const std::string& htsIndexPath)
 {
     htsFile* htsFilePtr = sam_open(htsFilePath.c_str(), "r");
     if (!htsFilePtr)
@@ -75,7 +75,7 @@ double estimateDepthFromHtsIndex(const std::string& htsFilePath, int readLength)
         throw std::runtime_error("Failed to load header of " + htsFilePath);
     }
 
-    hts_idx_t* htsIndexPtr = htshelpers::openHtsIndex(htsFilePtr, htsFilePath);
+    hts_idx_t* htsIndexPtr = htshelpers::openHtsIndex(htsFilePtr, htsFilePath, htsIndexPath);
     if (!htsIndexPtr)
     {
         throw std::runtime_error("Failed to load index of " + htsFilePath);
