@@ -364,22 +364,22 @@ bool processLocusFast(
     std::map<int, int> allele_size_soft_clipped_read_votes;
     for (const auto& readPair : readPairs) {
 
-        std::vector<FullRead> reads = { *readPair->firstMate, *readPair->secondMate };
+        const FullRead* reads[] = { &*readPair->firstMate, &*readPair->secondMate };
 
         // process the read and its alignment stats, followed by the mate and its alignment stats
-        for (const auto& read : reads) {
-            if (!read.s.isMapped || read.s.isSupplementaryAlignment || read.s.isSecondaryAlignment) {
+        for (const auto* read : reads) {
+            if (!read->s.isMapped || read->s.isSupplementaryAlignment || read->s.isSecondaryAlignment) {
                 continue;
             }
 
-            if (read.s.mapq <= 3 && averageMapQAtLocus >= 20) {
+            if (read->s.mapq <= 3 && averageMapQAtLocus >= 20) {
                 // ignore reads with unusually low mapQ
                 continue;
             }
 
             //print the read you're processing
             const FastReadAnalysisResult& readAnalysisResult = processRead(
-               read, locusReferenceRegion.start(), locusReferenceRegion.end(), locusMotif);
+               *read, locusReferenceRegion.start(), locusReferenceRegion.end(), locusMotif);
 
             if (!readAnalysisResult.overlaps_repeats) {
                 continue;
