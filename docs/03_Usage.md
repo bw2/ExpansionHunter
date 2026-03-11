@@ -55,6 +55,10 @@ optional arguments.
   etc.) for each allele and outputs them in the JSON file. Use this flag to skip
   this computation if the metrics are not needed.
 
+* `--enable-realigned-bam-output` Output a BAM file containing realigned reads
+  that overlap or are located in close proximity to each variant. The file is
+  written to `<output-prefix>_realigned.bam`.
+
 * `--copy-catalog-fields` Copy extra annotation fields from the input variant
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to

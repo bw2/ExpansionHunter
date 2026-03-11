@@ -75,7 +75,7 @@ struct UserParameters
     bool disableAllPlots = false;
     string logLevel = "info";
     int threadCount = 1;
-    bool enableBamletOutput = false;
+    bool enableRealignedBamOutput = false;
     bool cacheMates = false;
     bool disableQualityMetrics = false;
     bool copyCatalogFields = false;
@@ -122,6 +122,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
         ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
+        ("enable-realigned-bam-output", po::bool_switch(&params.enableRealignedBamOutput), "Enable realigned reads BAM file output")
         ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
     ;
     // clang-format on
@@ -132,7 +133,6 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     // clang-format off
     po::options_description internalOptions("Internal options (not stable in future releases)");
     internalOptions.add_options()
-    ("enable-bamlet-output", "Enable bamlet output (realigned reads BAM file)")
     ("variant-catalog", po::value<string>(), "Alias for --catalog (deprecated)")
     ;
     // clang-format on
@@ -157,8 +157,6 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         std::cerr << "Starting " << kProgramVersion << std::endl;
         return {};
     }
-
-    params.enableBamletOutput = argumentMap.count("enable-bamlet-output");
 
     // Handle --catalog and --variant-catalog (the latter is a hidden alias)
     bool hasCatalog = argumentMap.count("catalog") && !argumentMap["catalog"].defaulted();
@@ -488,7 +486,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     return ProgramParameters(
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
-        userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
+        userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableRealignedBamOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.heuristicGenotypingOnly);
 }

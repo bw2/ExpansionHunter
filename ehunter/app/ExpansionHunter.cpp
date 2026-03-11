@@ -211,7 +211,7 @@ int main(int argc, char** argv)
         {
             spdlog::info("Running sample analysis in {} mode",
                 params.analysisMode() == AnalysisMode::kOptimizedStreaming ? "optimized-streaming" : "low-mem-streaming");
-            BamletWriterPtr bamletWriter = params.enableBamletOutput
+            BamletWriterPtr bamletWriter = params.enableRealignedBamOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
                 : std::make_shared<BamletWriter>();
             htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
@@ -238,7 +238,7 @@ int main(int argc, char** argv)
         }
 
         BamletWriterPtr bamletWriter;
-        if (params.enableBamletOutput)
+        if (params.enableRealignedBamOutput)
         {
             bamletWriter = std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), regionCatalog);
         }

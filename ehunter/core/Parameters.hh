@@ -195,11 +195,11 @@ public:
         InputPaths inputPaths, SortCatalogBy sortCatalogBy, OutputPaths outputPaths, SampleParameters sample,
         HeuristicParameters heuristics, AnalysisMode analysisMode, const std::string locus, const std::string region,
         size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
-        const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
+        const int initThreadCount, const bool initEnableRealignedBamOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initHeuristicGenotypingOnly = false)
         : threadCount(initThreadCount)
-        , enableBamletOutput(initEnableBamletOutput)
+        , enableRealignedBamOutput(initEnableRealignedBamOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
         , copyCatalogFields_(initCopyCatalogFields)
         , skipHomRef_(initSkipHomRef)
@@ -243,7 +243,7 @@ public:
     bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
 
     int threadCount;
-    bool enableBamletOutput;
+    bool enableRealignedBamOutput;
 
 private:
     bool enableAlleleQualityMetrics_;
