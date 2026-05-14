@@ -55,6 +55,10 @@ void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpec
     const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
     const auto repeatFindingsPtr = dynamic_cast<RepeatFindings*>(locusFindings.findingsForEachVariant.at(variantId).get());
+    if (!repeatFindingsPtr)
+    {
+        return;
+    }
 
 	//record info for VCF header
 	//const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);

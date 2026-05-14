@@ -301,7 +301,7 @@ void assertValidity(const UserParameters& userParameters)
     const int kMinExtensionLength = 500;
     const int kMaxExtensionLength = 1500;
     if (userParameters.regionExtensionLength < kMinExtensionLength
-        && userParameters.regionExtensionLength > kMaxExtensionLength)
+        || userParameters.regionExtensionLength > kMaxExtensionLength)
     {
         const string message = "Extension length of size " + to_string(userParameters.regionExtensionLength)
             + " is not supported; the range of allowed extensions is between " + to_string(kMinExtensionLength)

@@ -71,7 +71,7 @@ FragPathAlignsById resolveByFragLen(int meanFragLen, const Diplotype& paths, con
                     fragPathAlignsById[fragId].clear();
                 }
 
-                if (fragLen == bestFragLen)
+                if (std::abs(fragLen - meanFragLen) == std::abs(bestFragLen - meanFragLen))
                 {
                     fragPathAlignsById[fragId].emplace_back(readAlign, mateAlign);
                 }

@@ -606,21 +606,11 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
             filterStart = interval.start;
             filterEnd = interval.end;
         } else {
-            // Just chromosome name
-            std::string chromosomeName = regionStr;
-            // Try with and without "chr" prefix
-            if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
-                filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
-            } else if (chromosomeName.find("chr") == 0) {
-                chromosomeName = chromosomeName.substr(3);
-                if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
-                    filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
-                }
-            } else {
-                chromosomeName = "chr" + chromosomeName;
-                if (reference.contigInfo().getContigId(chromosomeName) >= 0) {
-                    filterContigIndex = reference.contigInfo().getContigId(chromosomeName);
-                }
+            // Just chromosome name. getContigId internally retries with the alternative chr/non-chr form.
+            try {
+                filterContigIndex = reference.contigInfo().getContigId(regionStr);
+            } catch (const std::logic_error&) {
+                throw std::invalid_argument(regionStr + " is not a valid contig name in the reference");
             }
         }
     }

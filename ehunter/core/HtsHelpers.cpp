@@ -59,9 +59,9 @@ hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath, const std:
     {
         //try the alternative index filename, replacing the .cram or .bam suffix with .crai or .bai
         if (htsFilePtr->format.format == cram) {
-            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".crai";
+            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 5) + ".crai";
         } else {
-            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 3) + ".bai";
+            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".bai";
         }
         htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
     }
