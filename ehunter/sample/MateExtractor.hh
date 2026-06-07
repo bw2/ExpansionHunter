@@ -63,7 +63,7 @@ public:
 
     boost::optional<FullRead> extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion);
     std::vector<FullRead> extractMates(const MateRegionToRecover& mateRegionToRecover);
-    void addMateToCache(const ReadId& readId, const FullRead& mate);
+    void addMateToCache(const ReadId& readId, FullRead mate);
     size_t mateCacheSize() const { return mateCache_.size(); }
     uint64_t extractedMatesCounter() const { return extractedTotalCounter_; }
     uint64_t extractedMatesFromDiskCounter() const { return extractedFromDiskCounter_; }

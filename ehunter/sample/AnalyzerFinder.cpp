@@ -210,7 +210,7 @@ AnalyzerFinder::AnalyzerFinder(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers
     }
 }
 
-AnalyzerFinder::AnalyzerFinder(LocusDescriptionCatalog locusDescriptions)
+AnalyzerFinder::AnalyzerFinder(const LocusDescriptionCatalog& locusDescriptions)
 {
     using IntervalWithLocusTypeAndAnalyzer = Interval<std::size_t, AnalyzerBundle>;
 

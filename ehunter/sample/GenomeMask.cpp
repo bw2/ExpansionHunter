@@ -37,7 +37,8 @@ inline size_t binPos(int64_t pos)
 
 bool GenomeMask::query(int32_t contigId, int64_t pos) const
 {
-    if (contigId >= static_cast<int>(mask_.size()))
+    // Negative contigId indicates an unmapped read (htslib uses -1); treat as not in mask.
+    if (contigId < 0 || contigId >= static_cast<int>(mask_.size()))
     {
         return false;
     }

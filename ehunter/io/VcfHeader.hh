@@ -53,6 +53,13 @@ struct FieldDescription
 using FieldDescriptionIdentifier = std::pair<FieldType, std::string>;
 using FieldDescriptionCatalog = std::map<FieldDescriptionIdentifier, FieldDescription>;
 
+// Populate the static (catalog-independent) VCF field descriptions, split by record kind so callers add
+// only the descriptions relevant to the records they emit. Single source of truth shared by the
+// seeking-mode FieldDescriptionWriter and the streaming-mode IterativeVariantVcfWriter.
+void addCommonFieldDescriptions(FieldDescriptionCatalog& catalog);
+void addRepeatFieldDescriptions(FieldDescriptionCatalog& catalog);
+void addSmallVariantFieldDescriptions(FieldDescriptionCatalog& catalog);
+
 // Generates VCF field descriptions required for a given variant call
 class FieldDescriptionWriter : public VariantFindingsVisitor
 {
@@ -75,8 +82,6 @@ public:
     void dumpTo(FieldDescriptionCatalog& descriptionCatalog);
 
 private:
-    void addCommonFields();
-
     const LocusSpecification& locusSpec_;
     const VariantSpecification& variantSpec_;
     FieldDescriptionCatalog fieldDescriptions_;

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "core/GenomicRegion.hh"
 #include "core/Parameters.hh"
 #include "core/Read.hh"
@@ -32,6 +34,11 @@ bool doesAoverlapB(int32_t contigIdA, int64_t startA, int64_t endA, int32_t cont
 
 // Check if a RepeatGenotype is homozygous reference
 bool isRepeatGenotypeHomRef(const RepeatGenotype& genotype, int referenceSizeInUnits);
+
+// Analyze a single read against a repeat locus given in 0-based half-open coordinates
+// (start inclusive, end exclusive). Exposed here so it can be unit tested directly.
+FastReadAnalysisResult processRead(
+    const FullRead& read, int64_t locus_start_0based, int64_t locus_end_0based, const std::string& locus_motif);
 
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,

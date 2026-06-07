@@ -42,10 +42,13 @@ class IterativeJsonWriter
 public:
 	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
 		const std::string& outputFilePath, bool copyCatalogFields = false);
+	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
+	// the output file is left missing its trailing `}}` braces and is unparseable.
+	~IterativeJsonWriter();
 
 	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
-    void addSkippedRecord(const std::string& locusId);
-    void close();  // Close the output file
+    void addSkippedRecord(const std::string& locusId, const std::string& reason);
+    void close();  // Close the output file (idempotent)
 
 private:
     const ReferenceContigInfo& contigInfo_;
@@ -53,6 +56,7 @@ private:
     boost::iostreams::filtering_ostream outStream_;
     bool firstRecord_;
     bool copyCatalogFields_;
+    bool closed_ = false;
 };
 
 }

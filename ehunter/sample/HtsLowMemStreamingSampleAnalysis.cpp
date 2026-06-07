@@ -28,7 +28,9 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <ctime>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "spdlog/spdlog.h"
 #include <boost/optional.hpp>
@@ -90,7 +92,7 @@ bool readOverlapsRepeat(const int32_t& contigId, const int64_t& readStart, const
 }
 
 
-const FullRead decodeRead(const htshelpers::HtsFileStreamer& readStreamer) {
+FullRead decodeRead(const htshelpers::HtsFileStreamer& readStreamer) {
     // fully parse the current read
     LinearAlignmentStats readAlignmentStats;
     Read read = readStreamer.decodeRead(readAlignmentStats);
@@ -110,6 +112,10 @@ struct LocusCache {
 
     //a vector of pointers to FullReadPair objects
     std::vector<shared_ptr<FullReadPair>> readPairs;
+
+    // fragment ids already added to readPairs, used to avoid double-counting a far-away pair whose
+    // two ends are both contained in this locus window (each end is streamed in a separate iteration)
+    std::unordered_set<FragmentId> seenFragmentIds;
 };
 
 
@@ -138,6 +144,11 @@ bool isLocusHomRef(const LocusSpecification& locusSpec, const LocusFindings& loc
             const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
             const auto repeatNodeId = variantSpec.nodes().front();
             const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
+            if (repeatUnit.empty())
+            {
+                throw std::runtime_error(
+                    "Repeat unit sequence is empty for locus " + locusSpec.locusId() + " variant " + variantId);
+            }
             const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
 
             if (!isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits))
@@ -188,6 +199,14 @@ void processLocus(const ProgramParameters& params, Reference& reference, const L
     }
 
     // analyze the read data
+    //
+    // TODO(off-target IRRs): every read pair is dispatched with RegionType::kTarget here, and
+    // the per-locus assignment loop in `doTheAnalysis` only checks reads against
+    // locusAndFlanksStart()/End() — never against locusDescription.offtargetRegions().
+    // As a result, IRRs that mismap to off-target regions (e.g. C9ORF72, FMR1) are not
+    // routed to the RepeatAnalyzer in low-mem-streaming / optimized-streaming. Users
+    // needing accurate calls at off-target-dependent loci should currently use seeking
+    // or streaming mode. See docs/03_Usage.md "Known limitations" section.
     LocusAnalyzer locusAnalyzer(locusSpec, params.heuristics(), bamletWriter,
                                 params.enableAlleleQualityMetrics());
     for (auto const& readPair : readPairs) {
@@ -206,11 +225,7 @@ void processLocus(const ProgramParameters& params, Reference& reference, const L
 
     jsonWriter.addRecord(locusSpec, locusFindings);
 
-    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
-    {
-        const string& variantId = variantIdAndFindings.first;
-        vcfWriter.addRecord(variantId, locusSpec, locusFindings);
-    }
+    vcfWriter.addRecords(locusSpec, locusFindings);
 }
 
 
@@ -253,9 +268,9 @@ void prepareCache(
             // make sure chromosome ordering is consistent between the read input file and the reference fasta
             if (previousReadContigId != -1 && previousReadContigId > readContigId) {
                 const auto& previousChromosomeName = reference.contigInfo().getContigName(previousReadContigId);
-                spdlog::error("The input read file contains reads from {} before {}, which is a different chromosome "
-                    "order than the reference input FASTA file. Exiting..", chromosomeName, previousChromosomeName);
-                return;
+                throw std::runtime_error(
+                    "The input read file contains reads from " + chromosomeName + " before " + previousChromosomeName
+                    + ", which is a different chromosome order than the reference input FASTA file.");
             }
             previousReadContigId = readContigId;
         }
@@ -283,8 +298,12 @@ void prepareCache(
 
         // the read and/or the the mate are near a locus and are not close to each other, so cache the read in the mateExtractor
 
-        const FullRead& fullRead = decodeRead(readStreamer);
-        mateExtractor.addMateToCache(fullRead.r.readId(), fullRead);
+        FullRead fullRead = decodeRead(readStreamer);
+        // Copy the ReadId out before the std::move below: passing both `fullRead.r.readId()` and
+        // `std::move(fullRead)` as function args is use-after-move in C++17 (parameter init order is
+        // indeterminate, and unlike std::pair's mem-init-list there is no ordering guarantee here).
+        ReadId mateReadId = fullRead.r.readId();
+        mateExtractor.addMateToCache(mateReadId, std::move(fullRead));
     }
 
     spdlog::info("Added {} reads to the mate cache",  add_commas_at_thousands(mateExtractor.mateCacheSize()));
@@ -339,6 +358,60 @@ void doTheAnalysis(
     int previousReadContigId = -1;
     int typicalReadLength = -1;
 
+    // Analyze every locus index in locusIndicesReadyForAnalysis, then clear the queue.
+    // Defined as a lambda so the same code path runs both during streaming and during the post-EOF drain
+    // (otherwise loci still in flight when EOF is reached would silently disappear from the output).
+    auto processReadyLoci = [&]() {
+        if (locusIndicesReadyForAnalysis.empty()) {
+            return;
+        }
+        for (auto const& locusIndex : locusIndicesReadyForAnalysis) {
+            if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
+                // Locus has zero coverage; emit an explicit skipped record so it doesn't silently
+                // disappear from the JSON output.
+                skippedCount++;
+                jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "no_coverage");
+                continue;
+            }
+            const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
+
+            // TODO check if # of reads >= minLocusCoverage and skip locus if not
+            bool needToProcessSlowly = true;
+            if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
+                const bool doneGenotyping = processLocusFast(params, reference,
+                    locusDescriptionCatalog[locusIndex], locusCache->readPairs, jsonWriter, vcfWriter);
+
+                needToProcessSlowly = !doneGenotyping;
+                if (doneGenotyping) {
+                    fastGenotypedCount++;
+                }
+            }
+
+            if (needToProcessSlowly) {
+                if (params.heuristicGenotypingOnly()) {
+                    skippedCount++;
+                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
+                } else {
+                    fullGenotypedCount++;
+                    try {
+                        graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
+                        processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
+                                     alignerSelector, bamletWriter, jsonWriter, vcfWriter);
+                    } catch (const std::exception& e) {
+                        spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
+                    }
+                }
+            }
+
+            try {
+                locusCachesMap.erase(locusIndex);
+            } catch (const std::exception& e) {
+                spdlog::error("Unexpected error while erasing locus {}: {}. Skipping this locus.", locusDescriptionCatalog[locusIndex].locusId(), e.what());
+            }
+        }
+        locusIndicesReadyForAnalysis.clear();
+    };
+
     spdlog::info("Starting to process {} loci", add_commas_at_thousands(locusDescriptionCatalog.size()));
     htshelpers::HtsFileStreamer readStreamer(inputPaths.htsFile(), inputPaths.reference(), htsDecompressionThreads);
     while (readStreamer.tryReadingNextPrimaryAlignment() && readStreamer.isStreamingAlignedReads())
@@ -371,9 +444,9 @@ void doTheAnalysis(
             // make sure chromosome ordering is consistent between the read input file and the reference fasta
             if (previousReadContigId != -1 && previousReadContigId > readContigId) {
                 const auto& previousChromosomeName = reference.contigInfo().getContigName(previousReadContigId);
-                spdlog::error("The input read file contains reads from {} before {}, which is a different chromosome "
-                    "order than the reference input FASTA file. Exiting..", chromosomeName, previousChromosomeName);
-                return;
+                throw std::runtime_error(
+                    "The input read file contains reads from " + chromosomeName + " before " + previousChromosomeName
+                    + ", which is a different chromosome order than the reference input FASTA file.");
             }
             previousReadContigId = readContigId;
 
@@ -449,8 +522,21 @@ void doTheAnalysis(
             nextLocusDescription = &locusDescriptionCatalog[nextLocusDescriptionIndex];
         }
 
+        // For a far-away pair whose ONLY in-locus end is the upstream one, that upstream end (streamed
+        // first in coordinate order) already prefetched its mate via mateExtractor and pushed the pair
+        // into every active locus cache. The downstream end then arrives later and would prefetch and
+        // re-push the same pair, so we skip it. We must NOT skip when the downstream end is itself near
+        // a target region: in that case its locus only becomes active once the stream reaches the
+        // downstream position, so the upstream end could not have pushed the pair there, and skipping
+        // would silently drop the pair for that locus. (Pairs whose two ends are both in one locus are
+        // de-duplicated below via LocusCache::seenFragmentIds.)
+        if (isMateFarAway && !isAToTheLeftOfB(readContigId, readStart, mateContigId, mateStart, false)
+            && !isReadNearTargetRegion) {
+            continue;
+        }
+
         // fully parse the current read
-        const FullRead& fullRead = decodeRead(readStreamer);
+        FullRead fullRead = decodeRead(readStreamer);
 
         // if mate if far away, retrieve it using the MateExtractor and add it to the unpairedReadsCache so that
         // the read pair is available immediately. This way we don't have to wait until the read position reaches
@@ -541,11 +627,19 @@ void doTheAnalysis(
                 locusCachesMap[locusIndex] = locusCache;
             }
 
+            locusCache = locusCachesMap[locusIndex];
+
+            // skip if this fragment's pair was already added to this locus (e.g. a far-away pair whose
+            // upstream and downstream ends are both contained in this locus window are streamed, and
+            // processed, in two separate iterations)
+            if (!locusCache->seenFragmentIds.insert(fullRead.r.fragmentId()).second) {
+                continue;
+            }
+
             if (readPair == nullptr) {
                 readPair = std::make_shared<FullReadPair>(fullRead, fullMate);
             }
 
-            locusCache = locusCachesMap[locusIndex];
             locusCache->readPairs.push_back(readPair);
         }
 
@@ -558,105 +652,26 @@ void doTheAnalysis(
         // TODO clean up unpairedReadsCache, locusCaches, and mateExtractorCache?
         // every 500 bases, process and then destroy caches that are kExtensionLength to the left of the current read
 
-        // process locusIndicesReadyForAnalysis
-        if (locusIndicesReadyForAnalysis.size() > 0) {
-
-            // process all active loci
-            for (auto const& locusIndex : locusIndicesReadyForAnalysis) {
-                //std::cout << "Processing locusCache " << locusIndex << std::endl;
-                //delete the locusCache from the locusCachesMap
-
-				if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
-					//a locus with 0 coverage won't have a locusCache. Skip analyzing it.
-					//TODO handle missing / empty LocusCache?
-					continue;
-				}
-				const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
-
-				// TODO check if # of reads >= minLocusCoverage and skip locus if not
-				//if fast mode, check for active regions and downsample the reads
-				bool needToProcessSlowly = true;
-				if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
-                    const bool doneGenotyping = processLocusFast(params, reference,
-                        locusDescriptionCatalog[locusIndex], locusCache->readPairs, jsonWriter, vcfWriter);
-
-                    needToProcessSlowly = !doneGenotyping;
-                    if (doneGenotyping) {
-                        fastGenotypedCount++;
-                    }
-
-					//downsampleReads(locusCache->readPairs, locusDescriptionCatalog[locusIndex])
-					//int readPairSignalCounter = 0;
-					//for (auto const& readPair : locusCache->readPairs) {
-					//     //check for active region
-					//	bool readPairHasSignal = readPair->read.hasRepeatVariantSignal() || readPair->mate.hasRepeatVariantSignal();
-					//	if (readPairHasSignal) {
-					//		++readPairSignalCounter;
-					//	}
-					//}
-					//const auto totalReadPairs = locusCache->readPairs.size();
-					//if (readPairSignalCounter <= 2 || (readPairSignalCounter / (float) totalReadPairs) < 0.01) {
-						//skip locus
-					//	std::cout << "Skipping locus " << locusDescriptionCatalog[locusIndex].locusId << " because " << readPairSignalCounter << " out of " << totalReadPairs << std::setprecision(1) << " (" << 100.0 * readPairSignalCounter / (float) totalReadPairs << "%) reads had signal." << std::endl;
-					//		continue;
-					//} //else {
-					//	std::cout << "Processing locus " << locusDescriptionCatalog[locusIndex].locusId << ": " << readPairSignalCounter << " out of " << totalReadPairs  << std::setprecision(1) << " (" << 100.0 * readPairSignalCounter / (float) totalReadPairs << "%) reads had signal." << std::endl;
-					//}
-
-					/*
-					if (totalReadPairs > 10) {
-						// compute coverage
-						const int locusSize = locusDescriptionCatalog[locusIndex].locusAndFlanksEnd - locusDescriptionCatalog[locusIndex].locusAndFlanksStart;
-						const int readLength = locusCache->readPairs[0]->read.sequence().length();
-						const float coverage = 2 * totalReadPairs * readLength / (float) locusSize;
-						if (coverage > 35) {
-							std::cout << "Downsampling locus " << locusDescriptionCatalog[locusIndex].locusId << " with " << (int) coverage << "x coverage" << std::endl;
-							//downsample to 35x coverage
-							for (int k = totalReadPairs - 1; k >= 0; --k) {
-								const float r = rand() / (float) RAND_MAX;
-								if (r > 35 / coverage) {
-									// delete current read pair
-									locusCache->readPairs.erase(locusCache->readPairs.begin() + k);
-								}
-							}
-							std::cout << "Kept " << locusCache->readPairs.size() << " out of " << totalReadPairs << " reads." << std::endl;
-						}
-					}
-					*/
-				}
-
-				if (needToProcessSlowly) {
-					if (params.heuristicGenotypingOnly()) {
-						skippedCount++;
-						jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId());
-					} else {
-						fullGenotypedCount++;
-						try {
-							graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
-							processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
-								         alignerSelector, bamletWriter, jsonWriter, vcfWriter);
-						} catch (const std::exception& e) {
-							spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
-						}
-					}
-				}
-
-				try {
-					//TODO clear locusCache?
-					locusCachesMap.erase(locusIndex);
-				} catch (const std::exception& e) {
-					spdlog::error("Unexpected error while erasing locus {}: {}. Skipping this locus.", locusDescriptionCatalog[locusIndex].locusId(), e.what());
-				}
-
-            }
-            locusIndicesReadyForAnalysis.clear();
-        }
+        processReadyLoci();
 
         if (nextLocusDescriptionIndex >= locusDescriptionCatalog.size() && locusIndicesCollectingReads.empty() && locusIndicesReadyForAnalysis.empty()) {
             // done processing the locusDescriptionCatalog
             break;
         }
     }
+
+    // EOF reached. Drain any loci that were still in flight so they appear in the output rather than
+    // being silently dropped — both loci still collecting reads, and catalog loci the read stream never reached.
+    for (auto locusIndex : locusIndicesCollectingReads) {
+        locusIndicesReadyForAnalysis.push_back(locusIndex);
+    }
+    locusIndicesCollectingReads.clear();
+    while (nextLocusDescriptionIndex < locusDescriptionCatalog.size()) {
+        locusIndicesReadyForAnalysis.push_back(nextLocusDescriptionIndex);
+        ++nextLocusDescriptionIndex;
+        ++progressBar;
+    }
+    processReadyLoci();
 
     reference.clearContigCache();
 

@@ -165,15 +165,17 @@ std::pair<int, bool> extendRepeatsIntoFlank(
 }
 
 
+// processRead consumes 0-based half-open locus coordinates (start inclusive, end exclusive),
+// matching the convention used by GenomicRegion and elsewhere in the codebase.
 FastReadAnalysisResult processRead(
     const FullRead& read,
-    int64_t locus_start_1based,
-    int64_t locus_end_1based,
+    int64_t locus_start_0based,
+    int64_t locus_end_0based,
     const std::string& locus_motif
 ) {
     FastReadAnalysisResult result;
 
-    unsigned int read_start_1based = read.s.pos + 1;
+    unsigned int read_start_0based = read.s.pos;
 
     unsigned int aligned_read_length = 0;
     for (const auto cigar_op : read.s.cigar) {
@@ -184,9 +186,9 @@ FastReadAnalysisResult processRead(
         }
     }
 
-    unsigned int read_end_1based = read.s.pos + aligned_read_length;
+    unsigned int read_end_0based = read_start_0based + aligned_read_length;
 
-    if (read_start_1based > locus_end_1based || read_end_1based < locus_start_1based) {
+    if (read_start_0based >= locus_end_0based || read_end_0based <= locus_start_0based) {
         return result;  // Read does not overlap the repeat locus
     }
     result.overlaps_repeats = true;
@@ -202,19 +204,19 @@ FastReadAnalysisResult processRead(
     int read_seq_position_0based = 0;
 
     int read_seq_position_0based_locus_start = -1; //None
-    int read_seq_position_1based_locus_end = -1;  //None
+    int read_seq_position_0based_locus_end = -1;  //None
 
     for (const auto& cigar_op : read.s.cigar) {
         int op = cigar_op & BAM_CIGAR_MASK;  // Extract operation type
         int op_length = cigar_op >> BAM_CIGAR_SHIFT;  // Extract length
 
-        int op_ref_start_1based, op_ref_end_1based;
+        int op_ref_start_0based, op_ref_end_0based;  // half-open: [start, end)
 
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF || op == BAM_CDEL) {
-            op_ref_start_1based = read_start_1based + ref_offset;
-            op_ref_end_1based = op_ref_start_1based + op_length;
+            op_ref_start_0based = read_start_0based + ref_offset;
+            op_ref_end_0based = op_ref_start_0based + op_length;
         } else if (op == BAM_CINS || op == BAM_CSOFT_CLIP) {
-            op_ref_start_1based = op_ref_end_1based = read_start_1based + ref_offset;
+            op_ref_start_0based = op_ref_end_0based = read_start_0based + ref_offset;
         } else {
             if (op != BAM_CREF_SKIP && op != BAM_CHARD_CLIP) {
                 spdlog::warn("Unexpected CIGAR operation '{}' in read {}", op, read.r.readId().toString());
@@ -223,47 +225,50 @@ FastReadAnalysisResult processRead(
         }
 
         const int min_overhang_for_spanning_read = 2;
-        if (locus_start_1based - op_ref_start_1based >= min_overhang_for_spanning_read) {
+        if (locus_start_0based - op_ref_start_0based >= min_overhang_for_spanning_read) {
             spans_repeats_on_left = true;
         }
-        if (op_ref_end_1based - locus_end_1based >= min_overhang_for_spanning_read) {
+        if (op_ref_end_0based - locus_end_0based >= min_overhang_for_spanning_read) {
             spans_repeats_on_right = true;
         }
 
-        if (read_seq_position_0based_locus_start == -1 && op_ref_start_1based <= locus_start_1based && op_ref_end_1based >= locus_start_1based) {
-            read_seq_position_0based_locus_start = read_seq_position_0based + locus_start_1based - op_ref_start_1based;
+        if (read_seq_position_0based_locus_start == -1 && op_ref_start_0based <= locus_start_0based && op_ref_end_0based >= locus_start_0based) {
+            read_seq_position_0based_locus_start = read_seq_position_0based + locus_start_0based - op_ref_start_0based;
         }
 
-        if (read_seq_position_1based_locus_end == -1 && op_ref_start_1based <= locus_end_1based && op_ref_end_1based >= locus_end_1based) {
-            read_seq_position_1based_locus_end = read_seq_position_0based + locus_end_1based - op_ref_start_1based + 1;
+        if (read_seq_position_0based_locus_end == -1 && op_ref_start_0based <= locus_end_0based && op_ref_end_0based >= locus_end_0based) {
+            read_seq_position_0based_locus_end = read_seq_position_0based + locus_end_0based - op_ref_start_0based;
         }
 
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
-            if (op_ref_end_1based >= locus_start_1based && op_ref_start_1based <= locus_end_1based) {
+            if (op_ref_end_0based > locus_start_0based && op_ref_start_0based < locus_end_0based) {
                 int op_first_base_within_locus_0based;
-                if (op_ref_start_1based < locus_start_1based) {
-                    op_first_base_within_locus_0based = read_seq_position_0based + (locus_start_1based - op_ref_start_1based);
+                if (op_ref_start_0based < locus_start_0based) {
+                    op_first_base_within_locus_0based = read_seq_position_0based + (locus_start_0based - op_ref_start_0based);
                 } else {
                     op_first_base_within_locus_0based = read_seq_position_0based;
                 }
 
-                int op_last_base_within_locus_1based;
-                if (op_ref_start_1based < locus_start_1based) {
-                    op_last_base_within_locus_1based = std::min<int64_t>(
+                int op_end_within_locus_0based;  // exclusive end (in read seq coordinates)
+                if (op_ref_start_0based < locus_start_0based) {
+                    op_end_within_locus_0based = std::min<int64_t>(
                         read_seq_position_0based + op_length,
-                        op_first_base_within_locus_0based + (locus_end_1based - locus_start_1based + 1)
+                        op_first_base_within_locus_0based + (locus_end_0based - locus_start_0based)
                     );
                 } else {
-                    op_last_base_within_locus_1based = std::min<int64_t>(
+                    op_end_within_locus_0based = std::min<int64_t>(
                         read_seq_position_0based + op_length,
-                        op_first_base_within_locus_0based + (locus_end_1based - op_ref_start_1based + 1)
+                        op_first_base_within_locus_0based + (locus_end_0based - op_ref_start_0based)
                     );
                 }
-                result.repeat_sequence_size_in_base_pairs += op_last_base_within_locus_1based - op_first_base_within_locus_0based;
+                result.repeat_sequence_size_in_base_pairs += op_end_within_locus_0based - op_first_base_within_locus_0based;
             }
         } else if (op == BAM_CINS) {
-            bool has_overlap = intervalsOverlap(op_ref_start_1based, op_ref_end_1based,
-                locus_start_1based - locus_motif_size - 1, locus_end_1based + locus_motif_size + 1);
+            // intervalsOverlap uses closed-interval semantics; convert the half-open locus to closed bounds.
+            // Padding is asymmetric: left bound by (motif_size + 1), right bound by motif_size — this matches
+            // the half-open-to-closed conversion pinned by the InsertionJustBeyondPaddingIsNotCounted test.
+            bool has_overlap = intervalsOverlap(op_ref_start_0based, op_ref_end_0based,
+                locus_start_0based - locus_motif_size - 1, locus_end_0based + locus_motif_size);
             if (has_overlap && op_length % locus_motif_size == 0) {
                 result.repeat_sequence_size_in_base_pairs += op_length;
             }
@@ -293,10 +298,10 @@ FastReadAnalysisResult processRead(
         readSequence.substr(length_of_left_soft_clips, read_seq_position_0based_locus_start - length_of_left_soft_clips)
         : "";
 
-    std::string right_flank_bases = (read_seq_position_1based_locus_end >= 0 && read_seq_position_1based_locus_end <= read_sequence_length) ?
+    std::string right_flank_bases = (read_seq_position_0based_locus_end >= 0 && read_seq_position_0based_locus_end <= read_sequence_length) ?
         (length_of_right_soft_clips > 0 ?
-            readSequence.substr(read_seq_position_1based_locus_end, read_sequence_length - read_seq_position_1based_locus_end - length_of_right_soft_clips)
-            : readSequence.substr(read_seq_position_1based_locus_end))
+            readSequence.substr(read_seq_position_0based_locus_end, std::max(0, read_sequence_length - read_seq_position_0based_locus_end - length_of_right_soft_clips))
+            : readSequence.substr(read_seq_position_0based_locus_end))
         : "";
 
     std::string left_soft_clip_sequence = length_of_left_soft_clips > 0 ? readSequence.substr(0, length_of_left_soft_clips) : "";
@@ -336,6 +341,10 @@ bool processLocusFast(
     if (locusSpec.variantSpecs().size() != 1) {
         return false;
     }
+    if (locusSpec.variantSpecs().front().classification().type != VariantType::kRepeat) {
+        // fast processing only handles repeat variants; SmallVariant loci must go through full genotyping
+        return false;
+    }
     const auto& locusReferenceRegion = locusDescription.referenceRegions().front();
     const auto repeatNodeId = locusSpec.variantSpecs().front().nodes().front();
     const string& locusMotif = locusSpec.regionGraph().nodeSeq(repeatNodeId);
@@ -343,19 +352,22 @@ bool processLocusFast(
     LocusStatsCalculatorFromReadAlignments locusStatsCalculator(locusDescription.chromType(), locusReferenceRegion);
 
 	int totalReads = 0;
+    int mappedReadCount = 0;
     float averageMapQAtLocus = 0.0;
     for (const auto& readPair : readPairs) {
         totalReads += 2;
         if (readPair->firstMate->s.isMapped) {
             averageMapQAtLocus += readPair->firstMate->s.mapq;
+            ++mappedReadCount;
         }
         if (readPair->secondMate->s.isMapped) {
             averageMapQAtLocus += readPair->secondMate->s.mapq;
+            ++mappedReadCount;
         }
         locusStatsCalculator.inspect(*readPair);
     }
-    if (readPairs.size() > 0) {
-        averageMapQAtLocus /= totalReads;
+    if (mappedReadCount > 0) {
+        averageMapQAtLocus /= mappedReadCount;
     }
 
     // iterate over each read pair

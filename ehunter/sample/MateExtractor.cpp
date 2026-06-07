@@ -21,6 +21,7 @@
 
 #include "sample/MateExtractor.hh"
 
+#include <memory>
 #include <stdexcept>
 
 #include "core/HtsHelpers.hh"
@@ -105,7 +106,7 @@ void MateExtractor::loadIndex()
 }
 
 
-void MateExtractor::addMateToCache(const ReadId& mateReadId, const FullRead& mate) {
+void MateExtractor::addMateToCache(const ReadId& mateReadId, FullRead mate) {
     if (mateCache_.count(mateReadId) > 0) {
         throw std::logic_error("Mate cache already contains mate with id " + mateReadId.fragmentId());
     }
@@ -129,6 +130,9 @@ boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, c
         throw std::logic_error("Unable to jump to " + regionEncoding + " to recover a mate");
     }
 
+    // RAII guard so the iterator is released on any exit path (including exceptions thrown while decoding reads)
+    std::unique_ptr<hts_itr_t, decltype(&hts_itr_destroy)> htsRegionGuard(htsRegionPtr_, hts_itr_destroy);
+
     boost::optional<FullRead> mate = boost::none;
     while (sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_) >= 0)
     {
@@ -150,19 +154,22 @@ boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, c
             LinearAlignmentStats mateStats = decodeAlignmentStats(htsAlignmentPtr_);
             FullRead putativeFullMate = {std::move(putativeMate), std::move(mateStats)};
 
+            if (foundRequestedMate) {
+                // copy into the return slot BEFORE moving into the cache below
+                extractedFromDiskCounter_ += 1;
+                mate = putativeFullMate;
+            }
             if (cacheMates_) {
-                // cache the mate if --cache-mates flag was specified and the mate mapped sufficiently far away from the read
+                // Cache every primary read in the queried window. The caller only invokes extractMate with a
+                // window centered on a far-away mate position, so these are effectively the far-away reads;
+                // this differs from extractMates, which gates caching on farAwayMateDistanceThreshold_.
                 mateCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
             }
             if (foundRequestedMate) {
-                extractedFromDiskCounter_ += 1;
-                mate = putativeFullMate;
                 break;
             }
         }
     }
-
-    hts_itr_destroy(htsRegionPtr_);
 
     if (mate == boost::none) {
         spdlog::warn("Failed to recover mate: {}", mateReadId.fragmentId());
@@ -206,6 +213,9 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
         throw std::logic_error("Unable to jump to " + regionEncoding + " to recover a mate");
     }
 
+    // RAII guard so the iterator is released on any exit path (including exceptions thrown while decoding reads)
+    std::unique_ptr<hts_itr_t, decltype(&hts_itr_destroy)> htsRegionGuard(htsRegionPtr_, hts_itr_destroy);
+
     while (sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_) >= 0)
     {
         const bool isSecondaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSECONDARY;
@@ -247,7 +257,6 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
 
         }
     }
-    hts_itr_destroy(htsRegionPtr_);
 
     if (mateReadIdsNotFoundYet.size() > 0) {
         std::ostringstream out;

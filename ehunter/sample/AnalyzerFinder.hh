@@ -68,7 +68,7 @@ class AnalyzerFinder
 public:
     AnalyzerFinder(std::vector<std::unique_ptr<locus::LocusAnalyzer>>& locusAnalyzers);
 
-    AnalyzerFinder(LocusDescriptionCatalog locusDescriptions);
+    AnalyzerFinder(const LocusDescriptionCatalog& locusDescriptions);
 
     // Retrieves analyzers appropriate for the given read pair
     std::vector<AnalyzerBundle> query(

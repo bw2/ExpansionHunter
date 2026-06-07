@@ -72,20 +72,23 @@ class IterativeVcfWriter
 public:
     IterativeVcfWriter(
         std::string sampleId, Reference& reference, const std::string& outputFilePath);
+    // Ensure the VCF stream is flushed (and the gzip footer written if compressing) even when an
+    // exception unwinds past the writer; otherwise a partially-written VCF may be left on disk.
+    ~IterativeVcfWriter();
 
     void addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
-    void close();  // Close output file
+    // Emit every variant record for a locus in genomic-position order. findingsForEachVariant is an
+    // unordered_map, so the variants are sorted by referenceLocus before output to keep the VCF position-sorted.
+    void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
+    void close();  // Close output file (idempotent)
 
 private:
-    void writeVcfLine(const std::vector<std::string>& vcfLine);
-
     std::string sampleId_;
     Reference& reference_;
-    FieldDescriptionCatalog fieldDescriptionCatalog_;
 
     std::ofstream outFile_;
     boost::iostreams::filtering_ostream outStream_;
-    bool headerWritten_;
+    bool closed_ = false;
 };
 
 }

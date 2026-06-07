@@ -171,7 +171,9 @@ using ReadIdToRepeatAlignmentStats = std::unordered_map<std::string, RepeatAlign
 std::ostream& operator<<(std::ostream& out, const Read& read);
 
 struct FullRead {
-    FullRead(const Read& read, const LinearAlignmentStats& alignmentStats) :
+    // Take args by value so std::move actually moves at the initializer list.
+    // (Passing const refs and applying std::move silently falls back to a copy.)
+    FullRead(Read read, LinearAlignmentStats alignmentStats) :
         r(std::move(read)), s(std::move(alignmentStats))
     {}
 

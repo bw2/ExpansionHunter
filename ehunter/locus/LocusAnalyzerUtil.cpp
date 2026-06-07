@@ -96,7 +96,8 @@ void initializeLocusAnalyzerThread(
 
         spdlog::error(
             "Exception caught in thread {}  while initializing locus: {} : {}", threadIndex, locusId, e.what());
-        throw;
+        // Do not re-throw: an uncaught exception escaping a std::thread function invokes std::terminate.
+        // The exception is captured above and rethrown by the main thread after join().
     }
     catch (...)
     {
@@ -104,7 +105,7 @@ void initializeLocusAnalyzerThread(
         locusThreadData.threadExceptionPtr = std::current_exception();
 
         spdlog::error("Exception caught in thread {}  while initializing locus: {}", threadIndex, locusId);
-        throw;
+        // Do not re-throw: see comment in the std::exception catch block above.
     }
 }
 
@@ -131,6 +132,14 @@ std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
             std::ref(locusInitThreadLocalDataPool), enableAlleleQualityMetrics);
     }
 
+    // Wait for all workers to complete before inspecting their exception slots.
+    // (Checking before join() races with workers that throw shortly after launch, and
+    // exiting via rethrow with joinable threads still in initThreads would terminate.)
+    for (auto& initThread : initThreads)
+    {
+        initThread.join();
+    }
+
     // Rethrow exceptions from worker pool in thread order:
     if (locusInitThreadSharedData.isWorkerThreadException.load())
     {
@@ -142,11 +151,6 @@ std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
                 std::rethrow_exception(locusThreadData.threadExceptionPtr);
             }
         }
-    }
-
-    for (auto& initThread : initThreads)
-    {
-        initThread.join();
     }
 
     return locusAnalyzers;

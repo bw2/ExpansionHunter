@@ -41,10 +41,24 @@ namespace ehunter
 namespace htshelpers
 {
 
+// Split a path/URL into (path-component, suffix). The suffix is the first '?' or '#'
+// onward (URL query string / fragment); for local paths the suffix is empty.
+// This lets us manipulate the file-extension portion of remote URLs without
+// corrupting presigned signatures (e.g. `https://…/x.bam?X-Goog-Signature=…`).
+static std::pair<std::string, std::string> splitPathAndUrlSuffix(const std::string& pathOrUrl)
+{
+    const size_t suffixPos = pathOrUrl.find_first_of("?#");
+    if (suffixPos == std::string::npos)
+    {
+        return {pathOrUrl, std::string()};
+    }
+    return {pathOrUrl.substr(0, suffixPos), pathOrUrl.substr(suffixPos)};
+}
+
 /* Open a local or remote .bai or .crai index file. This supports direct access to files in Google Storage or S3.
  *
  * @param htsFilePtr pointer to an already open .bam or .cram file
- * @param htsFilePath path of the .bam or .cram file
+ * @param htsFilePath path of the .bam or .cram file (may be a presigned URL with a query string)
  */
 hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath, const std::string& htsIndexPath) {
     if (!htsIndexPath.empty())
@@ -52,18 +66,30 @@ hts_idx_t* openHtsIndex(htsFile* htsFilePtr, std::string htsFilePath, const std:
         return sam_index_load3(htsFilePtr, htsFilePath.c_str(), htsIndexPath.c_str(), HTS_IDX_SAVE_REMOTE);
     }
 
-    std::string indexFilePath = htsFilePath + (htsFilePtr->format.format == cram ? ".crai" : ".bai");
-    hts_idx_t* htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
+    const std::string indexExt = (htsFilePtr->format.format == cram) ? ".crai" : ".bai";
+    const std::string dataExt  = (htsFilePtr->format.format == cram) ? ".cram" : ".bam";
+
+    // Separate the URL's path component from any query/fragment suffix so the suffix
+    // (e.g. an S3/GCS signature) is preserved unchanged when we manipulate the extension.
+    const auto [pathComponent, urlSuffix] = splitPathAndUrlSuffix(htsFilePath);
+
+    // Attempt 1: append .bai/.crai to the full path (gives <file>.bam.bai / <file>.cram.crai).
+    std::string indexFilePath = pathComponent + indexExt + urlSuffix;
+    hts_idx_t* htsIndexPtr_ = sam_index_load3(
+        htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
 
     if (!htsIndexPtr_)
     {
-        //try the alternative index filename, replacing the .cram or .bam suffix with .crai or .bai
-        if (htsFilePtr->format.format == cram) {
-            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 5) + ".crai";
-        } else {
-            indexFilePath = htsFilePath.substr(0, htsFilePath.length() - 4) + ".bai";
+        // Attempt 2: replace the .bam/.cram extension with .bai/.crai (yields <file>.bai / <file>.crai).
+        // Only do this if the path component actually ends in the expected extension — otherwise we'd be
+        // truncating arbitrary characters off a URL whose data file lives at a non-standard path.
+        if (pathComponent.size() >= dataExt.size()
+            && pathComponent.compare(pathComponent.size() - dataExt.size(), dataExt.size(), dataExt) == 0)
+        {
+            indexFilePath = pathComponent.substr(0, pathComponent.size() - dataExt.size()) + indexExt + urlSuffix;
+            htsIndexPtr_ = sam_index_load3(
+                htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
         }
-        htsIndexPtr_ = sam_index_load3(htsFilePtr, htsFilePath.c_str(), indexFilePath.c_str(), HTS_IDX_SAVE_REMOTE);
     }
 
     return htsIndexPtr_;

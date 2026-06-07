@@ -175,6 +175,7 @@ add_executable(UnitTests
         tests/GraphBlueprintTest.cpp
         tests/GreedyAlignmentIntersectorTest.cpp
         tests/HighQualityBaseRunFinderTest.cpp
+        tests/HtsLowMemStreamingHelpersTest.cpp
         tests/LocusSpecificationPlotTest.cpp
         tests/LocusStatsTest.cpp
         tests/ReadSupportCalculatorTest.cpp

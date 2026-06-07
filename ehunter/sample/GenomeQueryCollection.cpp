@@ -48,9 +48,9 @@ void initializeGenomeMask(GenomeMask& genomeMask, vector<unique_ptr<locus::Locus
     }
 }
 
-void initializeGenomeMask(GenomeMask& genomeMask, LocusDescriptionCatalog locusDescriptions)
+void initializeGenomeMask(GenomeMask& genomeMask, const LocusDescriptionCatalog& locusDescriptions)
 {
-    for (auto& locusDescription : locusDescriptions)
+    for (const auto& locusDescription : locusDescriptions)
     {
        genomeMask.addRegion(
                locusDescription.locusContigIndex(),
@@ -71,7 +71,7 @@ GenomeQueryCollection::GenomeQueryCollection(vector<unique_ptr<LocusAnalyzer>>& 
     initializeGenomeMask(targetRegionMask, locusAnalyzers);
 }
 
-GenomeQueryCollection::GenomeQueryCollection(LocusDescriptionCatalog locusDescriptions)
+GenomeQueryCollection::GenomeQueryCollection(const LocusDescriptionCatalog& locusDescriptions)
     : analyzerFinder(locusDescriptions)
 {
     initializeGenomeMask(targetRegionMask, locusDescriptions);
