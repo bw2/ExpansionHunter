@@ -63,6 +63,12 @@ using namespace ehunter;
 // Check if all variants in a locus are homozygous reference (for batch mode filtering)
 static bool isLocusHomRefBatch(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
 {
+    // A locus with no findings (low coverage, decode failure, etc.) is a no-call, not a hom-ref call.
+    // Without this guard, --skip-hom-ref would silently drop such loci.
+    if (locusFindings.findingsForEachVariant.empty())
+    {
+        return false;
+    }
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
     {
         const std::string& variantId = variantIdAndFindings.first;
