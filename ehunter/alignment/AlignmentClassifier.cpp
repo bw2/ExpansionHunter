@@ -76,6 +76,11 @@ RepeatAlignmentClassifier::RepeatAlignmentClassifier(const graphtools::Graph& gr
 
 GraphAlignment RepeatAlignmentClassifier::GetCanonicalAlignment(const list<GraphAlignment>& Alignments) const
 {
+    if (Alignments.empty())
+    {
+        throw std::logic_error("Cannot compute canonical alignment of an empty alignment list");
+    }
+
     const GraphAlignment* canonical_alignment_ptr = nullptr;
     for (const GraphAlignment& alignment : Alignments)
     {

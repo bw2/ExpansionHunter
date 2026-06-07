@@ -400,7 +400,9 @@ static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
     }
 
     if (stream.eof()) {
-        return false;
+        // Reached EOF without finding either the start of the next object or the closing ']' of the array
+        // — the file is truncated.
+        throw std::runtime_error("Unexpected end of input in catalog JSON: stream ended before closing ']'");
     }
 
     // Now parse the complete object, tracking brace depth
@@ -409,7 +411,11 @@ static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
     bool inString = false;
     bool escape = false;
 
-    while (stream.get(c) && braceDepth > 0) {
+    // NOTE: braceDepth must be tested BEFORE stream.get(c). Otherwise get() runs once more after the
+    // closing '}' drops braceDepth to 0, consuming (and discarding) the next character. For a minified
+    // array such as `[{...},{...}]` (the default json.dump output) that extra character is the closing
+    // ']', so the next call hits EOF and throws even though the catalog is well-formed.
+    while (braceDepth > 0 && stream.get(c)) {
         objectStr += c;
 
         if (escape) {
@@ -436,7 +442,13 @@ static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
         }
     }
 
-    return braceDepth == 0;
+    if (braceDepth != 0) {
+        throw std::runtime_error(
+            "Unexpected end of input in catalog JSON: stream ended mid-object (braceDepth="
+            + std::to_string(braceDepth) + ")");
+    }
+
+    return true;
 }
 
 
@@ -446,7 +458,7 @@ void printMessageIfLocusArgNotFullyProcessed(
     if (!locusIdsFromArg.empty() && processedLocusIds.size() < locusIdsFromArg.size()) {
         if (processedLocusIds.size() == 0) {
             if (locusIdsFromArg.size() > 1) {
-                spdlog::error("ERROR: --locus arg: none of the locus ids {} were not found in the catalog", locusArg);
+                spdlog::error("ERROR: --locus arg: none of the locus ids {} were found in the catalog", locusArg);
             } else {
                 spdlog::error("ERROR: --locus arg: {} not found in the catalog", locusArg);
             }
@@ -537,15 +549,16 @@ void sortAndFilterCatalog(
             const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(regionStr);
             const auto intervalContigIndex = reference.contigInfo().getContigId(interval.contig);
 
-            //apply filter
-            // interval.contig //interval.start //interval.end
+            // Region filter on locusAndFlanks (flank-extended) coordinates. Note loadLocusDescriptions already
+            // applied a stricter locusWithoutFlanks (core) region filter before calling this, so for the region
+            // case this broader pass is effectively redundant for any locus that survived the early filter.
             locusDescriptionCatalog.erase(
                 std::remove_if(
                     locusDescriptionCatalog.begin(), locusDescriptionCatalog.end(),
                     [&interval, &intervalContigIndex](const LocusDescription& locusDescription) {
                         return locusDescription.locusContigIndex() != intervalContigIndex ||
-                            locusDescription.locusAndFlanksEnd() < interval.start ||
-                            locusDescription.locusAndFlanksStart() > interval.end;
+                            locusDescription.locusAndFlanksEnd() <= interval.start ||
+                            locusDescription.locusAndFlanksStart() >= interval.end;
                     }),
                 locusDescriptionCatalog.end());
         } else {
@@ -567,7 +580,8 @@ void sortAndFilterCatalog(
         if (programParams.startWith() >= locusDescriptionCatalog.size()) {
             spdlog::warn("startWith value " + add_commas_at_thousands(programParams.startWith()) +
                 " is greater than the number of loci (" + add_commas_at_thousands(locusDescriptionCatalog.size()) +
-                "). Exiting...");
+                "). Nothing to analyze.");
+            locusDescriptionCatalog.clear();
             return;
         }
         locusDescriptionCatalog.erase(locusDescriptionCatalog.begin(), locusDescriptionCatalog.begin() + programParams.startWith());
@@ -622,6 +636,44 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
     size_t totalParsed = 0;
     size_t keptAfterFilter = 0;
 
+    auto parseLociFromStream = [&](std::istream& stream) {
+        while (extractNextJsonObject(stream, objectStr)) {
+            totalParsed++;
+            Json locusJson = Json::parse(objectStr);
+
+            // Early filter by locus ID if specified
+            if (!locusIdsFromArg.empty()) {
+                assertFieldExists(locusJson, "LocusId");
+                std::string currentLocusId = locusJson["LocusId"].get<string>();
+                if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
+                    continue;
+                }
+                processedLocusIds.push_back(currentLocusId);
+            }
+
+            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
+
+            // Early filter by region if specified
+            if (filterContigIndex.has_value()) {
+                if (locusDescription.locusContigIndex() != *filterContigIndex) {
+                    continue;
+                }
+                if (filterStart.has_value() && filterEnd.has_value()) {
+                    // Authoritative region filter: uses locusWithoutFlanks (core, non-extended) coordinates.
+                    // sortAndFilterCatalog later applies a second, broader locusAndFlanks-based region filter,
+                    // but since this core filter is stricter and runs first, it governs which loci are kept.
+                    if (locusDescription.locusWithoutFlanksEnd() <= *filterStart ||
+                        locusDescription.locusWithoutFlanksStart() >= *filterEnd) {
+                        continue;
+                    }
+                }
+            }
+
+            keptAfterFilter++;
+            catalog.emplace_back(std::move(locusDescription));
+        }
+    };
+
     if (boost::algorithm::ends_with(catalogPath, "gz"))
     {
         // For gzipped files, we need to decompress to a stream first
@@ -634,39 +686,7 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
         bufferedInputStream.push(binaryInputStream);
         std::istream decompressedStream(&bufferedInputStream);
 
-        while (extractNextJsonObject(decompressedStream, objectStr)) {
-            totalParsed++;
-            Json locusJson = Json::parse(objectStr);
-
-            // Early filter by locus ID if specified
-            if (!locusIdsFromArg.empty()) {
-                assertFieldExists(locusJson, "LocusId");
-                std::string currentLocusId = locusJson["LocusId"].get<string>();
-                if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
-                    continue;
-                }
-                processedLocusIds.push_back(currentLocusId);
-            }
-
-            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
-
-            // Early filter by region if specified
-            if (filterContigIndex.has_value()) {
-                if (locusDescription.locusContigIndex() != *filterContigIndex) {
-                    continue;
-                }
-                if (filterStart.has_value() && filterEnd.has_value()) {
-                    // Use locusWithoutFlanks coordinates for filtering (not extended coordinates)
-                    if (locusDescription.locusWithoutFlanksEnd() < *filterStart ||
-                        locusDescription.locusWithoutFlanksStart() > *filterEnd) {
-                        continue;
-                    }
-                }
-            }
-
-            keptAfterFilter++;
-            catalog.emplace_back(std::move(locusDescription));
-        }
+        parseLociFromStream(decompressedStream);
     }
     else
     {
@@ -675,39 +695,7 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
             throw std::runtime_error("Failed to open catalog file " + catalogPath);
         }
 
-        while (extractNextJsonObject(inputStream, objectStr)) {
-            totalParsed++;
-            Json locusJson = Json::parse(objectStr);
-
-            // Early filter by locus ID if specified
-            if (!locusIdsFromArg.empty()) {
-                assertFieldExists(locusJson, "LocusId");
-                std::string currentLocusId = locusJson["LocusId"].get<string>();
-                if (std::find(locusIdsFromArg.begin(), locusIdsFromArg.end(), currentLocusId) == locusIdsFromArg.end()) {
-                    continue;
-                }
-                processedLocusIds.push_back(currentLocusId);
-            }
-
-            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
-
-            // Early filter by region if specified
-            if (filterContigIndex.has_value()) {
-                if (locusDescription.locusContigIndex() != *filterContigIndex) {
-                    continue;
-                }
-                if (filterStart.has_value() && filterEnd.has_value()) {
-                    // Use locusWithoutFlanks coordinates for filtering (not extended coordinates)
-                    if (locusDescription.locusWithoutFlanksEnd() < *filterStart ||
-                        locusDescription.locusWithoutFlanksStart() > *filterEnd) {
-                        continue;
-                    }
-                }
-            }
-
-            keptAfterFilter++;
-            catalog.emplace_back(std::move(locusDescription));
-        }
+        parseLociFromStream(inputStream);
     }
 
     if (filterContigIndex.has_value()) {

@@ -182,7 +182,8 @@ void LocusStatsCalculatorFromReadAlignments::inspect(const FullReadPair& readPai
 	    basesOverlappingLocus_ += mateBasesOverlapLocus;
 	}
 
-	if (readBasesOverlapLocus > 0 || mateBasesOverlapLocus > 0) {
+	if ((readBasesOverlapLocus > 0 || mateBasesOverlapLocus > 0)
+		&& readAlignmentStats.chromId == mateAlignmentStats.chromId) {
         const int start = std::min(
             readAlignmentStats.pos,
             mateAlignmentStats.pos);
@@ -217,9 +218,11 @@ LocusStats LocusStatsCalculatorFromReadAlignments::estimate(Sex sampleSex)
     const int fragCount = boost::accumulators::count(fragLengthAccumulator_);
     int meanFragLen = (fragCount != 0) ? boost::accumulators::mean(fragLengthAccumulator_) : 0;
 
-    // Compute depth as total bases aligned in region divided by region size
+    // Compute depth as total bases aligned in region divided by region size.
+    // Zero-length loci (e.g. a pure-insertion variant with ReferenceRegion start == end) would
+    // otherwise produce NaN here.
     const int locusSize = locusRegion_.end() - locusRegion_.start();
-    const float depth = basesOverlappingLocus_ / static_cast<double>(locusSize);
+    const float depth = (locusSize > 0) ? (basesOverlappingLocus_ / static_cast<double>(locusSize)) : 0.0;
 
     return { alleleCount, meanReadLength, meanFragLen, depth };
 }
