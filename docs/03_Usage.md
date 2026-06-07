@@ -46,9 +46,9 @@ optional arguments.
   This is useful when the index file is in a different location than the reads
   file, or when using cloud URLs where auto-detection may not work.
 
-* `--analysis-mode <mode>` Specify analysis mode, which can be either `seeking` or
-  `streaming`. The default mode is `seeking`. See further description of analysis
-   modes below.
+* `--analysis-mode <mode>` Specify analysis mode, which can be `seeking`,
+  `streaming`, `low-mem-streaming`, or `optimized-streaming`. The default mode
+  is `seeking`. See further description of analysis modes below.
 
 * `--disable-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
@@ -89,3 +89,20 @@ In streaming mode, the alignment file is read in a single pass and all variants 
 analyzed during this reading operation. Streaming mode is recommended for the analysis
 of large catalogs, but does require more memory as a funciton of catalog size. This mode
 does not require that the BAM or CRAM file is sorted or indexed.
+
+#### Low-mem-streaming mode
+
+Changes how data is read from the input BAM or CRAM file in order to keep memory usage (typically < 10 GB) and is independent of catalog size.
+The output stays nearly identical to `streaming` mode. 
+
+#### Optimized-streaming mode
+
+`optimized-streaming` mode uses a fast heuristic genotyper to identify loci that can be quickly genotyped using spanning reads. It then runs the full graph-based genotyper
+only on the subset of loci that appear to have larger expansions. This significantly speeds up analysis of large
+catalogs (> ~10k loci) since the majority of loci can be genotyped using only spanning reads. Memory usage is similar to `low-mem-streaming` mode.
+
+#### Known limitations of `low-mem-streaming` and `optimized-streaming`
+
+These two newer modes ignore `OfftargetRegions` entries in the variant catalog. This can affect loci that do
+explicitly list off-target regions in the catalog, such as **C9ORF72**, **FMR1**. For these loci,
+`--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
