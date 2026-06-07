@@ -83,7 +83,9 @@ TEST(ReviewerOrigin, EmptyInput_ReturnsEmptyAssignment)
     vector<Path> hapPaths;
     FragPathAlignsById fragPathAlignsById;
 
-    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById);
+    std::mt19937 rng(14345);
+
+    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById, rng);
 
     EXPECT_TRUE(assignment.fragIds.empty());
     EXPECT_TRUE(assignment.alignIndexByFrag.empty());
@@ -102,7 +104,9 @@ TEST(ReviewerOrigin, SingleFragment_AssignsToOneHaplotype)
     FragPathAlignsById fragPathAlignsById;
     fragPathAlignsById["frag1"] = { fragAlign };
 
-    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById);
+    std::mt19937 rng(14345);
+
+    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById, rng);
 
     ASSERT_EQ(1u, assignment.fragIds.size());
     ASSERT_EQ(1u, assignment.alignIndexByFrag.size());
@@ -125,7 +129,9 @@ TEST(ReviewerOrigin, MultipleFragments_EachGetsAssignment)
     fragPathAlignsById["frag2"] = { fragAlign };
     fragPathAlignsById["frag3"] = { fragAlign };
 
-    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById);
+    std::mt19937 rng(14345);
+
+    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById, rng);
 
     ASSERT_EQ(3u, assignment.fragIds.size());
     ASSERT_EQ(3u, assignment.alignIndexByFrag.size());
@@ -159,7 +165,9 @@ TEST(ReviewerOrigin, AmbiguousFragment_PicksOneHaplotype)
     FragPathAlignsById fragPathAlignsById;
     fragPathAlignsById["ambiguous_frag"] = { fragAlign0, fragAlign1 };
 
-    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById);
+    std::mt19937 rng(14345);
+
+    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById, rng);
 
     ASSERT_EQ(1u, assignment.fragIds.size());
     ASSERT_EQ(1u, assignment.alignIndexByFrag.size());
@@ -190,7 +198,9 @@ TEST(ReviewerOrigin, MultipleFragmentsWithMultipleAlignments_AllGetValidAssignme
     fragPathAlignsById["frag1"] = { fragAlign0, fragAlign1 };
     fragPathAlignsById["frag2"] = { fragAlign2, fragAlign0, fragAlign1 };
 
-    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById);
+    std::mt19937 rng(14345);
+
+    FragAssignment assignment = getBestFragAssignment(hapPaths, fragPathAlignsById, rng);
 
     ASSERT_EQ(2u, assignment.fragIds.size());
     ASSERT_EQ(2u, assignment.alignIndexByFrag.size());

@@ -87,18 +87,5 @@ std::optional<ReviewerContext> runReviewerWorkflow(
     const LocusFindings& findings,
     int meanFragLen);
 
-/// Run REViewer workflow and generate SVG
-/// @param locusSpec Locus specification
-/// @param alignmentBuffer Paired fragment alignments
-/// @param findings Genotype results
-/// @param outputPrefix Output file prefix (SVG will be <prefix>.<locusId>.svg)
-/// @param meanFragLen Mean fragment length
-void runReviewer(
-    const LocusSpecification& locusSpec,
-    const locus::AlignmentBuffer& alignmentBuffer,
-    const LocusFindings& findings,
-    const std::string& outputPrefix,
-    int meanFragLen);
-
 }  // namespace reviewer
 }  // namespace ehunter

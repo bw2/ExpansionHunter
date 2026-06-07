@@ -43,21 +43,55 @@ namespace ehunter
 namespace reviewer
 {
 
-/// Evaluate a single plot condition against the genotype
-static bool evaluateCondition(const PlotReadVisualization& cond, const LocusFindings& findings)
+/// Evaluate a single plot condition against the genotype.
+/// Iterates locusSpec.variantSpecs() (a deterministic std::vector) rather than the unordered
+/// findings map, so the "first repeat variant" chosen for the condition is reproducible across
+/// builds, optimization levels, and ASLR.
+static bool evaluateCondition(
+    const PlotReadVisualization& cond, const LocusSpecification& locusSpec, const LocusFindings& findings)
 {
-    // Get the first repeat variant findings
     int shortAllele = 0;
     int longAllele = 0;
 
-    for (const auto& [variantId, variantFindings] : findings.findingsForEachVariant)
+    bool foundRepeatGenotype = false;
+    for (const auto& variantSpec : locusSpec.variantSpecs())
     {
-        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(variantFindings.get());
+        if (variantSpec.classification().type != VariantType::kRepeat)
+        {
+            continue;
+        }
+        auto it = findings.findingsForEachVariant.find(variantSpec.id());
+        if (it == findings.findingsForEachVariant.end())
+        {
+            continue;
+        }
+        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(it->second.get());
         if (repeatFindings && repeatFindings->optionalGenotype())
         {
             shortAllele = repeatFindings->optionalGenotype()->shortAlleleSizeInUnits();
             longAllele = repeatFindings->optionalGenotype()->longAlleleSizeInUnits();
+            foundRepeatGenotype = true;
             break;
+        }
+    }
+
+    // Fallback: if the locus spec carries no matching repeat variant spec, evaluate the repeat
+    // genotype directly from the findings. The smallest variant id is chosen so the selection stays
+    // deterministic despite findingsForEachVariant being an unordered map.
+    if (!foundRepeatGenotype)
+    {
+        const std::string* selectedId = nullptr;
+        for (const auto& variantIdAndFindings : findings.findingsForEachVariant)
+        {
+            const RepeatFindings* repeatFindings
+                = dynamic_cast<const RepeatFindings*>(variantIdAndFindings.second.get());
+            if (repeatFindings && repeatFindings->optionalGenotype()
+                && (!selectedId || variantIdAndFindings.first < *selectedId))
+            {
+                selectedId = &variantIdAndFindings.first;
+                shortAllele = repeatFindings->optionalGenotype()->shortAlleleSizeInUnits();
+                longAllele = repeatFindings->optionalGenotype()->longAlleleSizeInUnits();
+            }
         }
     }
 
@@ -82,11 +116,13 @@ static bool evaluateCondition(const PlotReadVisualization& cond, const LocusFind
 }
 
 /// Check if any plot condition is met
-static bool anyConditionMet(const std::vector<PlotReadVisualization>& conditions, const LocusFindings& findings)
+static bool anyConditionMet(
+    const std::vector<PlotReadVisualization>& conditions, const LocusSpecification& locusSpec,
+    const LocusFindings& findings)
 {
     for (const auto& cond : conditions)
     {
-        if (evaluateCondition(cond, findings))
+        if (evaluateCondition(cond, locusSpec, findings))
         {
             return true;
         }
@@ -107,7 +143,7 @@ bool shouldPlotReadVisualization(
     case PlotPolicy::kConditional:
         if (locusSpec.hasPlotConditions())
         {
-            return anyConditionMet(locusSpec.plotConditions(), findings);
+            return anyConditionMet(locusSpec.plotConditions(), locusSpec, findings);
         }
         return false;
     }
@@ -165,8 +201,10 @@ std::optional<ReviewerContext> runReviewerWorkflow(
                      locusId, repeatVariantCount);
     }
 
-    // For reproducibility - same seed as standalone REViewer
-    srand(14345);
+    // For reproducibility - same seed as standalone REViewer. Use a local PRNG so we don't pollute
+    // the process-global rand() state (which is reset once per locus and shared with any other code in
+    // the process that calls rand()).
+    std::mt19937 rng(14345);
 
     // Convert alignment buffer to REViewer format
     auto fragById = convertToFragById(alignmentBuffer);
@@ -217,7 +255,7 @@ std::optional<ReviewerContext> runReviewerWorkflow(
 
     // Assign fragment origins (determines which alignment to use for each fragment)
     // This must happen before consensus building so consensus uses the same alignments as visualization
-    auto fragAssignment = getBestFragAssignment(topDiplotype, fragPathAlignsById);
+    auto fragAssignment = getBestFragAssignment(topDiplotype, fragPathAlignsById, rng);
     spdlog::debug("REViewer workflow: Assigned {} fragments", fragAssignment.fragIds.size());
 
     // Build consensus sequences from anchor reads using the same alignment selection as visualization
@@ -241,36 +279,6 @@ std::optional<ReviewerContext> runReviewerWorkflow(
         std::move(consensusResult));
 }
 
-void runReviewer(
-    const LocusSpecification& locusSpec,
-    const locus::AlignmentBuffer& alignmentBuffer,
-    const LocusFindings& findings,
-    const std::string& outputPrefix,
-    int meanFragLen)
-{
-    const std::string& locusId = locusSpec.locusId();
-
-    spdlog::info("REViewer: Processing locus {}", locusId);
-
-    // Run the workflow to get context
-    auto contextOpt = runReviewerWorkflow(locusSpec, alignmentBuffer, findings, meanFragLen);
-    if (!contextOpt)
-    {
-        spdlog::warn("REViewer: Workflow failed for locus {}", locusId);
-        return;
-    }
-
-    const auto& context = *contextOpt;
-
-    // Generate visualization blueprint
-    auto lanePlots = generateBlueprint(context.paths, context.fragById, context.fragAssignment, context.fragPathAlignsById);
-
-    // Generate SVG output
-    const std::string svgPath = outputPrefix + "." + locusId + ".svg";
-    generateSvg(lanePlots, svgPath);
-
-    spdlog::info("REViewer: Generated SVG for locus {} at {}", locusId, svgPath);
-}
 
 }  // namespace reviewer
 }  // namespace ehunter

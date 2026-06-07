@@ -22,8 +22,6 @@
 
 #include "reviewer/Origin.hh"
 
-#include <cstdlib>
-
 namespace ehunter
 {
 namespace reviewer
@@ -33,7 +31,8 @@ using graphtools::Path;
 using std::string;
 using std::vector;
 
-FragAssignment getBestFragAssignment(const vector<Path>& /* hapPaths */, const FragPathAlignsById& fragPathAlignsById)
+FragAssignment getBestFragAssignment(
+    const vector<Path>& /* hapPaths */, const FragPathAlignsById& fragPathAlignsById, std::mt19937& rng)
 {
     vector<string> fragIds;
     fragIds.reserve(fragPathAlignsById.size());
@@ -47,8 +46,8 @@ FragAssignment getBestFragAssignment(const vector<Path>& /* hapPaths */, const F
     {
         const auto& fragId = fragIds[fragIndex];
         int numOrigins = static_cast<int>(fragPathAlignsById.at(fragId).size());
-        int originIndex = rand() % numOrigins;
-        alignIndexByFrag[fragIndex] = originIndex;
+        std::uniform_int_distribution<int> dist(0, numOrigins - 1);
+        alignIndexByFrag[fragIndex] = dist(rng);
     }
 
     return { fragIds, alignIndexByFrag };

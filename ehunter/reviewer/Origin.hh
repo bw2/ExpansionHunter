@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <random>
 #include <vector>
 
 #include <boost/optional.hpp>
@@ -35,13 +36,17 @@ namespace ehunter
 namespace reviewer
 {
 
-/// Assign best fragment origin (haplotype assignment) for each fragment
+/// Assign best fragment origin (haplotype assignment) for each fragment.
+/// Ties are broken using @p rng so callers can pass a locally-seeded engine and avoid
+/// mutating the process-global PRNG.
 /// @param hapPaths Haplotype paths
 /// @param fragPathAlignsById Fragment path alignments
+/// @param rng Random engine used to pick among equally-good fragment origins
 /// @return Fragment assignment with selected alignments
 FragAssignment getBestFragAssignment(
     const std::vector<graphtools::Path>& hapPaths,
-    const FragPathAlignsById& fragPathAlignsById);
+    const FragPathAlignsById& fragPathAlignsById,
+    std::mt19937& rng);
 
 }  // namespace reviewer
 }  // namespace ehunter
