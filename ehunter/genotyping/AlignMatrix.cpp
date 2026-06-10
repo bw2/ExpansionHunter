@@ -61,9 +61,9 @@ StrAlign AlignMatrix::getAlign(int readIndex, int alleleSize) const
 void AlignMatrix::add(const GraphAlignment& read, const GraphAlignment& mate)
 {
     const int numMotifsInRead = std::count(read.path().begin(), read.path().end(), strNode_);
-    const int numMorifsInMate = std::count(mate.path().begin(), mate.path().end(), strNode_);
+    const int numMotifsInMate = std::count(mate.path().begin(), mate.path().end(), strNode_);
 
-    if (numMotifsInRead != 0 || numMorifsInMate != 0)
+    if (numMotifsInRead != 0 || numMotifsInMate != 0)
     {
         add(read);
         add(mate);
