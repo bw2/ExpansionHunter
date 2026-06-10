@@ -60,6 +60,31 @@ struct TwoBitKmerEncoder
         return kmerKey;
     }
 
+    /// Single-pass validate-and-encode: returns false (without throwing) if the kmer has the
+    /// wrong length or contains any non-ACGT base, otherwise writes the 2-bit key. Equivalent to
+    /// `kmer.size()==kmerLength_ && all-ACGT` followed by `encode(kmer)`, but walks the kmer once.
+    /// baseToIndex maps non-ACGT bases to 0 (== 'A'), so the explicit ACGT check is required to
+    /// preserve the rejection behavior of the original two-pass contains()/numPaths() code.
+    bool tryEncode(const std::string& kmer, KmerKey_t& key) const
+    {
+        if (kmer.size() != kmerLength_)
+        {
+            return false;
+        }
+        KmerKey_t kmerKey(0);
+        for (unsigned i(0); i < kmerLength_; ++i)
+        {
+            const char c = kmer[i];
+            if (c != 'A' && c != 'C' && c != 'G' && c != 'T')
+            {
+                return false;
+            }
+            kmerKey = (kmerKey << 2) | baseToIndex(c);
+        }
+        key = kmerKey;
+        return true;
+    }
+
     std::string decode(KmerKey_t kmerKey) const
     {
         std::string kmer(kmerLength_, 'N');

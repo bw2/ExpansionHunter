@@ -113,7 +113,8 @@ int extendRepeatIntoSequence(std::string motif, std::string sequence, bool from_
 
     int num_pure_repeats = 0;
     for (int i = 0; i <= sequence_length - repeat_length; i += repeat_length) {
-        if (sequence.substr(i, repeat_length) != motif) {
+        // compare() matches a substring in place; substr() would heap-allocate a string per repeat unit.
+        if (sequence.compare(i, repeat_length, motif) != 0) {
             break;
         }
         num_pure_repeats++;
@@ -135,12 +136,16 @@ std::pair<int, bool> extendRepeatsIntoFlank(
     int num_extra_repeats = 0;
     int num_flanking_repeats = 0;
 
+    // The locus motif's canonical form is invariant for the whole call; compute it once instead of
+    // recomputing it for both the flank and soft-clip comparisons below.
+    const std::string canonical_locus_motif = computeCanonicalMotif(locus_motif, false);
+
     if (flanking_sequence_size >= locus_motif_size) {
         std::string flanking_motif = from_end
             ? flanking_sequence.substr(flanking_sequence_size - locus_motif_size)
             : flanking_sequence.substr(0, locus_motif_size);
 
-        if (computeCanonicalMotif(flanking_motif, false) == computeCanonicalMotif(locus_motif, false)) {
+        if (computeCanonicalMotif(flanking_motif, false) == canonical_locus_motif) {
             num_flanking_repeats = extendRepeatIntoSequence(flanking_motif, flanking_sequence, from_end);
         }
     }
@@ -156,7 +161,7 @@ std::pair<int, bool> extendRepeatsIntoFlank(
             ? soft_clip_sequence.substr(soft_clip_sequence_size - locus_motif_size)
             : soft_clip_sequence.substr(0, locus_motif_size);
 
-        if (computeCanonicalMotif(soft_clip_motif, false) == computeCanonicalMotif(locus_motif, false)) {
+        if (computeCanonicalMotif(soft_clip_motif, false) == canonical_locus_motif) {
             num_extra_repeats += extendRepeatIntoSequence(soft_clip_motif, soft_clip_sequence, from_end);
         }
     }

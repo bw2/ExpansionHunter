@@ -132,11 +132,14 @@ optional<GappedGraphAligner::AlignmentSeed> GappedGraphAligner::searchForAlignme
 
     optional<GappedGraphAligner::AlignmentSeed> optional_seed;
 
+    // Reused buffer for the current kmer; avoids a heap allocation per kmer position.
+    string kmer;
+
     bool found_multipath_kmer = false;
     size_t kmer_start_position = 0;
     while (kmer_start_position + kmer_len_ <= upperQuery.length())
     {
-        const string kmer = upperQuery.substr(kmer_start_position, static_cast<size_t>(kmer_len_));
+        kmer.assign(upperQuery, kmer_start_position, static_cast<size_t>(kmer_len_));
 
         // Initiate seed construction from a unique kmer
         auto num_kmer_paths = kmer_index_.numPaths(kmer);
@@ -174,7 +177,7 @@ optional<GappedGraphAligner::AlignmentSeed> GappedGraphAligner::searchForAlignme
     kmer_start_position = 0;
     while (kmer_start_position + kmer_len_ <= upperQuery.length())
     {
-        const string kmer = upperQuery.substr(kmer_start_position, static_cast<size_t>(kmer_len_));
+        kmer.assign(upperQuery, kmer_start_position, static_cast<size_t>(kmer_len_));
 
         const int numPaths = kmer_index_.numPaths(kmer);
         if (0 < numPaths && numPaths <= kMaxPathCount)

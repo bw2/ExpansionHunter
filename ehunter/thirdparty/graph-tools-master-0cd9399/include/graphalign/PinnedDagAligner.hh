@@ -73,6 +73,14 @@ class PinnedDagAligner
     typedef graphalign::dagAligner::Cigar Cigar;
     BaseMatchingDagAligner<true, false> aligner_;
 
+    // Reusable scratch for prefixAlign/suffixAlign (called sequentially, never nested). Cleared at the
+    // start of each call; heap capacity persists across the many alignments handled by one per-locus
+    // aligner instance, avoiding four container allocations per extension call. Output-neutral.
+    std::vector<int> nodeIdsScratch_;
+    std::vector<std::pair<int, int>> edgesScratch_;
+    std::string targetScratch_;
+    std::vector<NodeId> originalIdsScratch_;
+
     static void appendOperation(OperationType type, uint32_t length, std::list<Operation>& operations)
     {
         if (operations.empty() || operations.back().type() != type)
@@ -144,7 +152,18 @@ class PinnedDagAligner
 
     typedef int MappedId;
 
-    void unmapNodeIds(const std::map<MappedId, NodeId>& originalIds, graphalign::dagAligner::Cigar& cigar)
+    // Flat replacement for std::multimap<NodeId, MappedId>: entries are appended in non-decreasing
+    // NodeId order (the producing loop iterates a std::map<NodeId,int> keyed by NodeId), so the
+    // vector stays sorted by NodeId and supports the same equal_range queries with no per-node
+    // red-black-tree allocation. Insertion order within equal keys is preserved, matching multimap.
+    typedef std::vector<std::pair<NodeId, MappedId>> MappedIdMap;
+    struct MappedIdKeyLess
+    {
+        bool operator()(const std::pair<NodeId, MappedId>& a, NodeId b) const { return a.first < b; }
+        bool operator()(NodeId a, const std::pair<NodeId, MappedId>& b) const { return a < b.first; }
+    };
+
+    void unmapNodeIds(const std::vector<NodeId>& originalIds, graphalign::dagAligner::Cigar& cigar)
     {
         using namespace graphalign::dagAligner;
         for (Cigar::Operation& op : cigar)
@@ -162,7 +181,7 @@ class PinnedDagAligner
      */
     template <typename PathT>
     void fixFirstNodeExpansion(
-        const std::vector<MappedId>& nodeIds, const std::map<MappedId, NodeId>& originalIds, const PathT& seedPath,
+        const std::vector<MappedId>& nodeIds, const std::vector<NodeId>& originalIds, const PathT& seedPath,
         graphalign::dagAligner::Cigar& cigar)
     {
         using namespace graphalign::dagAligner;
@@ -199,13 +218,17 @@ public:
     prefixAlign(const Path& seedPath, const std::string& queryPiece, size_t extensionLen, int& score)
     {
         using namespace graphalign::dagAligner;
-        std::vector<MappedId> nodeIds;
-        Edges edges;
-        std::string target;
+        std::vector<MappedId>& nodeIds = nodeIdsScratch_;
+        nodeIds.clear();
+        Edges& edges = edgesScratch_;
+        edges.clear();
+        std::string& target = targetScratch_;
+        target.clear();
 
         // when repeat expansions are unrolled each copy gets a unique id, so, all
         // ids have to be remapped
-        std::map<MappedId, NodeId> originalIds;
+        std::vector<NodeId>& originalIds = originalIdsScratch_;
+        originalIds.clear();
 
         bfsDiscoverEdges(
             *seedPath.graphRawPtr(), seedPath.nodeIds().back(), seedPath.endPosition(), extensionLen, nodeIds, edges,
@@ -242,16 +265,20 @@ public:
     }
 
     std::list<PathAndAlignment>
-    suffixAlign(const Path& seedPath, std::string queryPiece, size_t extensionLen, int& score)
+    suffixAlign(const Path& seedPath, const std::string& queryPiece, size_t extensionLen, int& score)
     {
         using namespace graphalign::dagAligner;
-        std::vector<MappedId> nodeIds;
-        Edges edges;
-        std::string target;
+        std::vector<MappedId>& nodeIds = nodeIdsScratch_;
+        nodeIds.clear();
+        Edges& edges = edgesScratch_;
+        edges.clear();
+        std::string& target = targetScratch_;
+        target.clear();
 
         // when repeat expansions are unrolled each copy gets a unique id, so, all
         // ids have to be remapped
-        std::map<MappedId, NodeId> originalIds;
+        std::vector<NodeId>& originalIds = originalIdsScratch_;
+        originalIds.clear();
 
         ReverseGraph rg(*seedPath.graphRawPtr());
         bfsDiscoverEdges(
@@ -265,8 +292,9 @@ public:
         {
             const EdgeMap alignerEdges(edges, nodeIds);
 
-            std::reverse(queryPiece.begin(), queryPiece.end());
-            aligner_.align(queryPiece.begin(), queryPiece.end(), target.begin(), target.end(), alignerEdges);
+            // Reverse-iterate the query in place rather than copying it (by-value param) and
+            // std::reverse-ing the copy; the aligner consumes the same reversed character sequence.
+            aligner_.align(queryPiece.rbegin(), queryPiece.rend(), target.begin(), target.end(), alignerEdges);
 
             std::vector<Cigar> cigars;
             Score secondBestScore = 0;
@@ -360,7 +388,7 @@ private:
     template <typename GraphT>
     static IdEdges unrollRepeats(
         const GraphT& graph, const std::size_t seqLen, const std::map<NodeId, int>& nodeStartSeqOffset,
-        std::map<MappedId, NodeId>& originalIds, std::multimap<NodeId, MappedId>& mappedIds)
+        std::vector<NodeId>& originalIds, MappedIdMap& mappedIds)
     {
         IdEdges idEdges;
         for (const auto& nodeIdOffset : nodeStartSeqOffset)
@@ -380,8 +408,8 @@ private:
                     // chain unrolled repeat nodes together
                     IdEdge edge(mappedIds.size(), mappedIds.size() + 1);
                     idEdges.push_back(edge);
-                    mappedIds.emplace(nodeIdOffset.first, originalIds.size());
-                    originalIds.emplace(originalIds.size(), nodeIdOffset.first);
+                    mappedIds.emplace_back(nodeIdOffset.first, static_cast<MappedId>(originalIds.size()));
+                    originalIds.push_back(nodeIdOffset.first);
                     lenLeft -= std::min(lenLeft, nodeSeqLen);
                 }
 
@@ -390,8 +418,8 @@ private:
             }
             else
             {
-                mappedIds.emplace(nodeIdOffset.first, originalIds.size());
-                originalIds.emplace(originalIds.size(), nodeIdOffset.first);
+                mappedIds.emplace_back(nodeIdOffset.first, static_cast<MappedId>(originalIds.size()));
+                originalIds.push_back(nodeIdOffset.first);
             }
         }
 
@@ -448,8 +476,8 @@ private:
      */
     template <typename GraphT>
     static void linkPredecessors(
-        const GraphT& graph, const std::map<MappedId, NodeId>& originalIds,
-        const std::multimap<NodeId, MappedId>& mappedIds, IdEdges& idEdges)
+        const GraphT& graph, const std::vector<NodeId>& originalIds,
+        const MappedIdMap& mappedIds, IdEdges& idEdges)
     {
         for (MappedId mappedId = 0; MappedId(mappedIds.size()) != mappedId;)
         {
@@ -460,7 +488,7 @@ private:
             {
                 if (predecessorId != originalId)
                 {
-                    auto mappedPredIds = mappedIds.equal_range(predecessorId);
+                    auto mappedPredIds = std::equal_range(mappedIds.begin(), mappedIds.end(), predecessorId, MappedIdKeyLess{});
 
                     // other nodes, insert edges for each predecessor instance
                     // empty ranges indicate predecessors that are not part of subgraph
@@ -481,7 +509,7 @@ private:
             {
                 // skip all instances of self repeat so that only first node gets edges
                 // from predecessors
-                auto mappedIdsRange = mappedIds.equal_range(originalId);
+                auto mappedIdsRange = std::equal_range(mappedIds.begin(), mappedIds.end(), originalId, MappedIdKeyLess{});
                 mappedId += std::distance(mappedIdsRange.first, mappedIdsRange.second);
             }
             else
@@ -491,7 +519,7 @@ private:
         }
     }
 
-    static std::vector<std::size_t> indexEdges(const IdEdges& idEdges, const std::map<MappedId, NodeId>& originalIds)
+    static std::vector<std::size_t> indexEdges(const IdEdges& idEdges, const std::vector<NodeId>& originalIds)
     {
         std::vector<std::size_t> index;
         index.reserve(idEdges.size() + 1);
@@ -514,7 +542,7 @@ private:
                 ++index.back();
             }
             // add nodes without predecessors to index
-            while (lastId != MappedId(originalIds.rbegin()->first))
+            while (lastId != MappedId(originalIds.size() - 1))
             {
                 index.push_back(index.back());
                 ++lastId;
@@ -527,7 +555,7 @@ private:
     template <typename GraphT>
     static std::string buildTargetSequence(
         const GraphT& graph, const std::size_t startNodeOffset, const std::vector<MappedId>& nodeIds,
-        const std::map<MappedId, NodeId>& originalIds, const std::map<NodeId, int>& nodeStartSeqOffset,
+        const std::vector<NodeId>& originalIds, const std::map<NodeId, int>& nodeStartSeqOffset,
         const std::vector<std::size_t>& idEdgesIndex, const IdEdges& idEdges, std::vector<Edge>& edges)
     {
         std::string target;
@@ -575,14 +603,14 @@ private:
     static void bfsDiscoverEdges(
         const GraphT& graph, const NodeId startNodeId, const std::size_t startNodeOffset, const std::size_t seqLen,
         std::vector<MappedId>& nodeIds, std::vector<Edge>& edges, std::string& target,
-        std::map<MappedId, NodeId>& originalIds)
+        std::vector<NodeId>& originalIds)
     {
         // length of shortest path to the first node character
         const std::map<NodeId, int> nodeStartSeqOffset = extractSubgraph(graph, startNodeId, startNodeOffset, seqLen);
 
         // Repeat expansions need to be unrolled, so we create unique id for each unrolled instance and map
         // them to original ids
-        std::multimap<NodeId, MappedId> mappedIds;
+        MappedIdMap mappedIds;
         const IdEdges idEdges
             = unrollRepeats(graph, startNodeOffset + seqLen, nodeStartSeqOffset, originalIds, mappedIds);
 

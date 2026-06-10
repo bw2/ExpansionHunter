@@ -254,12 +254,12 @@ string KmerIndex::encode() const
 
 bool KmerIndex::contains(const std::string& kmer) const
 {
-    if ((kmer.size() != pimpl_->kmer_len) or (kmer.find_last_not_of("ACGT") != std::string::npos))
+    KmerKey_t kmer_key;
+    if (!pimpl_->kmer_coder.tryEncode(kmer, kmer_key))
     {
         return false;
     }
 
-    const auto kmer_key = pimpl_->kmer_coder.encode(kmer);
     return (
         (pimpl_->kmer_to_minipaths_map.find(kmer_key) != pimpl_->kmer_to_minipaths_map.end())
         or (pimpl_->kmer_to_paths_map.find(kmer_key) != pimpl_->kmer_to_paths_map.end()));
@@ -267,12 +267,12 @@ bool KmerIndex::contains(const std::string& kmer) const
 
 size_t KmerIndex::numPaths(const std::string& kmer) const
 {
-    if ((kmer.size() != pimpl_->kmer_len) or (kmer.find_last_not_of("ACGT") != std::string::npos))
+    KmerKey_t kmer_key;
+    if (!pimpl_->kmer_coder.tryEncode(kmer, kmer_key))
     {
         return 0;
     }
 
-    const auto kmer_key = pimpl_->kmer_coder.encode(kmer);
     if (pimpl_->kmer_to_minipaths_map.find(kmer_key) != pimpl_->kmer_to_minipaths_map.end())
     {
         return 1;

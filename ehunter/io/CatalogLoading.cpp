@@ -173,7 +173,8 @@ static vector<string> generateIds(const std::string& locusId, const Json& varian
 /// \brief Translate a single locus from the catalog file json structure into an intermediate locus configuration
 ///
 static LocusDescription loadLocusDescription(
-    Json& locusJson, const ReferenceContigInfo& contigInfo, const HeuristicParameters& heuristicParams)
+    Json& locusJson, const ReferenceContigInfo& contigInfo, const HeuristicParameters& heuristicParams,
+    bool copyCatalogFields)
 {
     assertFieldExists(locusJson, "LocusId");
     std::string locusId = locusJson["LocusId"].get<string>();
@@ -331,11 +332,15 @@ static LocusDescription loadLocusDescription(
         "RFC1MotifAnalysis", "PlotReadVisualization"
     };
 
-    // Capture any extra fields not in the known set
+    // Capture any extra fields not in the known set. Only needed when --copy-catalog-fields is set;
+    // otherwise these are never written to the output, so walking every field of every parsed locus
+    // (the whole catalog, before region filtering) just to discard the result is wasted work.
     Json extraFields;
-    for (auto it = locusJson.begin(); it != locusJson.end(); ++it) {
-        if (knownFields.find(it.key()) == knownFields.end()) {
-            extraFields[it.key()] = it.value();
+    if (copyCatalogFields) {
+        for (auto it = locusJson.begin(); it != locusJson.end(); ++it) {
+            if (knownFields.find(it.key()) == knownFields.end()) {
+                extraFields[it.key()] = it.value();
+            }
         }
     }
 
@@ -381,10 +386,17 @@ static LocusDescription loadLocusDescription(
 static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
 {
     objectStr.clear();
-    char c;
+
+    // Read through the streambuf directly (sbumpc) rather than std::istream::get(), which constructs
+    // a formatting sentry on every single call. For a multi-million-locus catalog this char-by-char
+    // sentry overhead dominates catalog-load time; sbumpc reads the exact same bytes with no sentry.
+    std::streambuf* const sb = stream.rdbuf();
+    std::streambuf::int_type ci;
+    const std::streambuf::int_type eof = std::char_traits<char>::eof();
 
     // Skip whitespace and commas to find the start of next object or end of array
-    while (stream.get(c)) {
+    while ((ci = sb->sbumpc()) != eof) {
+        const char c = static_cast<char>(ci);
         if (c == '{') {
             break;  // Found start of object
         }
@@ -392,14 +404,14 @@ static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
             return false;  // End of array
         }
         // Skip whitespace, commas, and array start bracket
-        if (c == '[' || c == ',' || std::isspace(c)) {
+        if (c == '[' || c == ',' || std::isspace(static_cast<unsigned char>(c))) {
             continue;
         }
         // Unexpected character
         throw std::runtime_error("Unexpected character in JSON array: " + std::string(1, c));
     }
 
-    if (stream.eof()) {
+    if (ci == eof) {
         // Reached EOF without finding either the start of the next object or the closing ']' of the array
         // — the file is truncated.
         throw std::runtime_error("Unexpected end of input in catalog JSON: stream ended before closing ']'");
@@ -415,7 +427,8 @@ static bool extractNextJsonObject(std::istream& stream, std::string& objectStr)
     // closing '}' drops braceDepth to 0, consuming (and discarding) the next character. For a minified
     // array such as `[{...},{...}]` (the default json.dump output) that extra character is the closing
     // ']', so the next call hits EOF and throws even though the catalog is well-formed.
-    while (braceDepth > 0 && stream.get(c)) {
+    while (braceDepth > 0 && (ci = sb->sbumpc()) != eof) {
+        const char c = static_cast<char>(ci);
         objectStr += c;
 
         if (escape) {
@@ -651,7 +664,7 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
                 processedLocusIds.push_back(currentLocusId);
             }
 
-            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics());
+            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics(), params.copyCatalogFields());
 
             // Early filter by region if specified
             if (filterContigIndex.has_value()) {

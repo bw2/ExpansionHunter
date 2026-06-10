@@ -207,7 +207,10 @@ void processLocus(const ProgramParameters& params, Reference& reference, const L
     // routed to the RepeatAnalyzer in low-mem-streaming / optimized-streaming. Users
     // needing accurate calls at off-target-dependent loci should currently use seeking
     // or streaming mode. See docs/03_Usage.md "Known limitations" section.
-    LocusAnalyzer locusAnalyzer(locusSpec, params.heuristics(), bamletWriter,
+    // Move the (heavy, graph-bearing) LocusSpecification into the analyzer instead of copying it; the
+    // analyzer's locusSpec() accessor provides it for the json/vcf/hom-ref steps below. The constructor
+    // already std::move's its by-value parameter, so passing an lvalue here was an extra per-locus copy.
+    LocusAnalyzer locusAnalyzer(std::move(locusSpec), params.heuristics(), bamletWriter,
                                 params.enableAlleleQualityMetrics());
     for (auto const& readPair : readPairs) {
         locusAnalyzer.processMates(readPair->firstMate->r, &readPair->secondMate->r, locus::RegionType::kTarget, alignerSelector);
@@ -218,14 +221,14 @@ void processLocus(const ProgramParameters& params, Reference& reference, const L
         sampleSex, boost::none, params.outputPaths().outputPrefix());
 
     // Check if --skip-hom-ref is enabled and all variants are hom-ref
-    if (params.skipHomRef() && isLocusHomRef(locusSpec, locusFindings))
+    if (params.skipHomRef() && isLocusHomRef(locusAnalyzer.locusSpec(), locusFindings))
     {
         return;  // Skip output for hom-ref loci
     }
 
-    jsonWriter.addRecord(locusSpec, locusFindings);
+    jsonWriter.addRecord(locusAnalyzer.locusSpec(), locusFindings);
 
-    vcfWriter.addRecords(locusSpec, locusFindings);
+    vcfWriter.addRecords(locusAnalyzer.locusSpec(), locusFindings);
 }
 
 
@@ -358,6 +361,12 @@ void doTheAnalysis(
     int previousReadContigId = -1;
     int typicalReadLength = -1;
 
+    // A single AlignerSelector (and thus a single PinnedDagAligner with its large DP score matrices)
+    // reused across all full-genotyped loci. The aligner is graph-agnostic — the graph is supplied per
+    // align() call via the seed path — so reuse is output-neutral and keeps the matrix buffers warm
+    // instead of reallocating ~hundreds of KB per locus.
+    graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
+
     // Analyze every locus index in locusIndicesReadyForAnalysis, then clear the queue.
     // Defined as a lambda so the same code path runs both during streaming and during the post-EOF drain
     // (otherwise loci still in flight when EOF is reached would silently disappear from the output).
@@ -394,7 +403,6 @@ void doTheAnalysis(
                 } else {
                     fullGenotypedCount++;
                     try {
-                        graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
                         processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
                                      alignerSelector, bamletWriter, jsonWriter, vcfWriter);
                     } catch (const std::exception& e) {

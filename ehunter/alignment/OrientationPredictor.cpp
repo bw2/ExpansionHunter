@@ -42,12 +42,16 @@ namespace ehunter
 static int countNonoverlappingKmerMatches(const string& query, const KmerIndex& kmerIndex)
 {
     const std::size_t kmerLength = kmerIndex.kmerLength();
+    // Uppercase once (position-independent) and reuse a single kmer buffer to avoid a heap
+    // allocation and a per-character toupper for every kmer position.
+    string upperQuery = query;
+    std::transform(upperQuery.begin(), upperQuery.end(), upperQuery.begin(), ::toupper);
     int matchCount = 0;
     size_t position = 0;
-    while (position + kmerLength <= query.length())
+    string kmer;
+    while (position + kmerLength <= upperQuery.length())
     {
-        string kmer = query.substr(position, kmerLength);
-        std::transform(kmer.begin(), kmer.end(), kmer.begin(), ::toupper);
+        kmer.assign(upperQuery, position, kmerLength);
 
         if (kmerIndex.contains(kmer))
         {

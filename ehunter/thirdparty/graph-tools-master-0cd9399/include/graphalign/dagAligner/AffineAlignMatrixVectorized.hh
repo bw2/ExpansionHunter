@@ -150,8 +150,22 @@ namespace dagAligner
             const int qLen = query_.size();
             const int tLen = target_.size();
 
+            // fill() only ever reads alignmentPenalties_[target_[t]] — i.e. rows for target characters
+            // that actually occur in target_. Computing penalty rows for absent characters (the matrix
+            // has TARGET_CHAR_MAX_+1 = 16 possible codes but a typical DNA target uses ~4-5) is wasted
+            // work on every alignment; restrict the computation to the present characters.
+            bool targetCharPresent[PenaltyMatrix::TARGET_CHAR_MAX_ + 1] = { false };
+            for (int t = 0; t < tLen; ++t)
+            {
+                targetCharPresent[target_[t]] = true;
+            }
+
             for (typename PenaltyMatrix::TargetChar tc = 0; tc <= PenaltyMatrix::TARGET_CHAR_MAX_; ++tc)
             {
+                if (!targetCharPresent[tc])
+                {
+                    continue;
+                }
                 alignmentPenalties_[tc].resize((qLen + step - 1) / step * step, 0);
                 for (int q = 0; q < qLen; q += step)
                 {
