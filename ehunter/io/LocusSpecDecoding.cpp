@@ -274,6 +274,7 @@ LocusSpecification decodeLocusSpecification(
             = associateNodesWithReferenceRegions(blueprint, locusGraph, completeReferenceRegions);
 
         GenotyperParameters parameters(heuristicParams.minLocusCoverage());
+        parameters.useImprovedGenotyping = heuristicParams.useImprovedGenotyping();
         if (locusDescription.errorRate())
         {
             parameters.errorRate = *locusDescription.errorRate();

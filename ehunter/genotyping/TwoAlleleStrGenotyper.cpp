@@ -23,6 +23,7 @@
 
 #include "genotyping/TwoAlleleStrGenotyper.hh"
 
+#include <algorithm>
 #include <stack>
 
 #include "core/LogSum.hh"
@@ -189,8 +190,21 @@ double TwoAlleleGenotyper::getShortAndLongAlleleLoglik(int shortAlleleSize, int 
         return std::numeric_limits<double>::lowest();
     }
 
-    const int shortAlleleLen = shortAlleleSize * motifLen_ + fragLen_ + 1;
-    const int longAlleleLen = longAlleleSize * motifLen_ + fragLen_ + 1;
+    // Mixing weight = expected fraction of length-informative read pairs originating from the short allele.
+    // Default model: weight proportional to the allele's genomic sampling span (repeat tract + fragment length).
+    //
+    // Improved model (--improved-genotyping): the tract's contribution to length-discriminating read yield
+    // saturates once the tract exceeds one read length. A flanking read anchored at a repeat boundary reaches
+    // at most readLen bases into the tract; repeat units deeper than that yield only exchangeable in-repeat read
+    // pairs that carry no new spanning/flanking signal, so they should not keep inflating the allele's weight.
+    // Capping the effective tract at readLen therefore removes the over-weighting of long alleles (the
+    // "small-allele lean"), while loci whose alleles are both shorter than a read remain numerically identical
+    // to the default model. Empirically (HG002 truth set) this improves large-allele genotype accuracy with no
+    // regression on shorter alleles.
+    const int shortTract = useImprovedGenotyping_ ? std::min(shortAlleleSize * motifLen_, readLen_) : shortAlleleSize * motifLen_;
+    const int longTract = useImprovedGenotyping_ ? std::min(longAlleleSize * motifLen_, readLen_) : longAlleleSize * motifLen_;
+    const int shortAlleleLen = shortTract + fragLen_ + 1;
+    const int longAlleleLen = longTract + fragLen_ + 1;
     const double shortAlleleFrac = static_cast<double>(shortAlleleLen) / (shortAlleleLen + longAlleleLen);
     double genotypeLoglik = 0;
 

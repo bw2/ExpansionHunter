@@ -89,7 +89,8 @@ unique_ptr<VariantFindings> RepeatAnalyzer::analyze(const LocusStats& stats)
     auto countsOfInrepeatReads = countAligns(StrAlign::Type::kInRepeat, alignMatrix_);
 
     auto genotype = strgt::genotype(
-        stats.alleleCount(), repeatUnit_.length(), stats.meanReadLength(), stats.meanFragLength(), alignMatrix_);
+        stats.alleleCount(), repeatUnit_.length(), stats.meanReadLength(), stats.meanFragLength(), alignMatrix_,
+        genotyperParams_.useImprovedGenotyping);
 
     return std::make_unique<RepeatFindings>(
         countsOfSpanningReads, countsOfFlankingReads, countsOfInrepeatReads, stats.alleleCount(), genotype,

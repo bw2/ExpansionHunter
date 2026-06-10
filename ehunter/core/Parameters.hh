@@ -158,6 +158,9 @@ public:
     int orientationPredictorKmerLen() const { return orientationPredictorKmerLen_; }
     int orientationPredictorMinKmerCount() const { return orientationPredictorMinKmerCount_; }
 
+    bool useImprovedGenotyping() const { return useImprovedGenotyping_; }
+    void setUseImprovedGenotyping(bool value) { useImprovedGenotyping_ = value; }
+
 private:
     int regionExtensionLength_;
     int minLocusCoverage_;
@@ -169,6 +172,7 @@ private:
     int seedAffixTrimLength_;
     int orientationPredictorKmerLen_;
     int orientationPredictorMinKmerCount_;
+    bool useImprovedGenotyping_ = false;
 };
 
 // Per-locus parameters (settable from variant catalog) controlling genotyping
@@ -186,6 +190,8 @@ struct GenotyperParameters
     double minLocusCoverage;
     // Minimal number of reads spanning a variant breakpoint
     int minBreakpointSpanningReads = 5;
+    // Use geometry-based per-allele read-yield mixing weight (--improved-genotyping)
+    bool useImprovedGenotyping = false;
 };
 
 class ProgramParameters
