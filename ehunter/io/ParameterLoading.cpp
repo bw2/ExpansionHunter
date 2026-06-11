@@ -75,7 +75,7 @@ struct UserParameters
     bool disableAllPlots = false;
     string logLevel = "info";
     int threadCount = 1;
-    bool enableRealignedBamOutput = false;
+    bool enableBamletOutput = false;
     bool cacheMates = false;
     bool disableQualityMetrics = false;
     bool copyCatalogFields = false;
@@ -123,7 +123,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
         ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
-        ("enable-realigned-bam-output", po::bool_switch(&params.enableRealignedBamOutput), "Enable realigned reads BAM file output")
+        ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
         ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
         ("improved-genotyping", po::bool_switch(&params.improvedGenotyping), "Use geometry-based per-allele read-yield mixing weight in the two-allele STR genotyper (saturates the in-repeat contribution at the read-length scale instead of a length-proportional weight)")
     ;
@@ -489,7 +489,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     return ProgramParameters(
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
-        userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableRealignedBamOutput,
+        userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.heuristicGenotypingOnly);
 }
