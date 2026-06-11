@@ -57,6 +57,9 @@ public:
     void write(
         const std::string& locusId, const std::string& fragmentName, const std::string& query, bool isFirstMate,
         bool isReversed, bool isMateReversed, const graphtools::GraphAlignment& alignment) override;
+
+    /// Flush any buffered output and surface a deferred write error. No-op for the base no-op writer.
+    virtual void finish() {}
 };
 
 /// Supports multiple threads calling the write() method on the same object. To make this more efficient for high
@@ -69,6 +72,11 @@ public:
     BamletWriterImpl(
         const std::string& bamletPath, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog);
     ~BamletWriterImpl() override;
+
+    // Join the writer thread and rethrow any exception it captured (e.g. a failed bam_write1). Must be
+    // called once after all write()s are done, on a path where throwing is allowed — the destructor cannot
+    // rethrow because destructors are implicitly noexcept (rethrowing there would call std::terminate).
+    void finish() override;
 
     void initLocusSpec(const LocusSpecification& locusSpec) override;
 

@@ -42,7 +42,8 @@ enum class AnalysisMode
     kSeeking,
     kStreaming,
     kLowMemStreaming,
-    kOptimizedStreaming
+    kOptimizedStreaming,
+    kRegionParallelStreaming
 };
 
 enum class LogLevel

@@ -26,6 +26,8 @@
 
 #include <boost/algorithm/string/join.hpp>
 
+#include "spdlog/spdlog.h"
+
 // cppcheck-suppress missingInclude
 #include "htslib/bgzf.h"
 // cppcheck-suppress missingInclude
@@ -107,17 +109,53 @@ void BamletWriterImpl::initLocusSpec(const LocusSpecification& locusSpec)
     graphReferenceMappings_.emplace(locusSpec.locusId(), graphReferenceMapping);
 }
 
-BamletWriterImpl::~BamletWriterImpl()
+void BamletWriterImpl::finish()
 {
-    writeQueue_.push(nullptr);
-    writeThread_.join();
+    // Drain and join the writer thread (idempotent: the destructor checks joinable() so a second
+    // teardown is a no-op).
+    if (writeThread_.joinable())
+    {
+        writeQueue_.push(nullptr);
+        writeThread_.join();
+    }
 
     // Re-raise a failure that occurred on the writer thread (it captured the exception instead of letting
-    // it escape and call std::terminate). Guard against throwing while another exception is already in
-    // flight — a destructor must not throw during stack unwinding.
-    if (writeThreadException_ && std::uncaught_exceptions() == 0)
+    // it escape and call std::terminate). This runs on a normal call path, so the throw propagates to the
+    // caller (main's catch) as intended. Clear it first so the destructor does not also report it.
+    if (writeThreadException_)
     {
-        std::rethrow_exception(writeThreadException_);
+        std::exception_ptr captured = writeThreadException_;
+        writeThreadException_ = nullptr;
+        std::rethrow_exception(captured);
+    }
+}
+
+BamletWriterImpl::~BamletWriterImpl()
+{
+    // Ensure the writer thread is always joined, even if finish() was never called (e.g. an exception
+    // unwound past the finish() call site). A destructor is implicitly noexcept, so it must NOT rethrow a
+    // captured writer-thread failure — that would call std::terminate. Errors are meant to be surfaced by
+    // finish(); if one reaches only the destructor, log it instead of throwing.
+    if (writeThread_.joinable())
+    {
+        writeQueue_.push(nullptr);
+        writeThread_.join();
+    }
+
+    if (writeThreadException_)
+    {
+        try
+        {
+            std::rethrow_exception(writeThreadException_);
+        }
+        catch (const std::exception& e)
+        {
+            spdlog::error("Bamlet writer thread failed (surfaced only at teardown): {}", e.what());
+        }
+        catch (...)
+        {
+            spdlog::error("Bamlet writer thread failed with an unknown exception (surfaced only at teardown)");
+        }
     }
 }
 

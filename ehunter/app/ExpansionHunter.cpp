@@ -213,14 +213,26 @@ int main(int argc, char** argv)
 
         const HeuristicParameters& heuristicParams = params.heuristics();
         const OutputPaths& outputPaths = params.outputPaths();
-        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
+        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kOptimizedStreaming
+            || params.analysisMode() == AnalysisMode::kRegionParallelStreaming)
         {
-            spdlog::info("Running sample analysis in {} mode",
-                params.analysisMode() == AnalysisMode::kOptimizedStreaming ? "optimized-streaming" : "low-mem-streaming");
+            const char* modeName = params.analysisMode() == AnalysisMode::kOptimizedStreaming
+                ? "optimized-streaming"
+                : params.analysisMode() == AnalysisMode::kRegionParallelStreaming ? "region-parallel-streaming"
+                                                                                  : "low-mem-streaming";
+            spdlog::info("Running sample analysis in {} mode", modeName);
             BamletWriterPtr bamletWriter = params.enableBamletOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
                 : std::make_shared<BamletWriter>();
-            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
+            if (params.analysisMode() == AnalysisMode::kRegionParallelStreaming)
+            {
+                htsRegionParallelStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
+            }
+            else
+            {
+                htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
+            }
+            bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
             return 0;
         }
 
@@ -264,6 +276,7 @@ int main(int argc, char** argv)
             spdlog::info("Running sample analysis in streaming mode");
             sampleFindings = htsStreamingSampleAnalysis(params, heuristicParams, regionCatalog, bamletWriter);
         }
+        bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
 
         // Filter out hom-ref loci if --skip-hom-ref is enabled
         if (params.skipHomRef())

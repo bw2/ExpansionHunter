@@ -37,4 +37,7 @@ namespace ehunter
 void htsLowMemStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionCatalog,
 	const ProgramParameters& programParams, Reference& reference, BamletWriterPtr bamletWriter);
 
+void htsRegionParallelStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionCatalog,
+	const ProgramParameters& programParams, Reference& reference, BamletWriterPtr bamletWriter);
+
 }

@@ -52,6 +52,21 @@ MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsIn
     htsAlignmentPtr_ = bam_init1();
 }
 
+MateExtractor::MateExtractor(const string& htsFilePath, const std::string& htsIndexPath, const std::string& htsReferencePath, const bool cacheMates, std::shared_ptr<const MateCache> sharedCache, const int farAwayMateDistanceThreshold)
+    : htsFilePath_(htsFilePath)
+    , htsReferencePath_(htsReferencePath)
+    , htsIndexPath_(htsIndexPath)
+    , contigInfo_({})
+    , sharedCache_(std::move(sharedCache))
+    , cacheMates_(cacheMates)
+    , farAwayMateDistanceThreshold_(farAwayMateDistanceThreshold)
+{
+    openFile();
+    loadHeader();
+    loadIndex();
+    htsAlignmentPtr_ = bam_init1();
+}
+
 MateExtractor::~MateExtractor()
 {
     bam_destroy1(htsAlignmentPtr_);
@@ -107,16 +122,26 @@ void MateExtractor::loadIndex()
 
 
 void MateExtractor::addMateToCache(const ReadId& mateReadId, FullRead mate) {
-    if (mateCache_.count(mateReadId) > 0) {
+    if (localCache_.count(mateReadId) > 0) {
         throw std::logic_error("Mate cache already contains mate with id " + mateReadId.fragmentId());
     }
-    mateCache_.emplace(mateReadId, std::move(mate));
+    localCache_.emplace(mateReadId, std::move(mate));
+}
+
+std::shared_ptr<const MateCache> MateExtractor::freezeAndShareCache() {
+    return std::make_shared<const MateCache>(std::move(localCache_));
 }
 
 boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion) {
     extractedTotalCounter_ += 1;
-    if (cacheMates_ && mateCache_.count(mateReadId) > 0) {
-        return mateCache_.at(mateReadId);
+    if (sharedCache_) {
+        auto it = sharedCache_->find(mateReadId);
+        if (it != sharedCache_->end()) {
+            return it->second;
+        }
+    }
+    if (cacheMates_ && localCache_.count(mateReadId) > 0) {
+        return localCache_.at(mateReadId);
     }
 
     hts_itr_t* htsRegionPtr_ = sam_itr_queryi(htsIndexPtr_, genomicRegion.contigIndex(), genomicRegion.start(), genomicRegion.end());
@@ -163,7 +188,7 @@ boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, c
                 // Cache every primary read in the queried window. The caller only invokes extractMate with a
                 // window centered on a far-away mate position, so these are effectively the far-away reads;
                 // this differs from extractMates, which gates caching on farAwayMateDistanceThreshold_.
-                mateCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
+                localCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
             }
             if (foundRequestedMate) {
                 break;
@@ -186,8 +211,8 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
 
     if (cacheMates_) {
         for (ReadId mateReadId : mateRegionToRecover.mateReadIds) {
-            if (mateCache_.count(mateReadId) > 0) {
-                extractedMates.push_back(mateCache_.at(mateReadId));
+            if (localCache_.count(mateReadId) > 0) {
+                extractedMates.push_back(localCache_.at(mateReadId));
                 mateReadIdsNotFoundYet.erase(mateReadId);
             }
         }
@@ -248,7 +273,7 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
                     mateReadIdsNotFoundYet.erase(putativeFullMate.r.readId());
                 }
                 if (shouldCacheThisMate) {
-                    mateCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
+                    localCache_.emplace(putativeFullMate.r.readId(), std::move(putativeFullMate));
                 }
                 if (foundRequestedMate && mateReadIdsNotFoundYet.size() == 0 && !cacheMates_) {
                     break;  // found all requested mates

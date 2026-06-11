@@ -118,7 +118,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
-        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', or 'optimized-streaming')")
+        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', 'optimized-streaming', or 'region-parallel-streaming')")
         ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
@@ -240,6 +240,7 @@ void assertValidity(const UserParameters& userParameters)
     if ((userParameters.analysisMode != "seeking")
         and (userParameters.analysisMode != "low-mem-streaming")
         and (userParameters.analysisMode != "optimized-streaming")
+        and (userParameters.analysisMode != "region-parallel-streaming")
         and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
@@ -260,7 +261,8 @@ void assertValidity(const UserParameters& userParameters)
         assertPathToExistingFile(userParameters.htsIndexPath);
     }
 
-    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "optimized-streaming")
+    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "optimized-streaming"
+            || userParameters.analysisMode == "region-parallel-streaming")
         and (userParameters.sortCatalogBy != "position"))
     {
         throw std::invalid_argument("--sort-catalog-by position must be specified when --analysis-mode is set to '" + userParameters.analysisMode);
@@ -354,6 +356,10 @@ AnalysisMode decodeAnalysisMode(const string& encoding)
     else if (encoding == "optimized-streaming")
     {
         return AnalysisMode::kOptimizedStreaming;
+    }
+    else if (encoding == "region-parallel-streaming")
+    {
+        return AnalysisMode::kRegionParallelStreaming;
     }
     else
     {

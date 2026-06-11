@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -59,16 +60,22 @@ public:
     MateExtractor(const std::string& htsFilePath, const std::string& htsIndexPath,
                   const std::string& htsReferencePath, const bool cacheMates,
                   const int farAwayMateDistanceThreshold = 1000);
+    MateExtractor(const std::string& htsFilePath, const std::string& htsIndexPath,
+                  const std::string& htsReferencePath, const bool cacheMates,
+                  std::shared_ptr<const MateCache> sharedCache,
+                  const int farAwayMateDistanceThreshold = 1000);
     ~MateExtractor();
 
     boost::optional<FullRead> extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion);
     std::vector<FullRead> extractMates(const MateRegionToRecover& mateRegionToRecover);
     void addMateToCache(const ReadId& readId, FullRead mate);
-    size_t mateCacheSize() const { return mateCache_.size(); }
+    size_t mateCacheSize() const { return localCache_.size(); }
     uint64_t extractedMatesCounter() const { return extractedTotalCounter_; }
     uint64_t extractedMatesFromDiskCounter() const { return extractedFromDiskCounter_; }
-    const MateCache& mateCache() const { return mateCache_; }
-    MateCache& mutableMateCache() { return mateCache_; }
+
+    // Moves localCache_ into a heap-allocated immutable cache and returns it so a serial prep pass can build the
+    // cache and then share it read-only across multiple worker MateExtractors. After the move localCache_ is empty.
+    std::shared_ptr<const MateCache> freezeAndShareCache();
 
 private:
     void openFile();
@@ -79,7 +86,8 @@ private:
     std::string htsReferencePath_;
     std::string htsIndexPath_;
     ReferenceContigInfo contigInfo_;
-    MateCache mateCache_;
+    MateCache localCache_;
+    std::shared_ptr<const MateCache> sharedCache_;
     bool cacheMates_;
 
     htsFile* htsFilePtr_ = nullptr;

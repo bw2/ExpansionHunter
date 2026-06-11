@@ -30,6 +30,7 @@ extern "C"
 #include "htslib/sam.h"
 }
 
+#include "core/GenomicRegion.hh"
 #include "core/Read.hh"
 #include "core/ReferenceContigInfo.hh"
 
@@ -55,6 +56,27 @@ public:
         openHtsFile(decompressionThreads);
         loadHeader();
         prepareForStreamingAlignments();
+    }
+
+    /// Region-restricted construction path: streams only reads overlapping \p regions (assumed already sorted by
+    /// contig then start, and non-overlapping), in the order given, using the hts index iterator. If \p regions is
+    /// empty the streamer immediately reports finished and produces no reads.
+    ///
+    /// \param[in] decompressionThreads See the whole-file constructor.
+    ///
+    HtsFileStreamer(
+        const std::string& htsFilePath, const std::string& htsReferencePath, const std::string& htsIndexPath,
+        const std::vector<GenomicRegion>& regions, const unsigned decompressionThreads = 1)
+        : htsFilePath_(htsFilePath)
+        , htsReferencePath_(htsReferencePath)
+        , contigInfo_({})
+        , regionMode_(true)
+        , regions_(regions)
+    {
+        openHtsFile(decompressionThreads);
+        loadHeader();
+        prepareForStreamingAlignments();
+        prepareForRegionStreaming(htsIndexPath);
     }
     ~HtsFileStreamer();
 
@@ -83,6 +105,7 @@ private:
     void openHtsFile(unsigned decompressionThreads);
     void loadHeader();
     void prepareForStreamingAlignments();
+    void prepareForRegionStreaming(const std::string& htsIndexPath);
 
     const std::string htsFilePath_;
     const std::string htsReferencePath_;
@@ -93,6 +116,13 @@ private:
     bam1_t* htsAlignmentPtr_ = nullptr;
     bam_hdr_t* htsHeaderPtr_ = nullptr;
     htsThreadPool htsThreadPool_ = { nullptr, 0 };
+
+    // Region-restricted streaming state. In whole-file mode regionMode_ is false and all of these stay null/empty.
+    bool regionMode_ = false;
+    std::vector<GenomicRegion> regions_;
+    size_t currentRegionIndex_ = 0;
+    hts_idx_t* htsIndexPtr_ = nullptr;
+    hts_itr_t* currentItr_ = nullptr;
 };
 
 }

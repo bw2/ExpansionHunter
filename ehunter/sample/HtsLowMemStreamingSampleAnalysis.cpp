@@ -22,17 +22,22 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 
 #include "sample/HtsStreamingSampleAnalysis.hh"
 
+#include <algorithm>
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
 #include <chrono>
 #include <ctime>
 #include <deque>
+#include <exception>
 #include <fstream>
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "spdlog/spdlog.h"
 #include <boost/optional.hpp>
@@ -47,8 +52,8 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "io/LocusSpecDecoding.hh"
 #include "io/IterativeJsonWriter.hh"
 #include "io/IterativeVcfWriter.hh"
-#include "io/MateCacheIO.hh"
 #include "io/ParameterLoading.hh"
+#include "io/StreamingOutputMerge.hh"
 #include "io/SampleStats.hh"
 #include "io/StringUtils.hh"
 #include "io/VcfWriter.hh"
@@ -349,7 +354,9 @@ void prepareCache(
 void doTheAnalysis(
     const ProgramParameters& params, Reference& reference, LocusDescriptionCatalog& locusDescriptionCatalog,
     const GenomeQueryCollection& genomeQuery, htshelpers::MateExtractor& mateExtractor,
-    BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold)
+    BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold,
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter,
+    const std::vector<GenomicRegion>& streamerRegions)
 {
     if (locusDescriptionCatalog.empty()) {
         return;
@@ -359,15 +366,25 @@ void doTheAnalysis(
     int fullGenotypedCount = 0;
     int skippedCount = 0;
 
-    boost::timer::progress_display progressBar(locusDescriptionCatalog.size());
+    // Constructed below only in whole-file mode (showProgress). In region-parallel mode P workers run this
+    // function concurrently and a progress_display writes its layout to std::cout on construction, so one per
+    // worker would garble the terminal. Left null when showProgress is false.
+    std::unique_ptr<boost::timer::progress_display> progressBar;
 
     const int threadCount = params.threadCount;
     const unsigned htsDecompressionThreads(std::min(threadCount, 12));
 
     const InputPaths& inputPaths = params.inputPaths();
-    const OutputPaths& outputPaths = params.outputPaths();
-    IterativeJsonWriter jsonWriter(params.sample(), reference.contigInfo(), outputPaths.json(), params.copyCatalogFields());
-    IterativeVcfWriter vcfWriter(params.sample().id(), reference, outputPaths.vcf());
+
+    // jsonWriter and vcfWriter are injected by the caller. Each sweep finalizes its own writer via the
+    // jsonWriter.close()/vcfWriter.close() calls at the end of this function.
+
+    // When streamerRegions is non-empty the read stream is restricted to those regions (region-parallel mode);
+    // gating the progress bar on whole-file mode avoids garbled interleaved output across concurrent sweeps.
+    const bool showProgress = streamerRegions.empty();
+    if (showProgress) {
+        progressBar = std::make_unique<boost::timer::progress_display>(locusDescriptionCatalog.size());
+    }
 
     // nextLocusDescriptionIndex points to the first locusDescription in the locusDescriptionCatalog whose
     // reference regions + flanks are entirely to the right of the current read
@@ -573,26 +590,34 @@ void doTheAnalysis(
     };
 
     spdlog::info("Starting to process {} loci", add_commas_at_thousands(locusDescriptionCatalog.size()));
-    htshelpers::HtsFileStreamer readStreamer(inputPaths.htsFile(), inputPaths.reference(), htsDecompressionThreads);
-    while (readStreamer.tryReadingNextPrimaryAlignment() && readStreamer.isStreamingAlignedReads())
+    // In whole-file mode use all decompression threads; in region mode use a single one to avoid
+    // P-way x htsDecompressionThreads bgzf thread oversubscription across concurrent region sweeps.
+    const unsigned streamerDecompressionThreads = streamerRegions.empty() ? htsDecompressionThreads : 1u;
+    std::unique_ptr<htshelpers::HtsFileStreamer> readStreamer = streamerRegions.empty()
+        ? std::make_unique<htshelpers::HtsFileStreamer>(
+              inputPaths.htsFile(), inputPaths.reference(), streamerDecompressionThreads)
+        : std::make_unique<htshelpers::HtsFileStreamer>(
+              inputPaths.htsFile(), inputPaths.reference(), inputPaths.htsIndexFile(), streamerRegions,
+              streamerDecompressionThreads);
+    while (readStreamer->tryReadingNextPrimaryAlignment() && readStreamer->isStreamingAlignedReads())
     {
 
         //skip unpaired reads
-        if (!readStreamer.currentIsPaired()) {
+        if (!readStreamer->currentIsPaired()) {
             continue;
         }
 
         // get read length from the 1st read
         if (typicalReadLength == -1) {
-            typicalReadLength = readStreamer.decodeRead().sequence().length();
+            typicalReadLength = readStreamer->decodeRead().sequence().length();
         }
 
-        const int32_t readContigId = readStreamer.currentReadContigId();
-        const int64_t readStart = readStreamer.currentReadPosition();
+        const int32_t readContigId = readStreamer->currentReadContigId();
+        const int64_t readStart = readStreamer->currentReadPosition();
         int64_t readEnd = readStart + typicalReadLength;
 
-        const int32_t mateContigId = readStreamer.currentMateContigId();
-        const int64_t mateStart = readStreamer.currentMatePosition();
+        const int32_t mateContigId = readStreamer->currentMateContigId();
+        const int64_t mateStart = readStreamer->currentMatePosition();
         int64_t mateEnd = mateStart + typicalReadLength;
 
         const bool isMateFarAway = readContigId != mateContigId || std::abs(readStart - mateStart) >= farAwayMateDistanceThreshold;
@@ -693,7 +718,7 @@ void doTheAnalysis(
             }
             //std::cout << "Incrementing nextLocusDescriptionIndex from " << nextLocusDescriptionIndex << " to " << nextLocusDescriptionIndex + 1 << std::endl;
             ++nextLocusDescriptionIndex;
-            ++progressBar;
+            if (showProgress) { ++(*progressBar); }
             if (nextLocusDescriptionIndex >= locusDescriptionCatalog.size()) {
                 break;
             }
@@ -714,7 +739,7 @@ void doTheAnalysis(
         }
 
         // fully parse the current read
-        FullRead fullRead = decodeRead(readStreamer);
+        FullRead fullRead = decodeRead(*readStreamer);
 
         // if mate if far away, retrieve it using the MateExtractor and add it to the unpairedReadsCache so that
         // the read pair is available immediately. This way we don't have to wait until the read position reaches
@@ -847,7 +872,7 @@ void doTheAnalysis(
     while (nextLocusDescriptionIndex < locusDescriptionCatalog.size()) {
         locusIndicesReadyForAnalysis.push_back(nextLocusDescriptionIndex);
         ++nextLocusDescriptionIndex;
-        ++progressBar;
+        if (showProgress) { ++(*progressBar); }
     }
     processReadyLoci();
 
@@ -917,43 +942,150 @@ void htsLowMemStreamingSampleAnalysis(
 
     htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
 
-    const std::string mateCachePath = programParams.outputPaths().outputPrefix() + ".mate-cache.bam";
-
-    bool cacheLoaded = false;
-
-    // Try to load existing cache if --cache-mates is enabled
-    if (programParams.cacheMates()) {
-        cacheLoaded = htshelpers::MateCacheIO::readCache(
-            mateCachePath,
-            reference.contigInfo(),
-            mateExtractor.mutableMateCache(),
-            locusDescriptionCatalog.size());
-
-        if (cacheLoaded) {
-            spdlog::info("Loaded {} cached mates from {}",
-                mateExtractor.mateCacheSize(), mateCachePath);
-        }
-    }
-
-    // Only run prepareCache if we didn't load from file
-    if (!cacheLoaded) {
-        prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
-
-        // Save cache if --cache-mates is enabled
-        if (programParams.cacheMates()) {
-            spdlog::info("Saving mate cache to {}", mateCachePath);
-            htshelpers::MateCacheIO::writeCache(
-                mateCachePath,
-                reference.contigInfo(),
-                mateExtractor.mateCache(),
-                locusDescriptionCatalog.size());
-        }
-    }
+    prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
 
     //perform the main bam/cram traversal and analysis
+    IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields());
+    IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
     doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
-                  farAwayMateDistanceThreshold);
+                  farAwayMateDistanceThreshold, jsonWriter, vcfWriter, {});
 
+}
+
+
+// Region-parallel variant of the low-mem streaming analysis. The coordinate-sorted catalog is split into
+// P contiguous, equal-locus-count slices (one per worker). A single serial prepass builds the far-away
+// mate cache once; it is then frozen and shared read-only across all workers. Each worker runs a private
+// full sweep restricted to its slice's genomic span (+/- a farAwayMateDistanceThreshold halo) with its own
+// file handle / FastaReference / MateExtractor, writing a per-region temp JSON+VCF. After all workers join,
+// the temp files are merged in genomic (ascending region) order into the final outputs. Intra-worker
+// genotyping is serial because the analysis mode is kRegionParallelStreaming (not kLowMemStreaming).
+void htsRegionParallelStreamingSampleAnalysis(
+    LocusDescriptionCatalog& locusDescriptionCatalog,
+    const ProgramParameters& programParams,
+    Reference& reference,
+    BamletWriterPtr bamletWriter)
+{
+    if (locusDescriptionCatalog.empty()) {
+        return;
+    }
+
+    const int farAwayMateDistanceThreshold = 1000;  // base pairs (also used as the per-side streamer halo)
+    const int N = (int) locusDescriptionCatalog.size();
+    const int P = std::min(std::max(1, programParams.threadCount), N);
+
+    spdlog::info("Running region-parallel-streaming analysis with {} workers over {} loci", P, N);
+
+    // Capture the contig info by const-ref before spawning threads so workers never touch the shared
+    // `reference` object; each worker builds its own FastaReference from this contig info instead.
+    const ReferenceContigInfo& contigInfo = reference.contigInfo();
+    const InputPaths& inputPaths = programParams.inputPaths();
+
+    // Serial prepass: build the shared far-away mate cache once, then freeze it for read-only sharing.
+    GenomeQueryCollection fullGenomeQuery(locusDescriptionCatalog);
+    htshelpers::MateExtractor cacheBuilder(
+        inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
+    prepareCache(programParams, reference, fullGenomeQuery, cacheBuilder, farAwayMateDistanceThreshold);
+    std::shared_ptr<const htshelpers::MateCache> sharedCache = cacheBuilder.freezeAndShareCache();
+
+    // Partition the catalog into P contiguous equal-locus slices using floor boundaries. All slices are
+    // non-empty because P <= N. For each slice also compute its per-contig streamer regions and temp paths.
+    std::vector<LocusDescriptionCatalog> slices;
+    std::vector<std::vector<GenomicRegion>> sliceRegions;
+    std::vector<std::string> jsonPaths;
+    std::vector<std::string> vcfPaths;
+    slices.reserve(P);
+    sliceRegions.reserve(P);
+    jsonPaths.reserve(P);
+    vcfPaths.reserve(P);
+
+    for (int i = 0; i < P; ++i) {
+        const int lo = (int) ((long long) i * N / P);
+        const int hi = (int) ((long long) (i + 1) * N / P);
+        slices.emplace_back(locusDescriptionCatalog.begin() + lo, locusDescriptionCatalog.begin() + hi);
+        const LocusDescriptionCatalog& slice = slices.back();
+
+        // One GenomicRegion per contig the slice touches. The slice is coordinate-sorted, so same-contig
+        // loci are contiguous; collapse each contig's loci into [minStart - halo, maxEnd + halo] clamped to
+        // [0, contigLen].
+        std::vector<GenomicRegion> regionsForSlice;
+        size_t k = 0;
+        while (k < slice.size()) {
+            const int32_t c = slice[k].locusContigIndex();
+            int64_t minStart = slice[k].locusAndFlanksStart();
+            int64_t maxEnd = slice[k].locusAndFlanksEnd();
+            size_t m = k;
+            while (m < slice.size() && slice[m].locusContigIndex() == c) {
+                minStart = std::min(minStart, slice[m].locusAndFlanksStart());
+                maxEnd = std::max(maxEnd, slice[m].locusAndFlanksEnd());
+                ++m;
+            }
+            const int64_t beg = std::max<int64_t>(0, minStart - farAwayMateDistanceThreshold);
+            const int64_t end = std::min<int64_t>(contigInfo.getContigSize(c), maxEnd + farAwayMateDistanceThreshold);
+            regionsForSlice.emplace_back(c, beg, end);
+            k = m;
+        }
+        sliceRegions.push_back(std::move(regionsForSlice));
+
+        jsonPaths.push_back(programParams.outputPaths().outputPrefix() + ".region" + std::to_string(i) + ".json");
+        vcfPaths.push_back(programParams.outputPaths().outputPrefix() + ".region" + std::to_string(i) + ".vcf");
+    }
+
+    // Spawn P worker threads. Each worker only reads its OWN index i of the shared vectors (no aliasing).
+    // bamletWriter is internally thread-safe; sharedCache is an immutable shared_ptr<const>; contigInfo is
+    // a const reference captured before any threads start. Any exception thrown by a worker is captured into
+    // workerExceptions[i] and rethrown on the main thread after join.
+    std::vector<std::exception_ptr> workerExceptions(P);
+    std::vector<std::thread> workers;
+    workers.reserve(P);
+    for (int i = 0; i < P; ++i) {
+        workers.emplace_back([&, i]() {
+            try {
+                FastaReference workerReference(inputPaths.reference(), contigInfo);
+                htshelpers::MateExtractor workerMateExtractor(
+                    inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, sharedCache,
+                    farAwayMateDistanceThreshold);
+                GenomeQueryCollection sliceGenomeQuery(slices[i]);
+                IterativeJsonWriter jsonWriter(
+                    programParams.sample(), workerReference.contigInfo(), jsonPaths[i],
+                    programParams.copyCatalogFields());
+                IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
+                doTheAnalysis(programParams, workerReference, slices[i], sliceGenomeQuery, workerMateExtractor,
+                              bamletWriter, farAwayMateDistanceThreshold, jsonWriter, vcfWriter, sliceRegions[i]);
+            } catch (...) {
+                workerExceptions[i] = std::current_exception();
+            }
+        });
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    // Propagate the first worker failure (if any) to main's catch before merging or cleaning up.
+    for (int i = 0; i < P; ++i) {
+        if (workerExceptions[i]) {
+            spdlog::error("Region-parallel-streaming worker {} failed", i);
+            std::rethrow_exception(workerExceptions[i]);
+        }
+    }
+
+    // Merge per-region temp files in ascending (== genomic) order into the final outputs.
+    spdlog::info("Merging {} per-region output files into final JSON and VCF", P);
+    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths);
+    mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
+
+    // Best-effort cleanup of the per-region temp files.
+    for (const std::string& path : jsonPaths) {
+        if (std::remove(path.c_str()) != 0) {
+            spdlog::warn("Could not remove temporary file {}", path);
+        }
+    }
+    for (const std::string& path : vcfPaths) {
+        if (std::remove(path.c_str()) != 0) {
+            spdlog::warn("Could not remove temporary file {}", path);
+        }
+    }
 }
 
 }

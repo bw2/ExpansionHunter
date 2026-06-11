@@ -81,11 +81,73 @@ void HtsFileStreamer::loadHeader()
 
 void HtsFileStreamer::prepareForStreamingAlignments() { htsAlignmentPtr_ = bam_init1(); }
 
+void HtsFileStreamer::prepareForRegionStreaming(const string& htsIndexPath)
+{
+    if (regions_.empty())
+    {
+        status_ = Status::kFinishedStreaming;
+        return;
+    }
+
+    htsIndexPtr_ = openHtsIndex(htsFilePtr_, htsFilePath_, htsIndexPath);
+
+    if (!htsIndexPtr_)
+    {
+        throw std::runtime_error("Failed to read index of " + htsFilePath_);
+    }
+
+    const GenomicRegion& region = regions_[currentRegionIndex_];
+    currentItr_ = sam_itr_queryi(htsIndexPtr_, region.contigIndex(), region.start(), region.end());
+
+    if (!currentItr_)
+    {
+        throw std::runtime_error("Unable to jump to a region in " + htsFilePath_);
+    }
+}
+
 bool HtsFileStreamer::tryReadingNextPrimaryAlignment()
 {
     if (status_ != Status::kStreamingReads)
     {
         return false;
+    }
+
+    if (regionMode_)
+    {
+        while (true)
+        {
+            int32_t returnCode = 0;
+
+            while ((returnCode = sam_itr_next(htsFilePtr_, currentItr_, htsAlignmentPtr_)) >= 0)
+            {
+                if (isPrimaryAlignment(htsAlignmentPtr_))
+                    return true;
+            }
+
+            if (returnCode < -1)
+            {
+                throw std::runtime_error("Failed to extract a record from " + htsFilePath_);
+            }
+
+            // Current region exhausted: release its iterator and advance to the next region (if any).
+            hts_itr_destroy(currentItr_);
+            currentItr_ = nullptr;
+            ++currentRegionIndex_;
+
+            if (currentRegionIndex_ >= regions_.size())
+            {
+                status_ = Status::kFinishedStreaming;
+                return false;
+            }
+
+            const GenomicRegion& region = regions_[currentRegionIndex_];
+            currentItr_ = sam_itr_queryi(htsIndexPtr_, region.contigIndex(), region.start(), region.end());
+
+            if (!currentItr_)
+            {
+                throw std::runtime_error("Unable to jump to a region in " + htsFilePath_);
+            }
+        }
     }
 
     int32_t returnCode = 0;
@@ -123,6 +185,18 @@ HtsFileStreamer::~HtsFileStreamer()
 {
     bam_destroy1(htsAlignmentPtr_);
     htsAlignmentPtr_ = nullptr;
+
+    if (currentItr_)
+    {
+        hts_itr_destroy(currentItr_);
+        currentItr_ = nullptr;
+    }
+
+    if (htsIndexPtr_)
+    {
+        hts_idx_destroy(htsIndexPtr_);
+        htsIndexPtr_ = nullptr;
+    }
 
     bam_hdr_destroy(htsHeaderPtr_);
     htsHeaderPtr_ = nullptr;
