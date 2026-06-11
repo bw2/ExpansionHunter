@@ -23,6 +23,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -91,6 +92,10 @@ private:
     ReferenceContigInfo contigInfo_;
 
     std::unordered_map<std::string, graphtools::GraphReferenceMapping> graphReferenceMappings_;
+    // Guards graphReferenceMappings_ so initLocusSpec() and write() can run from multiple worker threads
+    // (low-mem-streaming builds LocusAnalyzers, and thus calls initLocusSpec, on worker threads). Modes
+    // that pre-build all analyzers serially leave this uncontended.
+    std::mutex graphReferenceMappingsMutex_;
 
     ConcurrentQueue<bam1_t*> writeQueue_;
     std::thread writeThread_;

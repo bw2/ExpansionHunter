@@ -67,9 +67,14 @@ FastaReference::~FastaReference() {
 
 string FastaReference::getSequence(const string& contigName, int64_t start, int64_t end)
 {
-	if (contigCache_.find(contigName) != contigCache_.end())
+	// Use find() rather than operator[] on the cache-hit path: operator[] default-inserts on a miss,
+	// which structurally mutates the map. Keeping reads non-mutating lets multiple worker threads call
+	// getSequence() concurrently on an already-loaded contig (the cached string itself is immutable
+	// until clearContigCache()).
+	const auto cachedContig = contigCache_.find(contigName);
+	if (cachedContig != contigCache_.end())
 	{
-		return contigCache_[contigName].substr(start, end - start);
+		return cachedContig->second.substr(start, end - start);
 	}
 
 	//std::cout << "getSequence cache miss: " << contigName << ":" << start << "-" << end << std::endl;

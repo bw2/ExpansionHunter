@@ -26,7 +26,9 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <cstdlib>
 #include <chrono>
 #include <ctime>
+#include <deque>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <unordered_map>
@@ -124,6 +126,22 @@ struct LocusCache {
 using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 
 
+// Result of genotyping one locus, produced by genotypeLocusFull() (possibly on a worker thread) and
+// consumed by the single-threaded writer. Move-only because LocusFindings owns unique_ptrs. The
+// LocusAnalyzer is kept alive via shared_ptr so its locusSpec() backs the json/vcf writes without
+// copying the heavy graph-bearing LocusSpecification across the thread boundary.
+struct LocusOutput {
+    enum class Kind { kGenotyped, kHomRefSkip, kNoCoverage, kHeuristicOnlySkip, kError };
+
+    unsigned locusIndex = 0;
+    Kind kind = Kind::kNoCoverage;
+    std::shared_ptr<LocusAnalyzer> analyzer;
+    LocusFindings findings;
+    std::string locusId;
+    std::string message;  // error text when kind == kError
+};
+
+
 // Check if all variants in a locus are homozygous reference
 bool isLocusHomRef(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
 {
@@ -177,58 +195,73 @@ bool isLocusHomRef(const LocusSpecification& locusSpec, const LocusFindings& loc
     return true;
 }
 
-void processLocus(const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
+// Genotype a single locus and return the result instead of writing it inline, so the call can run on a
+// worker thread while the json/vcf writes happen later on the single-threaded writer (preserving output
+// order). Exceptions are captured into the result (kError) rather than thrown, matching the per-locus
+// error isolation of the serial path.
+LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& reference, unsigned locusIndex,
+                  const LocusDescription& locusDescription,
                   const std::vector<shared_ptr<FullReadPair>>& readPairs,
                   graphtools::AlignerSelector& alignerSelector,
-                  BamletWriterPtr bamletWriter,
-                  IterativeJsonWriter& jsonWriter,
-                  IterativeVcfWriter& vcfWriter) {
+                  BamletWriterPtr bamletWriter) {
 
-    const Sex& sampleSex = params.sample().sex();
-    // convert the lite-weight LocusDescription object into the heavier LocusSpecification
-    LocusSpecification locusSpec = decodeLocusSpecification(locusDescription, reference, params.heuristics(), true);
+    LocusOutput out;
+    out.locusIndex = locusIndex;
+    out.locusId = locusDescription.locusId();
 
-    // Apply plot policy from CLI flags
-    if (params.disableAllPlots())
-    {
-        locusSpec.setPlotPolicy(PlotPolicy::kNone);
+    try {
+        const Sex& sampleSex = params.sample().sex();
+        // convert the lite-weight LocusDescription object into the heavier LocusSpecification
+        LocusSpecification locusSpec = decodeLocusSpecification(locusDescription, reference, params.heuristics(), true);
+
+        // Apply plot policy from CLI flags
+        if (params.disableAllPlots())
+        {
+            locusSpec.setPlotPolicy(PlotPolicy::kNone);
+        }
+        else if (params.plotAll())
+        {
+            locusSpec.setPlotPolicy(PlotPolicy::kAll);
+        }
+
+        // analyze the read data
+        //
+        // TODO(off-target IRRs): every read pair is dispatched with RegionType::kTarget here, and
+        // the per-locus assignment loop in `doTheAnalysis` only checks reads against
+        // locusAndFlanksStart()/End() — never against locusDescription.offtargetRegions().
+        // As a result, IRRs that mismap to off-target regions (e.g. C9ORF72, FMR1) are not
+        // routed to the RepeatAnalyzer in low-mem-streaming / optimized-streaming. Users
+        // needing accurate calls at off-target-dependent loci should currently use seeking
+        // or streaming mode. See docs/03_Usage.md "Known limitations" section.
+        // Heap-allocate the analyzer and keep it alive in the result so its locusSpec() backs the
+        // json/vcf writes performed later (possibly on the writer thread) without copying the heavy,
+        // graph-bearing LocusSpecification across the thread boundary. The constructor already
+        // std::move's its by-value parameter.
+        out.analyzer = std::make_shared<LocusAnalyzer>(std::move(locusSpec), params.heuristics(), bamletWriter,
+                                    params.enableAlleleQualityMetrics());
+        for (auto const& readPair : readPairs) {
+            // Copy the read + mate locally before processMates: align() mutates the Read in place via
+            // reverseComplement(), and the same FullReadPair is shared across multiple loci's caches, so
+            // genotyping the shared object directly would be a data race between parallel workers.
+            Read read = readPair->firstMate->r;
+            Read mate = readPair->secondMate->r;
+            out.analyzer->processMates(read, &mate, locus::RegionType::kTarget, alignerSelector);
+        }
+
+        // genotype the locus
+        out.findings = out.analyzer->analyze(sampleSex, boost::none, params.outputPaths().outputPrefix());
+
+        // --skip-hom-ref: genotyped but emit no record (still counts as full-genotyped)
+        out.kind = (params.skipHomRef() && isLocusHomRef(out.analyzer->locusSpec(), out.findings))
+            ? LocusOutput::Kind::kHomRefSkip
+            : LocusOutput::Kind::kGenotyped;
+    } catch (const std::exception& e) {
+        out.kind = LocusOutput::Kind::kError;
+        out.message = e.what();
+        out.analyzer.reset();
     }
-    else if (params.plotAll())
-    {
-        locusSpec.setPlotPolicy(PlotPolicy::kAll);
-    }
 
-    // analyze the read data
-    //
-    // TODO(off-target IRRs): every read pair is dispatched with RegionType::kTarget here, and
-    // the per-locus assignment loop in `doTheAnalysis` only checks reads against
-    // locusAndFlanksStart()/End() — never against locusDescription.offtargetRegions().
-    // As a result, IRRs that mismap to off-target regions (e.g. C9ORF72, FMR1) are not
-    // routed to the RepeatAnalyzer in low-mem-streaming / optimized-streaming. Users
-    // needing accurate calls at off-target-dependent loci should currently use seeking
-    // or streaming mode. See docs/03_Usage.md "Known limitations" section.
-    // Move the (heavy, graph-bearing) LocusSpecification into the analyzer instead of copying it; the
-    // analyzer's locusSpec() accessor provides it for the json/vcf/hom-ref steps below. The constructor
-    // already std::move's its by-value parameter, so passing an lvalue here was an extra per-locus copy.
-    LocusAnalyzer locusAnalyzer(std::move(locusSpec), params.heuristics(), bamletWriter,
-                                params.enableAlleleQualityMetrics());
-    for (auto const& readPair : readPairs) {
-        locusAnalyzer.processMates(readPair->firstMate->r, &readPair->secondMate->r, locus::RegionType::kTarget, alignerSelector);
-    }
-
-    // genotype the locus
-    LocusFindings locusFindings = locusAnalyzer.analyze(
-        sampleSex, boost::none, params.outputPaths().outputPrefix());
-
-    // Check if --skip-hom-ref is enabled and all variants are hom-ref
-    if (params.skipHomRef() && isLocusHomRef(locusAnalyzer.locusSpec(), locusFindings))
-    {
-        return;  // Skip output for hom-ref loci
-    }
-
-    jsonWriter.addRecord(locusAnalyzer.locusSpec(), locusFindings);
-
-    vcfWriter.addRecords(locusAnalyzer.locusSpec(), locusFindings);
+    return out;
 }
 
 
@@ -362,10 +395,84 @@ void doTheAnalysis(
     int typicalReadLength = -1;
 
     // A single AlignerSelector (and thus a single PinnedDagAligner with its large DP score matrices)
-    // reused across all full-genotyped loci. The aligner is graph-agnostic — the graph is supplied per
-    // align() call via the seed path — so reuse is output-neutral and keeps the matrix buffers warm
-    // instead of reallocating ~hundreds of KB per locus.
+    // reused across all full-genotyped loci on the serial path. The aligner is graph-agnostic — the graph
+    // is supplied per align() call via the seed path — so reuse is output-neutral and keeps the matrix
+    // buffers warm instead of reallocating ~hundreds of KB per locus.
     graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
+
+    // Parallel genotyping is enabled only for low-mem-streaming with >1 thread. optimized-streaming (which
+    // also uses processLocusFast / --heuristic-genotyping-only) and single-thread runs keep the serial
+    // path below, which is byte-identical to the previous behavior.
+    const bool useParallelGenotyping =
+        (params.analysisMode() == AnalysisMode::kLowMemStreaming) && (threadCount > 1);
+
+    // One AlignerSelector per worker thread, since its DP scratch matrices are mutated per align() call.
+    std::vector<std::unique_ptr<graphtools::AlignerSelector>> threadAligners;
+    if (useParallelGenotyping) {
+        threadAligners.reserve(threadCount);
+        for (int t = 0; t < threadCount; ++t) {
+            threadAligners.push_back(
+                std::make_unique<graphtools::AlignerSelector>(params.heuristics().alignerType()));
+        }
+    }
+
+    // Ordered queue of pending per-locus outputs. FIFO order == ascending locusIndex == catalog/coordinate
+    // order, so output is written deterministically regardless of which worker finishes first. An item is
+    // either an in-flight future (full genotyping on the pool) or an already-built result (zero-coverage).
+    struct PendingItem {
+        bool isFuture = false;
+        std::future<LocusOutput> future;
+        LocusOutput ready;
+    };
+    std::deque<PendingItem> pending;
+    // Cap in-flight + buffered loci to bound memory (low-mem mode); the pool keeps draining as we go.
+    const size_t maxPending = static_cast<size_t>(threadCount) * 4;
+
+    // Declared after threadAligners and pending so that on scope exit (including exception unwinding) the
+    // pool is destroyed FIRST: ~thread_pool() runs and joins every queued/running task while the aligners
+    // those tasks dereference are still alive. std::future destructors from the pool's packaged_tasks do
+    // not block, so the pool itself — not the futures buffered in `pending` — is what joins the workers.
+    ctpl::thread_pool genotypingPool(useParallelGenotyping ? threadCount : 0);
+
+    // Write one finished locus result. Single-threaded: called inline on the serial path, and only from
+    // the main thread while draining the pending queue on the parallel path. Counter semantics match the
+    // previous serial code (a locus reaching full genotyping is counted as full-genotyped even if it
+    // produces no record because of --skip-hom-ref or an error).
+    auto writeOutput = [&](LocusOutput& out) {
+        switch (out.kind) {
+            case LocusOutput::Kind::kNoCoverage:
+                skippedCount++;
+                jsonWriter.addSkippedRecord(out.locusId, "no_coverage");
+                break;
+            case LocusOutput::Kind::kHeuristicOnlySkip:
+                skippedCount++;
+                jsonWriter.addSkippedRecord(out.locusId, "heuristic_only_mode");
+                break;
+            case LocusOutput::Kind::kError:
+                fullGenotypedCount++;
+                spdlog::error("Error while processing {}: {}", out.locusId, out.message);
+                break;
+            case LocusOutput::Kind::kHomRefSkip:
+                fullGenotypedCount++;
+                break;
+            case LocusOutput::Kind::kGenotyped:
+                fullGenotypedCount++;
+                jsonWriter.addRecord(out.analyzer->locusSpec(), out.findings);
+                vcfWriter.addRecords(out.analyzer->locusSpec(), out.findings);
+                break;
+        }
+    };
+
+    // Drain the pending queue in FIFO order until at most `keep` items remain. keep==0 is a full barrier
+    // (used before evicting the reference contig cache and at EOF).
+    auto drainPending = [&](size_t keep) {
+        while (pending.size() > keep) {
+            PendingItem item = std::move(pending.front());
+            pending.pop_front();
+            LocusOutput out = item.isFuture ? item.future.get() : std::move(item.ready);
+            writeOutput(out);
+        }
+    };
 
     // Analyze every locus index in locusIndicesReadyForAnalysis, then clear the queue.
     // Defined as a lambda so the same code path runs both during streaming and during the post-EOF drain
@@ -378,8 +485,16 @@ void doTheAnalysis(
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
                 // Locus has zero coverage; emit an explicit skipped record so it doesn't silently
                 // disappear from the JSON output.
-                skippedCount++;
-                jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "no_coverage");
+                if (useParallelGenotyping) {
+                    PendingItem item;
+                    item.ready.locusIndex = locusIndex;
+                    item.ready.kind = LocusOutput::Kind::kNoCoverage;
+                    item.ready.locusId = locusDescriptionCatalog[locusIndex].locusId();
+                    pending.push_back(std::move(item));
+                } else {
+                    skippedCount++;
+                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "no_coverage");
+                }
                 continue;
             }
             const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
@@ -398,16 +513,36 @@ void doTheAnalysis(
 
             if (needToProcessSlowly) {
                 if (params.heuristicGenotypingOnly()) {
-                    skippedCount++;
-                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
-                } else {
-                    fullGenotypedCount++;
-                    try {
-                        processLocus(params, reference, locusDescriptionCatalog[locusIndex], locusCache->readPairs,
-                                     alignerSelector, bamletWriter, jsonWriter, vcfWriter);
-                    } catch (const std::exception& e) {
-                        spdlog::error("Error while processing {}: {}", locusDescriptionCatalog[locusIndex].locusId(), e.what());
+                    if (useParallelGenotyping) {
+                        // Route through the ordered pending queue (like kNoCoverage) so this skipped
+                        // record is emitted in catalog order relative to other buffered records, rather
+                        // than written directly ahead of lower-index records still buffered in `pending`.
+                        PendingItem item;
+                        item.ready.locusIndex = locusIndex;
+                        item.ready.kind = LocusOutput::Kind::kHeuristicOnlySkip;
+                        item.ready.locusId = locusDescriptionCatalog[locusIndex].locusId();
+                        pending.push_back(std::move(item));
+                    } else {
+                        skippedCount++;
+                        jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
                     }
+                } else if (useParallelGenotyping) {
+                    // Dispatch full genotyping to the pool. locusCache is captured by value (shared_ptr),
+                    // so the worker keeps it alive even after the map entry is erased below.
+                    PendingItem item;
+                    item.isFuture = true;
+                    item.future = genotypingPool.push(
+                        [&params, &reference, &locusDescriptionCatalog, locusIndex, locusCache, bamletWriter,
+                         &threadAligners](int threadId) {
+                            return genotypeLocusFull(params, reference, locusIndex,
+                                locusDescriptionCatalog[locusIndex], locusCache->readPairs,
+                                *threadAligners[threadId], bamletWriter);
+                        });
+                    pending.push_back(std::move(item));
+                } else {
+                    LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
+                        locusDescriptionCatalog[locusIndex], locusCache->readPairs, alignerSelector, bamletWriter);
+                    writeOutput(out);
                 }
             }
 
@@ -418,6 +553,10 @@ void doTheAnalysis(
             }
         }
         locusIndicesReadyForAnalysis.clear();
+
+        if (useParallelGenotyping) {
+            drainPending(maxPending);
+        }
     };
 
     spdlog::info("Starting to process {} loci", add_commas_at_thousands(locusDescriptionCatalog.size()));
@@ -457,6 +596,24 @@ void doTheAnalysis(
                     + ", which is a different chromosome order than the reference input FASTA file.");
             }
             previousReadContigId = readContigId;
+
+            // Before evicting the previous contig's sequence from the reference cache, finish genotyping
+            // every locus on it. Workers read the cached contig inside decodeLocusSpecification, so the
+            // cache must stay valid until they complete. Once a read on the next contig arrives, all
+            // loci still collecting reads belong to the previous contig (coordinate order), so flush them
+            // here exactly as the per-read loop below would, then fully drain the pool.
+            if (useParallelGenotyping) {
+                // Flush unconditionally. Besides loci still collecting reads, locusIndicesReadyForAnalysis
+                // can hold loci left unprocessed by a prior per-read `continue`; the old `if (!collecting
+                // .empty())` guard skipped those, so they were genotyped only after the contig was evicted
+                // — racing in the unsynchronized faidx cache-miss path. (processReadyLoci no-ops on empty.)
+                for (auto idx : locusIndicesCollectingReads) {
+                    locusIndicesReadyForAnalysis.push_back(idx);
+                }
+                locusIndicesCollectingReads.clear();
+                processReadyLoci();
+                drainPending(0);
+            }
 
             // load the next chromosome into the cache
             spdlog::info("Processing loci on {}", chromosomeName);
@@ -680,6 +837,11 @@ void doTheAnalysis(
         ++progressBar;
     }
     processReadyLoci();
+
+    // Wait for all in-flight workers and write their results before tearing down the pool / reference.
+    if (useParallelGenotyping) {
+        drainPending(0);
+    }
 
     reference.clearContigCache();
 

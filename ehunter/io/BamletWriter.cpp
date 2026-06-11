@@ -72,10 +72,21 @@ BamletWriterImpl::BamletWriterImpl(
     }
 
     writeHeader();
+
+    // Force htslib to build the header's name->tid dictionary (bamHeader_->hrecs) now, on this single
+    // constructing thread. bam_hdr_write above serializes the manually-built header without hrecs, so the
+    // first bam_name2id() in write() would otherwise lazily populate hrecs and mutate the shared header —
+    // a data race once multiple worker threads call write() concurrently (parallel low-mem-streaming
+    // genotyping). After this warm-up, every later bam_name2id() is a read-only dictionary lookup.
+    if (contigInfo_.numContigs() > 0)
+    {
+        bam_name2id(bamHeader_.get(), contigInfo_.getContigName(0).c_str());
+    }
 }
 
 void BamletWriterImpl::initLocusSpec(const LocusSpecification& locusSpec)
 {
+    std::lock_guard<std::mutex> lock(graphReferenceMappingsMutex_);
     if (graphReferenceMappings_.find(locusSpec.locusId()) != graphReferenceMappings_.end())
     {
         return;
@@ -130,11 +141,20 @@ void BamletWriterImpl::write(
     const string& locusId, const string& fragmentName, const string& query, bool isFirstMate, bool isReversed,
     bool isMateReversed, const GraphAlignment& alignment)
 {
-    if (graphReferenceMappings_.find(locusId) == graphReferenceMappings_.end())
+    // Look up the (immutable, once-inserted) mapping under the lock, then use it after unlocking: an
+    // unordered_map element reference stays valid across other threads' inserts/rehashes — only the
+    // lookup itself must not race with a concurrent emplace in initLocusSpec().
+    const GraphReferenceMapping* referenceMappingPtr = nullptr;
     {
-        return;
+        std::lock_guard<std::mutex> lock(graphReferenceMappingsMutex_);
+        const auto cachedMapping = graphReferenceMappings_.find(locusId);
+        if (cachedMapping == graphReferenceMappings_.end())
+        {
+            return;
+        }
+        referenceMappingPtr = &cachedMapping->second;
     }
-    const GraphReferenceMapping& referenceMapping = graphReferenceMappings_.at(locusId);
+    const GraphReferenceMapping& referenceMapping = *referenceMappingPtr;
     auto optionalReferenceInterval = referenceMapping.map(alignment.path());
 
     if (optionalReferenceInterval)
