@@ -57,7 +57,11 @@ optional arguments.
 
 * `--enable-bamlet-output` Output a BAM file containing realigned reads
   that overlap or are located in close proximity to each variant. The file is
-  written to `<output-prefix>_realigned.bam`.
+  written to `<output-prefix>_realigned.bam`. Note: in `low-mem-streaming` mode with
+  more than one thread, the order of records in this BAM is nondeterministic across
+  runs (records are written as worker threads finish each locus). The records
+  themselves are identical run-to-run; only their ordering varies. The JSON and VCF
+  outputs remain deterministically ordered.
 
 * `--copy-catalog-fields` Copy extra annotation fields from the input variant
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,

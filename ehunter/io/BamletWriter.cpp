@@ -21,6 +21,7 @@
 
 #include "io/BamletWriter.hh"
 
+#include <exception>
 #include <vector>
 
 #include <boost/algorithm/string/join.hpp>
@@ -110,6 +111,14 @@ BamletWriterImpl::~BamletWriterImpl()
 {
     writeQueue_.push(nullptr);
     writeThread_.join();
+
+    // Re-raise a failure that occurred on the writer thread (it captured the exception instead of letting
+    // it escape and call std::terminate). Guard against throwing while another exception is already in
+    // flight — a destructor must not throw during stack unwinding.
+    if (writeThreadException_ && std::uncaught_exceptions() == 0)
+    {
+        std::rethrow_exception(writeThreadException_);
+    }
 }
 
 void BamletWriterImpl::writeHeader()
@@ -271,17 +280,28 @@ void BamletWriterImpl::write(
 
 void BamletWriterImpl::writeHtsAlignments()
 {
-    bam1_t* htsAlignmentPtr(nullptr);
-    while (true)
+    // An exception escaping this function (the writer thread's top-level routine) would call
+    // std::terminate, so capture it and let the destructor re-raise it on the main thread.
+    try
     {
-        writeQueue_.pop(htsAlignmentPtr);
-        if (not htsAlignmentPtr)
-            return;
-        if (bam_write1(filePtr_->fp.bgzf, htsAlignmentPtr) == 0)
+        bam1_t* htsAlignmentPtr(nullptr);
+        while (true)
         {
-            throw std::logic_error("Cannot write alignment");
+            writeQueue_.pop(htsAlignmentPtr);
+            if (not htsAlignmentPtr)
+                return;
+            // bam_write1 returns the number of bytes written (>0) on success and a negative value on
+            // failure; it never returns 0, so the error must be detected with `< 0`.
+            if (bam_write1(filePtr_->fp.bgzf, htsAlignmentPtr) < 0)
+            {
+                throw std::logic_error("Cannot write alignment");
+            }
+            bam_destroy1(htsAlignmentPtr);
         }
-        bam_destroy1(htsAlignmentPtr);
+    }
+    catch (...)
+    {
+        writeThreadException_ = std::current_exception();
     }
 }
 

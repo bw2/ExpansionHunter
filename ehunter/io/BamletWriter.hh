@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -99,6 +100,10 @@ private:
 
     ConcurrentQueue<bam1_t*> writeQueue_;
     std::thread writeThread_;
+    // Captures any exception thrown on writeThread_ so it can be re-raised on the main thread in the
+    // destructor; an exception escaping the thread's top-level function would otherwise call std::terminate.
+    // Written only by writeThread_ and read by the destructor after join(), so no synchronization is needed.
+    std::exception_ptr writeThreadException_;
 };
 
 using BamletWriterPtr = std::shared_ptr<BamletWriter>;

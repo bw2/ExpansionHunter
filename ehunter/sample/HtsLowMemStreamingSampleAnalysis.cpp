@@ -402,7 +402,11 @@ void doTheAnalysis(
 
     // Parallel genotyping is enabled only for low-mem-streaming with >1 thread. optimized-streaming (which
     // also uses processLocusFast / --heuristic-genotyping-only) and single-thread runs keep the serial
-    // path below, which is byte-identical to the previous behavior.
+    // path below. That path is structurally unchanged (same counters and catalog-ordered output), but it
+    // now genotypes via genotypeLocusFull, which copies each Read before processMates instead of passing
+    // the shared FullReadPair members by reference. Since align() mutates a Read in place (reverseComplement)
+    // and one read pair can belong to multiple loci, this fixes a prior cross-locus mutation of shared reads
+    // and so may change serial output for catalogs with overlapping loci relative to earlier releases.
     const bool useParallelGenotyping =
         (params.analysisMode() == AnalysisMode::kLowMemStreaming) && (threadCount > 1);
 
@@ -529,6 +533,15 @@ void doTheAnalysis(
                 } else if (useParallelGenotyping) {
                     // Dispatch full genotyping to the pool. locusCache is captured by value (shared_ptr),
                     // so the worker keeps it alive even after the map entry is erased below.
+                    //
+                    // Note: the JSON/VCF records are buffered in `pending` and written in catalog order, but
+                    // the bamlet (--enable-bamlet-output) records are written directly from the worker via
+                    // LocusAligner::align -> BamletWriter::write, so their order in <prefix>_realigned.bam is
+                    // worker-completion order, i.e. nondeterministic across runs in parallel mode. This is
+                    // intentional: the bamlet is SO:unknown and consumers (e.g. REViewer) match records by
+                    // read name + the XG graph-alignment tag, not file order. The serial path writes them in
+                    // locus order. To make the bamlet deterministic in parallel mode, buffer each worker's
+                    // realigned reads in the LocusOutput and replay them from writeOutput in catalog order.
                     PendingItem item;
                     item.isFuture = true;
                     item.future = genotypingPool.push(
