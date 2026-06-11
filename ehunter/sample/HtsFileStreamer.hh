@@ -53,9 +53,11 @@ public:
         , htsReferencePath_(htsReferencePath)
         , contigInfo_({})
     {
+        HandleGuard guard{ this };
         openHtsFile(decompressionThreads);
         loadHeader();
         prepareForStreamingAlignments();
+        guard.dismiss();
     }
 
     /// Region-restricted construction path: streams only reads overlapping \p regions (assumed already sorted by
@@ -73,10 +75,12 @@ public:
         , regionMode_(true)
         , regions_(regions)
     {
+        HandleGuard guard{ this };
         openHtsFile(decompressionThreads);
         loadHeader();
         prepareForStreamingAlignments();
         prepareForRegionStreaming(htsIndexPath);
+        guard.dismiss();
     }
     ~HtsFileStreamer();
 
@@ -106,6 +110,24 @@ private:
     void loadHeader();
     void prepareForStreamingAlignments();
     void prepareForRegionStreaming(const std::string& htsIndexPath);
+
+    // Destroy every owned htslib handle (file, header, alignment, thread pool, region index/iterator) and null
+    // it out. Idempotent: safe to call more than once and with some handles still null. Used by the destructor
+    // and by HandleGuard, so a constructor that throws part-way still releases what it already acquired (a
+    // throwing constructor means ~HtsFileStreamer() never runs).
+    void releaseHandles();
+
+    // RAII guard that releases the owned htslib handles if a constructor throws before dismiss() is reached.
+    struct HandleGuard
+    {
+        HtsFileStreamer* streamer;
+        ~HandleGuard()
+        {
+            if (streamer)
+                streamer->releaseHandles();
+        }
+        void dismiss() { streamer = nullptr; }
+    };
 
     const std::string htsFilePath_;
     const std::string htsReferencePath_;

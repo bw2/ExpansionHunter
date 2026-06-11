@@ -181,10 +181,13 @@ Read HtsFileStreamer::decodeRead(LinearAlignmentStats& alignmentStats) const
     return htshelpers::decodeRead(htsAlignmentPtr_);
 }
 
-HtsFileStreamer::~HtsFileStreamer()
+void HtsFileStreamer::releaseHandles()
 {
-    bam_destroy1(htsAlignmentPtr_);
-    htsAlignmentPtr_ = nullptr;
+    if (htsAlignmentPtr_)
+    {
+        bam_destroy1(htsAlignmentPtr_);
+        htsAlignmentPtr_ = nullptr;
+    }
 
     if (currentItr_)
     {
@@ -198,17 +201,26 @@ HtsFileStreamer::~HtsFileStreamer()
         htsIndexPtr_ = nullptr;
     }
 
-    bam_hdr_destroy(htsHeaderPtr_);
-    htsHeaderPtr_ = nullptr;
+    if (htsHeaderPtr_)
+    {
+        bam_hdr_destroy(htsHeaderPtr_);
+        htsHeaderPtr_ = nullptr;
+    }
 
-    sam_close(htsFilePtr_);
-    htsFilePtr_ = nullptr;
+    if (htsFilePtr_)
+    {
+        sam_close(htsFilePtr_);
+        htsFilePtr_ = nullptr;
+    }
 
     if (htsThreadPool_.pool)
     {
         hts_tpool_destroy(htsThreadPool_.pool);
+        htsThreadPool_.pool = nullptr;
     }
 }
+
+HtsFileStreamer::~HtsFileStreamer() { releaseHandles(); }
 
 }
 

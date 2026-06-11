@@ -23,6 +23,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "sample/HtsStreamingSampleAnalysis.hh"
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
@@ -1031,6 +1032,25 @@ void htsRegionParallelStreamingSampleAnalysis(
         vcfPaths.push_back(programParams.outputPaths().outputPrefix() + ".region" + std::to_string(i) + ".vcf");
     }
 
+    // Best-effort removal of the per-region temp files, as an RAII guard so it runs on every exit path: the
+    // normal return after the merge below, and stack unwinding when a worker failure is rethrown. ENOENT is
+    // ignored because a worker that failed early may never have created its temp file.
+    struct TempFileRemover
+    {
+        const std::vector<std::string>& jsonPaths;
+        const std::vector<std::string>& vcfPaths;
+        ~TempFileRemover()
+        {
+            for (const std::vector<std::string>* paths : { &jsonPaths, &vcfPaths }) {
+                for (const std::string& path : *paths) {
+                    if (std::remove(path.c_str()) != 0 && errno != ENOENT) {
+                        spdlog::warn("Could not remove temporary file {}", path);
+                    }
+                }
+            }
+        }
+    } tempFileRemover{ jsonPaths, vcfPaths };
+
     // Spawn P worker threads. Each worker only reads its OWN index i of the shared vectors (no aliasing).
     // bamletWriter is internally thread-safe; sharedCache is an immutable shared_ptr<const>; contigInfo is
     // a const reference captured before any threads start. Any exception thrown by a worker is captured into
@@ -1075,17 +1095,7 @@ void htsRegionParallelStreamingSampleAnalysis(
     mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths);
     mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
 
-    // Best-effort cleanup of the per-region temp files.
-    for (const std::string& path : jsonPaths) {
-        if (std::remove(path.c_str()) != 0) {
-            spdlog::warn("Could not remove temporary file {}", path);
-        }
-    }
-    for (const std::string& path : vcfPaths) {
-        if (std::remove(path.c_str()) != 0) {
-            spdlog::warn("Could not remove temporary file {}", path);
-        }
-    }
+    // The per-region temp files are removed by tempFileRemover (RAII) on scope exit.
 }
 
 }
