@@ -1,0 +1,35 @@
+name: trigger str-analysis docker rebuild
+
+# After the "Build" workflow succeeds on a push to master, dispatch the str-analysis
+# "build docker images" workflow to rebuild only the ExpansionHunter image. That image's Dockerfile
+# fetches this fork's master branch fresh at build time, so a rebuild picks up the new commit.
+#
+# Gating on a successful Build (rather than the raw push) avoids publishing a docker image from a
+# commit that does not compile.
+#
+# Requires a repository secret STR_ANALYSIS_DISPATCH_TOKEN: a personal access token with
+# "Actions: read and write" permission on broadinstitute/str-analysis (the default GITHUB_TOKEN
+# cannot trigger workflows in another repository).
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
+
+concurrency:
+  group: str-analysis-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    steps:
+      - name: Trigger build_docker_images in str-analysis
+        env:
+          GH_TOKEN: ${{ secrets.STR_ANALYSIS_DISPATCH_TOKEN }}
+        run: gh workflow run build_docker_images.yml -R broadinstitute/str-analysis -f image=docker_with_expansion_hunter
