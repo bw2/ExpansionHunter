@@ -647,6 +647,13 @@ bool writeZeroCoverageRecord(
         jsonWriter.addRecord(locusSpec, locusFindings);
         vcfWriter.addRecords(locusSpec, locusFindings);
     }
+    catch (const MissingContigError& e)
+    {
+        // Locus sits on a contig absent from the reference FASTA (e.g. a _fix patch contig present in the
+        // read file header but not in the FASTA). This is benign and expected, so warn rather than error.
+        spdlog::warn("Skipping zero-coverage locus {}: {}", locusDescription.locusId(), e.what());
+        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error");
+    }
     catch (const std::exception& e)
     {
         // A malformed locus would previously have been emitted as a bare skipped record (it has no

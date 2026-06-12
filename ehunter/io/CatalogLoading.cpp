@@ -560,7 +560,12 @@ void sortAndFilterCatalog(
         if (regionStr.find(':') != std::string::npos) {
             // Full region string: chr:start-end
             const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(regionStr);
-            const auto intervalContigIndex = reference.contigInfo().getContigId(interval.contig);
+            int32_t intervalContigIndex;
+            try {
+                intervalContigIndex = reference.contigInfo().getContigId(interval.contig);
+            } catch (const MissingContigError&) {
+                throw std::invalid_argument(interval.contig + " is not a valid contig name in the reference");
+            }
 
             // Region filter on locusAndFlanks (flank-extended) coordinates. Note loadLocusDescriptions already
             // applied a stricter locusWithoutFlanks (core) region filter before calling this, so for the region
@@ -576,7 +581,12 @@ void sortAndFilterCatalog(
                 locusDescriptionCatalog.end());
         } else {
             // Chromosome-only: filter to just that chromosome
-            const auto chromContigIndex = reference.contigInfo().getContigId(regionStr);
+            int32_t chromContigIndex;
+            try {
+                chromContigIndex = reference.contigInfo().getContigId(regionStr);
+            } catch (const MissingContigError&) {
+                throw std::invalid_argument(regionStr + " is not a valid contig name in the reference");
+            }
 
             locusDescriptionCatalog.erase(
                 std::remove_if(
@@ -629,7 +639,11 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
         if (regionStr.find(':') != std::string::npos) {
             // Full region string: chr:start-end
             const graphtools::ReferenceInterval interval = graphtools::ReferenceInterval::parseRegion(regionStr);
-            filterContigIndex = reference.contigInfo().getContigId(interval.contig);
+            try {
+                filterContigIndex = reference.contigInfo().getContigId(interval.contig);
+            } catch (const MissingContigError&) {
+                throw std::invalid_argument(interval.contig + " is not a valid contig name in the reference");
+            }
             filterStart = interval.start;
             filterEnd = interval.end;
         } else {
