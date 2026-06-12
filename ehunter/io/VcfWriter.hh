@@ -26,6 +26,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "core/Parameters.hh"
 #include "core/Reference.hh"
@@ -90,5 +91,15 @@ std::string createRepeatAlleleSymbol(int repeatSize);
 std::string computeAltSymbol(const boost::optional<RepeatGenotype>& optionalGenotype, int referenceSizeInUnits);
 std::string computeInfoFields(const VariantSpecification& variantSpec, const std::string& repeatUnit);
 std::string computeAlleleFields(const VariantSpecification& variantSpec, const std::string& repeatUnit, const RepeatFindings& repeatFindings);
+
+// Build the tab-separated VCF record fields for a single variant. Shared by the seeking-mode
+// VariantVcfWriter and the streaming-mode IterativeVariantVcfWriter so both modes emit identical
+// records from one source of truth.
+std::vector<std::string> buildRepeatVcfRecordElements(
+    Reference& reference, const LocusSpecification& locusSpec, double locusDepth,
+    const VariantSpecification& variantSpec, const RepeatFindings& repeatFindings);
+std::vector<std::string> buildSmallVariantVcfRecordElements(
+    Reference& reference, const LocusSpecification& locusSpec, double locusDepth,
+    const VariantSpecification& variantSpec, const SmallVariantFindings& smallVariantFindings);
 
 }

@@ -253,131 +253,146 @@ string computeAlleleFields(
     return alleleFields.encode();
 }
 
-void VariantVcfWriter::visit(const RepeatFindings* repeatFindingsPtr)
+vector<string> buildRepeatVcfRecordElements(
+    Reference& reference, const LocusSpecification& locusSpec, double locusDepth,
+    const VariantSpecification& variantSpec, const RepeatFindings& repeatFindings)
 {
-    const auto& referenceLocus = variantSpec_.referenceLocus();
-    const auto repeatNodeId = variantSpec_.nodes().front();
-    const string& repeatUnit = locusSpec_.regionGraph().nodeSeq(repeatNodeId);
+    const auto& referenceLocus = variantSpec.referenceLocus();
+    const auto repeatNodeId = variantSpec.nodes().front();
+    const string& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
     const int referenceSizeInUnits = referenceLocus.length() / repeatUnit.length();
-    const string infoFields = computeInfoFields(variantSpec_, repeatUnit);
+    const string infoFields = computeInfoFields(variantSpec, repeatUnit);
 
     const int posPreceedingRepeat1based = referenceLocus.start();
-    const auto& contigName = reference_.contigInfo().getContigName(referenceLocus.contigIndex());
+    const auto& contigName = reference.contigInfo().getContigName(referenceLocus.contigIndex());
     const string leftFlankingBase
-        = reference_.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
+        = reference.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
 
-    const string altSymbol = computeAltSymbol(repeatFindingsPtr->optionalGenotype(), referenceSizeInUnits);
-    const string alleleFields = computeAlleleFields(variantSpec_, repeatUnit, *repeatFindingsPtr);
-    const string sampleFields = alleleFields + ":" + std::to_string(locusDepth_);
+    const string altSymbol = computeAltSymbol(repeatFindings.optionalGenotype(), referenceSizeInUnits);
+    const string alleleFields = computeAlleleFields(variantSpec, repeatUnit, repeatFindings);
+    const string sampleFields = alleleFields + ":" + std::to_string(locusDepth);
 
-    string genotypeFilter = computeFilterSymbol(repeatFindingsPtr->genotypeFilter());
+    const string genotypeFilter = computeFilterSymbol(repeatFindings.genotypeFilter());
 
-    vector<string> vcfRecordElements = { contigName,
-                                         to_string(posPreceedingRepeat1based),
-                                         ".",
-                                         leftFlankingBase,
-                                         altSymbol,
-                                         ".",
-                                         genotypeFilter,
-                                         infoFields,
-                                         "GT:SO:REPCN:REPCI:ADSP:ADFL:ADIR:LC",
-                                         sampleFields };
-
-    out_ << boost::algorithm::join(vcfRecordElements, "\t") << std::endl;
+    return { contigName,
+             to_string(posPreceedingRepeat1based),
+             ".",
+             leftFlankingBase,
+             altSymbol,
+             ".",
+             genotypeFilter,
+             infoFields,
+             "GT:SO:REPCN:REPCI:ADSP:ADFL:ADIR:LC",
+             sampleFields };
 }
 
-void VariantVcfWriter::visit(const SmallVariantFindings* smallVariantFindingsPtr)
+vector<string> buildSmallVariantVcfRecordElements(
+    Reference& reference, const LocusSpecification& locusSpec, double locusDepth,
+    const VariantSpecification& variantSpec, const SmallVariantFindings& smallVariantFindings)
 {
-    const auto& referenceLocus = variantSpec_.referenceLocus();
-    const auto& contigName = reference_.contigInfo().getContigName(referenceLocus.contigIndex());
+    const auto& referenceLocus = variantSpec.referenceLocus();
+    const auto& contigName = reference.contigInfo().getContigName(referenceLocus.contigIndex());
     string refSequence;
     string altSequence;
     int64_t startPosition = -1;
 
-    if (variantSpec_.classification().subtype == VariantSubtype::kSwap)
+    if (variantSpec.classification().subtype == VariantSubtype::kSwap)
     {
-        assert(variantSpec_.optionalRefNode());
-        const auto refNode = *variantSpec_.optionalRefNode();
-        const int refNodeIndex = refNode == variantSpec_.nodes().front() ? 0 : 1;
-        const int altNodeIndex = refNode == variantSpec_.nodes().front() ? 1 : 0;
+        assert(variantSpec.optionalRefNode());
+        const auto refNode = *variantSpec.optionalRefNode();
+        const int refNodeIndex = refNode == variantSpec.nodes().front() ? 0 : 1;
+        const int altNodeIndex = refNode == variantSpec.nodes().front() ? 1 : 0;
 
-        const auto refNodeId = variantSpec_.nodes()[refNodeIndex];
-        const auto altNodeId = variantSpec_.nodes()[altNodeIndex];
+        const auto refNodeId = variantSpec.nodes()[refNodeIndex];
+        const auto altNodeId = variantSpec.nodes()[altNodeIndex];
 
-        refSequence = locusSpec_.regionGraph().nodeSeq(refNodeId);
-        altSequence = locusSpec_.regionGraph().nodeSeq(altNodeId);
+        refSequence = locusSpec.regionGraph().nodeSeq(refNodeId);
+        altSequence = locusSpec.regionGraph().nodeSeq(altNodeId);
         // Conversion from 0-based to 1-based coordinates
         startPosition = referenceLocus.start() + 1;
     }
-    else if (variantSpec_.classification().subtype == VariantSubtype::kDeletion)
+    else if (variantSpec.classification().subtype == VariantSubtype::kDeletion)
     {
         const string refFlankingBase
-            = reference_.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
+            = reference.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
 
-        const int refNodeId = variantSpec_.nodes().front();
-        refSequence = refFlankingBase + locusSpec_.regionGraph().nodeSeq(refNodeId);
+        const int refNodeId = variantSpec.nodes().front();
+        refSequence = refFlankingBase + locusSpec.regionGraph().nodeSeq(refNodeId);
         altSequence = refFlankingBase;
         // Conversion from 0-based to 1-based coordinates
         startPosition = referenceLocus.start();
     }
-    else if (variantSpec_.classification().subtype == VariantSubtype::kInsertion)
+    else if (variantSpec.classification().subtype == VariantSubtype::kInsertion)
     {
         const string refFlankingBase
-            = reference_.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
+            = reference.getSequence(contigName, referenceLocus.start() - 1, referenceLocus.start());
 
-        const int altNodeId = variantSpec_.nodes().front();
+        const int altNodeId = variantSpec.nodes().front();
         refSequence = refFlankingBase;
-        altSequence = refFlankingBase + locusSpec_.regionGraph().nodeSeq(altNodeId);
+        altSequence = refFlankingBase + locusSpec.regionGraph().nodeSeq(altNodeId);
         // Conversion from 0-based to 1-based coordinates
         startPosition = referenceLocus.start();
     }
     else
     {
         std::ostringstream encoding;
-        encoding << variantSpec_.classification().type << "/" << variantSpec_.classification().subtype;
+        encoding << variantSpec.classification().type << "/" << variantSpec.classification().subtype;
         throw std::logic_error("Unable to generate VCF record for " + encoding.str());
     }
 
-    const string infoFields = "VARID=" + variantSpec_.id();
+    const string infoFields = "VARID=" + variantSpec.id();
 
     vector<string> sampleFields;
     vector<string> sampleValues;
 
     sampleFields.emplace_back("GT");
-    const auto& optionalGenotype = smallVariantFindingsPtr->optionalGenotype();
+    const auto& optionalGenotype = smallVariantFindings.optionalGenotype();
     if (optionalGenotype)
     {
         sampleValues.push_back(streamToString(*optionalGenotype));
     }
     else
     {
-        sampleValues.emplace_back(smallVariantFindingsPtr->alleleCount() == AlleleCount::kOne ? "." : "./.");
+        sampleValues.emplace_back(smallVariantFindings.alleleCount() == AlleleCount::kOne ? "." : "./.");
     }
 
     sampleFields.emplace_back("AD");
     std::ostringstream adEncoding;
-    adEncoding << smallVariantFindingsPtr->numRefReads() << "," << smallVariantFindingsPtr->numAltReads();
+    adEncoding << smallVariantFindings.numRefReads() << "," << smallVariantFindings.numAltReads();
     sampleValues.push_back(adEncoding.str());
 
     sampleFields.emplace_back("LC");
-    sampleValues.push_back(std::to_string(locusDepth_));
+    sampleValues.push_back(std::to_string(locusDepth));
 
     const string sampleField = boost::algorithm::join(sampleFields, ":");
     const string sampleValue = boost::algorithm::join(sampleValues, ":");
 
-    string genotypeFilter = computeFilterSymbol(smallVariantFindingsPtr->genotypeFilter());
+    const string genotypeFilter = computeFilterSymbol(smallVariantFindings.genotypeFilter());
 
-    vector<string> line { contigName,
-                          streamToString(startPosition),
-                          ".",
-                          refSequence,
-                          altSequence,
-                          ".",
-                          genotypeFilter,
-                          infoFields,
-                          sampleField,
-                          sampleValue };
-    out_ << boost::algorithm::join(line, "\t") << std::endl;
+    return { contigName,
+             streamToString(startPosition),
+             ".",
+             refSequence,
+             altSequence,
+             ".",
+             genotypeFilter,
+             infoFields,
+             sampleField,
+             sampleValue };
+}
+
+void VariantVcfWriter::visit(const RepeatFindings* repeatFindingsPtr)
+{
+    const vector<string> vcfRecordElements
+        = buildRepeatVcfRecordElements(reference_, locusSpec_, locusDepth_, variantSpec_, *repeatFindingsPtr);
+    out_ << boost::algorithm::join(vcfRecordElements, "\t") << std::endl;
+}
+
+void VariantVcfWriter::visit(const SmallVariantFindings* smallVariantFindingsPtr)
+{
+    const vector<string> vcfRecordElements
+        = buildSmallVariantVcfRecordElements(reference_, locusSpec_, locusDepth_, variantSpec_, *smallVariantFindingsPtr);
+    out_ << boost::algorithm::join(vcfRecordElements, "\t") << std::endl;
 }
 
 }
