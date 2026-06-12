@@ -664,7 +664,19 @@ LocusDescriptionCatalog loadLocusDescriptions(const ProgramParameters& params, c
                 processedLocusIds.push_back(currentLocusId);
             }
 
-            LocusDescription locusDescription = loadLocusDescription(locusJson, contigInfo, params.heuristics(), params.copyCatalogFields());
+            std::optional<LocusDescription> maybeLocusDescription;
+            try
+            {
+                maybeLocusDescription.emplace(loadLocusDescription(locusJson, contigInfo, params.heuristics(), params.copyCatalogFields()));
+            }
+            catch (const MissingContigError& e)
+            {
+                // A locus referencing a contig that is absent from the reference is skipped with a warning
+                // rather than aborting the whole run (e.g. catalog entries on alt contigs like chr1_KQ031383v1_fix).
+                spdlog::warn("Skipping locus: {}", e.what());
+                continue;
+            }
+            LocusDescription locusDescription = std::move(*maybeLocusDescription);
 
             // Early filter by region if specified
             if (filterContigIndex.has_value()) {

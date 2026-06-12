@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -32,6 +33,18 @@
 
 namespace ehunter
 {
+
+// Thrown when a contig name is not present in the reference. Derives from std::logic_error so existing
+// `catch (const std::logic_error&)` handlers keep working, while allowing callers to catch this case
+// specifically (e.g. to warn and skip a catalog locus rather than aborting the whole run).
+class MissingContigError : public std::logic_error
+{
+public:
+    explicit MissingContigError(const std::string& contigName)
+        : std::logic_error("Invalid contig name " + contigName)
+    {
+    }
+};
 
 // Handles translation between contig names and indexes
 class ReferenceContigInfo

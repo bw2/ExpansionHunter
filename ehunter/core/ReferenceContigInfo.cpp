@@ -105,7 +105,7 @@ int32_t ReferenceContigInfo::getContigId(const std::string& contigName) const
 
     if (entry == nameToIndex_.end())
     {
-        throw std::logic_error("Invalid contig name " + contigName);
+        throw MissingContigError(contigName);
     }
 
     return entry->second;
