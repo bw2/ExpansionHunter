@@ -609,7 +609,17 @@ void doTheAnalysis(
             // load the next chromosome into the cache
             spdlog::info("Processing loci on {}", chromosomeName);
             reference.clearContigCache();
-            reference.loadContigIntoCache(chromosomeName);
+            try {
+                reference.loadContigIntoCache(chromosomeName);
+            } catch (const MissingContigError&) {
+                // The read file's header contains a contig absent from the reference FASTA (e.g. _fix
+                // patch contigs in assembly38 BAMs aligned against an hg38.fa without patches). No catalog
+                // locus can target such a contig, so warn and skip its reads rather than aborting the run.
+                // The per-read target/analyzer checks below already discard reads on no-locus contigs, so
+                // leaving the contig cache empty is safe (no getSequence call is reached).
+                spdlog::warn("Skipping reads on {}: contig not present in the reference FASTA", chromosomeName);
+                continue;
+            }
         }
 
         //if read & mate don't overlap any locus, skip this read pair
