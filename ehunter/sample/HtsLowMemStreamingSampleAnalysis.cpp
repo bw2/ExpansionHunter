@@ -617,8 +617,12 @@ void doTheAnalysis(
         const int64_t readStart = readStreamer->currentReadPosition();
         int64_t readEnd = readStart + typicalReadLength;
 
-        const int32_t mateContigId = readStreamer->currentMateContigId();
-        const int64_t mateStart = readStreamer->currentMatePosition();
+        // When the mate is unmapped, htslib reports mtid=-1/mpos=-1; fall back to the read's own
+        // coordinates (as seeking mode does) so the mate is treated as nearby and we never attempt a
+        // region jump to an invalid contig, which would throw in extractMate.
+        const bool isMateMapped = readStreamer->currentMateContigId() >= 0;
+        const int32_t mateContigId = isMateMapped ? readStreamer->currentMateContigId() : readContigId;
+        const int64_t mateStart = isMateMapped ? readStreamer->currentMatePosition() : readStart;
         int64_t mateEnd = mateStart + typicalReadLength;
 
         const bool isMateFarAway = readContigId != mateContigId || std::abs(readStart - mateStart) >= farAwayMateDistanceThreshold;
