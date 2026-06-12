@@ -34,6 +34,70 @@ bool isRepeatGenotypeHomRef(const RepeatGenotype& genotype, int referenceSizeInU
 }
 
 
+bool shouldFilterLocus(
+    const LocusSpecification& locusSpec, const LocusFindings& locusFindings, bool skipHomRef, bool skipMissing)
+{
+    if (!skipHomRef && !skipMissing)
+    {
+        return false;
+    }
+    // A locus with no findings (decode failure, etc.) is a no-call we cannot classify; keep it.
+    if (locusFindings.findingsForEachVariant.empty())
+    {
+        return false;
+    }
+    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
+    {
+        const string& variantId = variantIdAndFindings.first;
+        const VariantFindings* findings = variantIdAndFindings.second.get();
+
+        bool hasGenotype;
+        bool isHomRef;
+        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(findings);
+        if (repeatFindings != nullptr)
+        {
+            hasGenotype = static_cast<bool>(repeatFindings->optionalGenotype());
+            if (hasGenotype)
+            {
+                const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
+                const auto repeatNodeId = variantSpec.nodes().front();
+                const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
+                if (repeatUnit.empty())
+                {
+                    throw std::runtime_error(
+                        "Repeat unit sequence is empty for locus " + locusSpec.locusId() + " variant " + variantId);
+                }
+                const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
+                isHomRef = isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits);
+            }
+            else
+            {
+                isHomRef = false;
+            }
+        }
+        else
+        {
+            const SmallVariantFindings* smallVariantFindings = dynamic_cast<const SmallVariantFindings*>(findings);
+            if (smallVariantFindings == nullptr)
+            {
+                // Unclassifiable findings type: keep the locus.
+                return false;
+            }
+            hasGenotype = static_cast<bool>(smallVariantFindings->optionalGenotype());
+            isHomRef = hasGenotype && smallVariantFindings->optionalGenotype()->isHomRef();
+        }
+
+        const bool isMissing = !hasGenotype;
+        const bool skippable = (skipHomRef && isHomRef) || (skipMissing && isMissing);
+        if (!skippable)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+
 bool isAToTheLeftOfB(int32_t contigIdA, int64_t posA, int32_t contigIdB, int64_t posB, bool allowEquals) {
     if (contigIdA < contigIdB) {
         return true;
@@ -508,11 +572,13 @@ bool processLocusFast(
 		repeatGenotype = RepeatGenotype(locusMotifSize, num_repeats);
 	}
 
-    // Check if genotype is hom-ref and skip output if --skip-hom-ref is enabled
+    // Apply --skip-hom-ref before building findings, so skipped loci don't pay the allocation. Fast
+    // genotyping always produces a called genotype here (missing genotypes fall back to full genotyping),
+    // so --skip-missing-genotypes never applies on this path.
     if (params.skipHomRef() && repeatGenotype) {
         const int referenceSizeInUnits = locusReferenceRegion.length() / locusMotifSize;
         if (isRepeatGenotypeHomRef(*repeatGenotype, referenceSizeInUnits)) {
-            return true;  // Skip output for hom-ref loci
+            return true;  // genotyped hom-ref: emit no record
         }
     }
 
@@ -521,7 +587,6 @@ bool processLocusFast(
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());
 	locusFindings.findingsForEachVariant.emplace(variantId, std::move(variantFindingsPtr));
 
-
     jsonWriter.addRecord(locusSpec, locusFindings);
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
     {
@@ -529,6 +594,67 @@ bool processLocusFast(
         vcfWriter.addRecord(variantId, locusSpec, locusFindings);
     }
 
+    return true;
+}
+
+bool writeZeroCoverageRecord(
+    const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter)
+{
+    // A zero-coverage locus has all-missing genotypes, so --skip-missing-genotypes excludes it entirely
+    // (no record, and no graph build).
+    if (params.skipMissingGenotypes())
+    {
+        return false;
+    }
+    try
+    {
+        // extendFlanks=false builds the graph from the locus structure alone, skipping the
+        // (~regionExtensionLength) reference flank reads. The repeat unit comes from the structure regex,
+        // so RepeatUnit and all other catalog-derived fields still match seeking's output exactly. This is
+        // only safe for single-region (single-repeat) loci — the same loci processLocusFast handles with
+        // extendFlanks=false. The flankless graph build is unsupported for multi-region loci (interruptions
+        // or multiple repeats) and corrupts the blueprint there, so those fall back to the flank-extending
+        // decode (a small reference read), which matches seeking exactly.
+        const bool extendFlanks = locusDescription.referenceRegions().size() != 1;
+        LocusSpecification locusSpec
+            = decodeLocusSpecification(locusDescription, reference, params.heuristics(), extendFlanks);
+
+        const AlleleCount alleleCount
+            = determineExpectedAlleleCount(locusDescription.chromType(), params.sample().sex());
+        LocusFindings locusFindings(LocusStats(alleleCount, 0, 0, 0));
+
+        // Empty per-variant findings, byte-for-byte equal to what the analyzers return on low depth:
+        // empty read counts, no genotype (-> ./.), and the LowDepth genotype filter.
+        for (const VariantSpecification& variantSpec : locusSpec.variantSpecs())
+        {
+            std::unique_ptr<VariantFindings> variantFindingsPtr;
+            if (variantSpec.classification().type == VariantType::kRepeat)
+            {
+                variantFindingsPtr = std::make_unique<RepeatFindings>(
+                    CountTable(), CountTable(), CountTable(), alleleCount, boost::none, GenotypeFilter::kLowDepth);
+            }
+            else
+            {
+                variantFindingsPtr = std::make_unique<SmallVariantFindings>(
+                    0, 0, AlleleCheckSummary(AlleleStatus::kUncertain, 0),
+                    AlleleCheckSummary(AlleleStatus::kUncertain, 0), alleleCount, boost::none,
+                    GenotypeFilter::kLowDepth);
+            }
+            locusFindings.findingsForEachVariant.emplace(variantSpec.id(), std::move(variantFindingsPtr));
+        }
+
+        jsonWriter.addRecord(locusSpec, locusFindings);
+        vcfWriter.addRecords(locusSpec, locusFindings);
+    }
+    catch (const std::exception& e)
+    {
+        // A malformed locus would previously have been emitted as a bare skipped record (it has no
+        // coverage, so it never reached graph construction). Preserve that fallback instead of aborting
+        // the whole run.
+        spdlog::error("Error emitting zero-coverage record for {}: {}", locusDescription.locusId(), e.what());
+        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error");
+    }
     return true;
 }
 

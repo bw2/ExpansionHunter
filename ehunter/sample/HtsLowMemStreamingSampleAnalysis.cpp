@@ -137,7 +137,7 @@ using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 // LocusAnalyzer is kept alive via shared_ptr so its locusSpec() backs the json/vcf writes without
 // copying the heavy graph-bearing LocusSpecification across the thread boundary.
 struct LocusOutput {
-    enum class Kind { kGenotyped, kHomRefSkip, kNoCoverage, kHeuristicOnlySkip, kError };
+    enum class Kind { kGenotyped, kFilteredOut, kNoCoverage, kHeuristicOnlySkip, kError };
 
     unsigned locusIndex = 0;
     Kind kind = Kind::kNoCoverage;
@@ -147,59 +147,6 @@ struct LocusOutput {
     std::string message;  // error text when kind == kError
 };
 
-
-// Check if all variants in a locus are homozygous reference
-bool isLocusHomRef(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
-{
-    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
-    {
-        const string& variantId = variantIdAndFindings.first;
-        const VariantFindings* findings = variantIdAndFindings.second.get();
-
-        // Check if it's a repeat variant
-        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(findings);
-        if (repeatFindings != nullptr)
-        {
-            if (!repeatFindings->optionalGenotype())
-            {
-                // No genotype means we can't determine hom-ref status
-                return false;
-            }
-            const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
-            const auto repeatNodeId = variantSpec.nodes().front();
-            const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
-            if (repeatUnit.empty())
-            {
-                throw std::runtime_error(
-                    "Repeat unit sequence is empty for locus " + locusSpec.locusId() + " variant " + variantId);
-            }
-            const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
-
-            if (!isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits))
-            {
-                return false;
-            }
-        }
-        else
-        {
-            // Check if it's a small variant
-            const SmallVariantFindings* smallVariantFindings = dynamic_cast<const SmallVariantFindings*>(findings);
-            if (smallVariantFindings != nullptr)
-            {
-                if (!smallVariantFindings->optionalGenotype())
-                {
-                    // No genotype means we can't determine hom-ref status
-                    return false;
-                }
-                if (!smallVariantFindings->optionalGenotype()->isHomRef())
-                {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
 
 // Genotype a single locus and return the result instead of writing it inline, so the call can run on a
 // worker thread while the json/vcf writes happen later on the single-threaded writer (preserving output
@@ -257,9 +204,9 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         // genotype the locus
         out.findings = out.analyzer->analyze(sampleSex, boost::none, params.outputPaths().outputPrefix());
 
-        // --skip-hom-ref: genotyped but emit no record (still counts as full-genotyped)
-        out.kind = (params.skipHomRef() && isLocusHomRef(out.analyzer->locusSpec(), out.findings))
-            ? LocusOutput::Kind::kHomRefSkip
+        // --skip-hom-ref / --skip-missing-genotypes: genotyped but emit no record (still counts as full-genotyped)
+        out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
+            ? LocusOutput::Kind::kFilteredOut
             : LocusOutput::Kind::kGenotyped;
     } catch (const std::exception& e) {
         out.kind = LocusOutput::Kind::kError;
@@ -366,6 +313,7 @@ void doTheAnalysis(
     int fastGenotypedCount = 0;
     int fullGenotypedCount = 0;
     int skippedCount = 0;
+    int zeroCoverageCount = 0;
 
     // Constructed below only in whole-file mode (showProgress). In region-parallel mode P workers run this
     // function concurrently and a progress_display writes its layout to std::cout on construction, so one per
@@ -459,12 +407,12 @@ void doTheAnalysis(
     // Write one finished locus result. Single-threaded: called inline on the serial path, and only from
     // the main thread while draining the pending queue on the parallel path. Counter semantics match the
     // previous serial code (a locus reaching full genotyping is counted as full-genotyped even if it
-    // produces no record because of --skip-hom-ref or an error).
+    // produces no record because of --skip-hom-ref / --skip-missing-genotypes or an error).
     auto writeOutput = [&](LocusOutput& out) {
         switch (out.kind) {
             case LocusOutput::Kind::kNoCoverage:
-                skippedCount++;
-                jsonWriter.addSkippedRecord(out.locusId, "no_coverage");
+                zeroCoverageCount++;
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], jsonWriter, vcfWriter);
                 break;
             case LocusOutput::Kind::kHeuristicOnlySkip:
                 skippedCount++;
@@ -474,7 +422,7 @@ void doTheAnalysis(
                 fullGenotypedCount++;
                 spdlog::error("Error while processing {}: {}", out.locusId, out.message);
                 break;
-            case LocusOutput::Kind::kHomRefSkip:
+            case LocusOutput::Kind::kFilteredOut:
                 fullGenotypedCount++;
                 break;
             case LocusOutput::Kind::kGenotyped:
@@ -505,8 +453,8 @@ void doTheAnalysis(
         }
         for (auto const& locusIndex : locusIndicesReadyForAnalysis) {
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
-                // Locus has zero coverage; emit an explicit skipped record so it doesn't silently
-                // disappear from the JSON output.
+                // Locus has zero coverage; emit a no-call record identical to seeking/streaming mode (see
+                // writeZeroCoverageRecord) so the output is consistent across analysis modes.
                 if (useParallelGenotyping) {
                     PendingItem item;
                     item.ready.locusIndex = locusIndex;
@@ -514,8 +462,8 @@ void doTheAnalysis(
                     item.ready.locusId = locusDescriptionCatalog[locusIndex].locusId();
                     pending.push_back(std::move(item));
                 } else {
-                    skippedCount++;
-                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "no_coverage");
+                    zeroCoverageCount++;
+                    writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter);
                 }
                 continue;
             }
@@ -893,7 +841,7 @@ void doTheAnalysis(
     jsonWriter.close();
     vcfWriter.close();
 
-    const int totalProcessed = fastGenotypedCount + fullGenotypedCount + skippedCount;
+    const int totalProcessed = fastGenotypedCount + fullGenotypedCount + skippedCount + zeroCoverageCount;
     if (totalProcessed > 0) {
         const float fastPct = 100.0f * fastGenotypedCount / totalProcessed;
         const float fullPct = 100.0f * fullGenotypedCount / totalProcessed;
@@ -907,6 +855,16 @@ void doTheAnalysis(
             spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
                 add_commas_at_thousands(fastGenotypedCount), fastPct,
                 add_commas_at_thousands(fullGenotypedCount), fullPct);
+        }
+        if (zeroCoverageCount > 0) {
+            const float zeroCoveragePct = 100.0f * zeroCoverageCount / totalProcessed;
+            if (params.skipMissingGenotypes()) {
+                spdlog::info("Excluded {} ({:.1f}%) loci with zero coverage from output (--skip-missing-genotypes)",
+                    add_commas_at_thousands(zeroCoverageCount), zeroCoveragePct);
+            } else {
+                spdlog::info("Emitted {} ({:.1f}%) no-call records for loci with zero coverage",
+                    add_commas_at_thousands(zeroCoverageCount), zeroCoveragePct);
+            }
         }
     }
 }

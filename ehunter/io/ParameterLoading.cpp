@@ -80,6 +80,7 @@ struct UserParameters
     bool disableQualityMetrics = false;
     bool copyCatalogFields = false;
     bool skipHomRef = false;
+    bool skipMissingGenotypes = false;
     bool heuristicGenotypingOnly = false;
     bool improvedGenotyping = false;
 };
@@ -108,7 +109,8 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("plot-all", po::bool_switch(&params.plotAll), "Generate REViewer images for all loci")
         ("disable-all-plots", po::bool_switch(&params.disableAllPlots), "Disable read visualization output (overrides any PlotReadVisualization conditions specified in the catalog)")
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
-        ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Skip output of homozygous reference genotypes")
+        ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
+        ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
     ;
     // clang-format on
 
@@ -497,7 +499,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
-        userParams.heuristicGenotypingOnly);
+        userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly);
 }
 
 }

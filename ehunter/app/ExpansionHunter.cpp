@@ -60,61 +60,10 @@ namespace spd = spdlog;
 
 using namespace ehunter;
 
-// Check if all variants in a locus are homozygous reference (for batch mode filtering)
-static bool isLocusHomRefBatch(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
-{
-    // A locus with no findings (low coverage, decode failure, etc.) is a no-call, not a hom-ref call.
-    // Without this guard, --skip-hom-ref would silently drop such loci.
-    if (locusFindings.findingsForEachVariant.empty())
-    {
-        return false;
-    }
-    for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
-    {
-        const std::string& variantId = variantIdAndFindings.first;
-        const VariantFindings* findings = variantIdAndFindings.second.get();
-
-        // Check if it's a repeat variant
-        const RepeatFindings* repeatFindings = dynamic_cast<const RepeatFindings*>(findings);
-        if (repeatFindings != nullptr)
-        {
-            if (!repeatFindings->optionalGenotype())
-            {
-                return false;  // No genotype means we can't determine hom-ref status
-            }
-            const auto& variantSpec = locusSpec.getVariantSpecById(variantId);
-            const auto repeatNodeId = variantSpec.nodes().front();
-            const auto& repeatUnit = locusSpec.regionGraph().nodeSeq(repeatNodeId);
-            const int referenceSizeInUnits = variantSpec.referenceLocus().length() / repeatUnit.length();
-
-            if (!isRepeatGenotypeHomRef(*repeatFindings->optionalGenotype(), referenceSizeInUnits))
-            {
-                return false;
-            }
-        }
-        else
-        {
-            // Check if it's a small variant
-            const SmallVariantFindings* smallVariantFindings = dynamic_cast<const SmallVariantFindings*>(findings);
-            if (smallVariantFindings != nullptr)
-            {
-                if (!smallVariantFindings->optionalGenotype())
-                {
-                    return false;  // No genotype means we can't determine hom-ref status
-                }
-                if (!smallVariantFindings->optionalGenotype()->isHomRef())
-                {
-                    return false;
-                }
-            }
-        }
-    }
-    return true;
-}
-
-// Filter out hom-ref loci from regionCatalog and sampleFindings
-static void filterHomRefLoci(
-    RegionCatalog& regionCatalog, SampleFindings& sampleFindings)
+// Filter out hom-ref and/or missing-genotype loci (per --skip-hom-ref / --skip-missing-genotypes) from
+// regionCatalog and sampleFindings, using the same shouldFilterLocus predicate as the streaming modes.
+static void filterSkippedLoci(
+    RegionCatalog& regionCatalog, SampleFindings& sampleFindings, bool skipHomRef, bool skipMissing)
 {
     RegionCatalog filteredRegionCatalog;
     SampleFindings filteredSampleFindings;
@@ -125,7 +74,7 @@ static void filterHomRefLoci(
         const LocusSpecification& locusSpec = regionCatalog[locusIndex];
         const LocusFindings& locusFindings = sampleFindings[locusIndex];
 
-        if (!isLocusHomRefBatch(locusSpec, locusFindings))
+        if (!shouldFilterLocus(locusSpec, locusFindings, skipHomRef, skipMissing))
         {
             filteredRegionCatalog.push_back(locusSpec);
             filteredSampleFindings.push_back(std::move(sampleFindings[locusIndex]));
@@ -278,10 +227,10 @@ int main(int argc, char** argv)
         }
         bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
 
-        // Filter out hom-ref loci if --skip-hom-ref is enabled
-        if (params.skipHomRef())
+        // Filter out hom-ref and/or missing-genotype loci if --skip-hom-ref / --skip-missing-genotypes is enabled
+        if (params.skipHomRef() || params.skipMissingGenotypes())
         {
-            filterHomRefLoci(regionCatalog, sampleFindings);
+            filterSkippedLoci(regionCatalog, sampleFindings, params.skipHomRef(), params.skipMissingGenotypes());
         }
 
         spdlog::info("Writing output to disk");
