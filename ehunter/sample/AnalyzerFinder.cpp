@@ -34,12 +34,6 @@ namespace ehunter
 
 namespace
 {
-bool areMatesNearby(int32_t readContigId, int64_t readPosition, int32_t mateContigId, int64_t matePosition)
-{
-    const int kMaxMateDistance = 1000;
-    return ((readContigId == mateContigId) && (std::abs(readPosition - matePosition) < kMaxMateDistance));
-}
-
 inline RegionType coalesceRegionTypes(RegionType readRegionType, RegionType mateRegionType)
 {
     if (readRegionType == RegionType::kTarget || mateRegionType == RegionType::kTarget)
@@ -158,6 +152,17 @@ void coalesceBundlesForFarawayMates(
 }
 }
 
+bool areMatesNearby(int32_t readContigId, int64_t readPosition, int32_t mateContigId, int64_t matePosition)
+{
+    return ((readContigId == mateContigId) && (std::abs(readPosition - matePosition) < kMaxMateDistance));
+}
+
+bool isAlignmentContainedInInterval(
+    int64_t intervalStart, int64_t intervalEnd, int64_t alignmentStart, int64_t alignmentEnd)
+{
+    return intervalStart <= alignmentStart && alignmentEnd <= intervalEnd;
+}
+
 void processAnalyzerBundleReadPair(
     locus::LocusAnalyzer& locusAnalyzer, locus::RegionType regionType, AnalyzerInputType inputType, Read& read,
     Read& mate, graphtools::AlignerSelector& alignerSelector)
@@ -252,8 +257,8 @@ vector<AnalyzerBundle> AnalyzerFinder::query(int32_t contigIndex, int64_t start,
     vector<AnalyzerBundle> analyzerBundles;
     for (const auto& intervalWithBundle : intervalsWithBundles)
     {
-        const bool isReadContainedInInterval = static_cast<int64_t>(intervalWithBundle.start) <= start
-            && end <= static_cast<int64_t>(intervalWithBundle.stop);
+        const bool isReadContainedInInterval = isAlignmentContainedInInterval(
+            static_cast<int64_t>(intervalWithBundle.start), static_cast<int64_t>(intervalWithBundle.stop), start, end);
         if (isReadContainedInInterval)
         {
             analyzerBundles.push_back(intervalWithBundle.value);

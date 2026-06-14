@@ -62,6 +62,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "locus/LocusAnalyzer.hh"
 #include "locus/LocusSpecification.hh"
 #include "locus/LocusAnalyzerUtil.hh"
+#include "sample/AnalyzerFinder.hh"
 #include "sample/GenomeQueryCollection.hh"
 #include "sample/HtsFileStreamer.hh"
 #include "sample/HtsLowMemStreamingHelpers.hh"
@@ -148,25 +149,19 @@ struct LocusOutput {
 };
 
 
-// Two mates are classified as "nearby" (rather than far-apart) when they map to the same contig and
-// their start positions are within this many bases. This must stay equal to AnalyzerFinder::kMaxMateDistance
-// (sample/AnalyzerFinder.cpp) so that low-mem-streaming and optimized-streaming route read pairs to the
-// analyzer exactly as seeking and streaming modes do.
-const int kMaxMateDistanceForNearbyPairClassification = 1000;
-
-
 // True if a read alignment that spans [alignmentStart, alignmentEnd) on contig `contigId` is fully
-// contained within at least one of the given read-extraction regions. This is the same containment test
-// AnalyzerFinder::query (sample/AnalyzerFinder.cpp) applies when deciding which locus a read or its mate
-// belongs to in seeking and streaming modes.
+// contained within at least one of the given read-extraction regions. Defers to the same containment test
+// (isAlignmentContainedInInterval) AnalyzerFinder::query (sample/AnalyzerFinder.cpp) applies when deciding
+// which locus a read or its mate belongs to in seeking and streaming modes.
 bool readIsContainedInAnyExtractionRegion(
     const std::vector<GenomicRegion>& extractionRegions, int32_t contigId, int64_t alignmentStart,
     int64_t alignmentEnd)
 {
     for (const auto& extractionRegion : extractionRegions)
     {
-        if (extractionRegion.contigIndex() == contigId && extractionRegion.start() <= alignmentStart
-            && alignmentEnd <= extractionRegion.end())
+        if (extractionRegion.contigIndex() == contigId
+            && isAlignmentContainedInInterval(
+                   extractionRegion.start(), extractionRegion.end(), alignmentStart, alignmentEnd))
         {
             return true;
         }
@@ -255,8 +250,8 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
                 || readIsContainedInAnyExtractionRegion(
                        offtargetExtractionRegions, mateStats.chromId, mateStats.pos, mateEnd);
 
-            const bool matesAreNearby = readStats.chromId == mateStats.chromId
-                && std::abs(readStats.pos - mateStats.pos) < kMaxMateDistanceForNearbyPairClassification;
+            const bool matesAreNearby
+                = areMatesNearby(readStats.chromId, readStats.pos, mateStats.chromId, mateStats.pos);
 
             if (matesAreNearby && readIsInTargetRegion && !mateIsInAnyRegion) {
                 out.analyzer->processMates(read, nullptr, locus::RegionType::kTarget, alignerSelector);

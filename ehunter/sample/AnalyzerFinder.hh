@@ -58,6 +58,20 @@ struct AnalyzerBundle
     size_t locusIndex;
 };
 
+// Two mates are classified as "nearby" (rather than far-apart) when they map to the same contig and
+// their start positions are within this many bases. Shared by AnalyzerFinder (seeking/streaming) and the
+// low-mem-streaming / optimized-streaming full-genotyping path so that the two read-pair routing
+// implementations cannot drift apart.
+constexpr int kMaxMateDistance = 1000;
+
+// True if the two mates are nearby (same contig and start positions within kMaxMateDistance bases).
+bool areMatesNearby(int32_t readContigId, int64_t readPosition, int32_t mateContigId, int64_t matePosition);
+
+// True if a read alignment that spans [alignmentStart, alignmentEnd) is fully contained within the
+// read-extraction interval [intervalStart, intervalEnd) (start positions and ends are half-open).
+bool isAlignmentContainedInInterval(
+    int64_t intervalStart, int64_t intervalEnd, int64_t alignmentStart, int64_t alignmentEnd);
+
 void processAnalyzerBundleReadPair(
     locus::LocusAnalyzer& locusAnalyzer, locus::RegionType regionType, AnalyzerInputType inputType, Read& read,
     Read& mate, graphtools::AlignerSelector& alignerSelector);
