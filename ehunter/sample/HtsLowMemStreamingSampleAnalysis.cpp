@@ -148,6 +148,33 @@ struct LocusOutput {
 };
 
 
+// Two mates are classified as "nearby" (rather than far-apart) when they map to the same contig and
+// their start positions are within this many bases. This must stay equal to AnalyzerFinder::kMaxMateDistance
+// (sample/AnalyzerFinder.cpp) so that low-mem-streaming and optimized-streaming route read pairs to the
+// analyzer exactly as seeking and streaming modes do.
+const int kMaxMateDistanceForNearbyPairClassification = 1000;
+
+
+// True if a read alignment that spans [alignmentStart, alignmentEnd) on contig `contigId` is fully
+// contained within at least one of the given read-extraction regions. This is the same containment test
+// AnalyzerFinder::query (sample/AnalyzerFinder.cpp) applies when deciding which locus a read or its mate
+// belongs to in seeking and streaming modes.
+bool readIsContainedInAnyExtractionRegion(
+    const std::vector<GenomicRegion>& extractionRegions, int32_t contigId, int64_t alignmentStart,
+    int64_t alignmentEnd)
+{
+    for (const auto& extractionRegion : extractionRegions)
+    {
+        if (extractionRegion.contigIndex() == contigId && extractionRegion.start() <= alignmentStart
+            && alignmentEnd <= extractionRegion.end())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 // Genotype a single locus and return the result instead of writing it inline, so the call can run on a
 // worker thread while the json/vcf writes happen later on the single-threaded writer (preserving output
 // order). Exceptions are captured into the result (kError) rather than thrown, matching the per-locus
@@ -192,13 +219,52 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         // std::move's its by-value parameter.
         out.analyzer = std::make_shared<LocusAnalyzer>(std::move(locusSpec), params.heuristics(), bamletWriter,
                                     params.enableAlleleQualityMetrics());
+        // Route each cached read pair to the analyzer the same way seeking and streaming modes do via
+        // AnalyzerFinder::query (sample/AnalyzerFinder.cpp). When the two ends are nearby but only ONE of
+        // them is contained in the locus's target extraction region, that pair is processed single-ended,
+        // so the other end — which lies outside the locus — is never aligned to the repeat graph. Passing
+        // such a pair as both reads (the previous behavior here) let the out-of-locus end align spuriously
+        // into the repeat node and inflate the genotype, which over-called homopolymers in low-mem and
+        // optimized streaming full genotyping even though seeking and streaming called them correctly.
+        // Pairs with both ends contained, or with far-apart ends, still pass both reads so that genuine
+        // in-repeat reads from a real expansion continue to be counted.
+        const std::vector<GenomicRegion>& targetExtractionRegions
+            = out.analyzer->locusSpec().targetReadExtractionRegions();
+        const std::vector<GenomicRegion>& offtargetExtractionRegions
+            = out.analyzer->locusSpec().offtargetReadExtractionRegions();
         for (auto const& readPair : readPairs) {
             // Copy the read + mate locally before processMates: align() mutates the Read in place via
             // reverseComplement(), and the same FullReadPair is shared across multiple loci's caches, so
             // genotyping the shared object directly would be a data race between parallel workers.
             Read read = readPair->firstMate->r;
             Read mate = readPair->secondMate->r;
-            out.analyzer->processMates(read, &mate, locus::RegionType::kTarget, alignerSelector);
+
+            const LinearAlignmentStats& readStats = readPair->firstMate->s;
+            const LinearAlignmentStats& mateStats = readPair->secondMate->s;
+            const int64_t readEnd = readStats.pos + static_cast<int64_t>(read.sequence().length());
+            const int64_t mateEnd = mateStats.pos + static_cast<int64_t>(mate.sequence().length());
+
+            const bool readIsInTargetRegion = readIsContainedInAnyExtractionRegion(
+                targetExtractionRegions, readStats.chromId, readStats.pos, readEnd);
+            const bool mateIsInTargetRegion = readIsContainedInAnyExtractionRegion(
+                targetExtractionRegions, mateStats.chromId, mateStats.pos, mateEnd);
+            const bool readIsInAnyRegion = readIsInTargetRegion
+                || readIsContainedInAnyExtractionRegion(
+                       offtargetExtractionRegions, readStats.chromId, readStats.pos, readEnd);
+            const bool mateIsInAnyRegion = mateIsInTargetRegion
+                || readIsContainedInAnyExtractionRegion(
+                       offtargetExtractionRegions, mateStats.chromId, mateStats.pos, mateEnd);
+
+            const bool matesAreNearby = readStats.chromId == mateStats.chromId
+                && std::abs(readStats.pos - mateStats.pos) < kMaxMateDistanceForNearbyPairClassification;
+
+            if (matesAreNearby && readIsInTargetRegion && !mateIsInAnyRegion) {
+                out.analyzer->processMates(read, nullptr, locus::RegionType::kTarget, alignerSelector);
+            } else if (matesAreNearby && mateIsInTargetRegion && !readIsInAnyRegion) {
+                out.analyzer->processMates(mate, nullptr, locus::RegionType::kTarget, alignerSelector);
+            } else {
+                out.analyzer->processMates(read, &mate, locus::RegionType::kTarget, alignerSelector);
+            }
         }
 
         // genotype the locus
