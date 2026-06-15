@@ -191,7 +191,7 @@ struct GenotyperParameters
     double minLocusCoverage;
     // Minimal number of reads spanning a variant breakpoint
     int minBreakpointSpanningReads = 5;
-    // Use geometry-based per-allele read-yield mixing weight (--improved-genotyping)
+    // Use geometry-based per-allele read-yield mixing weight (enabled in optimized-streaming mode)
     bool useImprovedGenotyping = false;
 };
 

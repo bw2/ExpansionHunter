@@ -82,7 +82,6 @@ struct UserParameters
     bool skipHomRef = false;
     bool skipMissingGenotypes = false;
     bool heuristicGenotypingOnly = false;
-    bool improvedGenotyping = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -127,7 +126,6 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
         ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
-        ("improved-genotyping", po::bool_switch(&params.improvedGenotyping), "Use geometry-based per-allele read-yield mixing weight in the two-allele STR genotyper (saturates the in-repeat contribution at the read-length scale instead of a length-proportional weight)")
     ;
     // clang-format on
 
@@ -459,7 +457,9 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     HeuristicParameters heuristicParameters(
         userParams.regionExtensionLength, userParams.minLocusCoverage, userParams.qualityCutoffForGoodBaseCall,
         userParams.skipUnaligned, decodeAlignerType(userParams.alignerType));
-    heuristicParameters.setUseImprovedGenotyping(userParams.improvedGenotyping);
+    // The improved (read-length-saturated) mixing weight is enabled in optimized-streaming mode
+    // only; every other analysis mode must produce output identical to upstream ExpansionHunter.
+    heuristicParameters.setUseImprovedGenotyping(userParams.analysisMode == "optimized-streaming");
 
     LogLevel logLevel;
     try

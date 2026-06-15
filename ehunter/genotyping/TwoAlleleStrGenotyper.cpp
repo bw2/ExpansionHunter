@@ -193,7 +193,7 @@ double TwoAlleleGenotyper::getShortAndLongAlleleLoglik(int shortAlleleSize, int 
     // Mixing weight = expected fraction of length-informative read pairs originating from the short allele.
     // Default model: weight proportional to the allele's genomic sampling span (repeat tract + fragment length).
     //
-    // Improved model (--improved-genotyping): the tract's contribution to length-discriminating read yield
+    // Improved model (optimized-streaming mode): the tract's contribution to length-discriminating read yield
     // saturates once the tract exceeds one read length. A flanking read anchored at a repeat boundary reaches
     // at most readLen bases into the tract; repeat units deeper than that yield only exchangeable in-repeat read
     // pairs that carry no new spanning/flanking signal, so they should not keep inflating the allele's weight.
