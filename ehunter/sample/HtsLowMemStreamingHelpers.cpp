@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <cstdint>
+#include <cstdlib>
 #include <htslib/sam.h>
 #include <htslib/hts.h>
 
@@ -543,6 +544,41 @@ bool processLocusFast(
     }
 
     const int locusMotifSize = locusMotif.size();
+
+    // STR stutter correction: PCR/sequencing slippage produces reads 1-2 repeat units off a homozygous
+    // allele, which the naive top-2-by-votes can mis-call as a spurious heterozygous second allele. When
+    // the second (minor-vote) allele is +/-1 or +/-2 units from the major and carries few votes, collapse
+    // to a homozygous-major genotype. The vote-ratio thresholds below are motif- and gap-specific: they
+    // were tuned against the HG002 truth set so that each motif size's collapses stay at least ~2.5:1
+    // correct. Thresholds tighten with motif size because longer motifs host more genuine close
+    // heterozygotes. Motifs >6bp are left untouched (stutter is negligible and real close hets dominate).
+    // Runs after the fast path commits its allele selection, so the fast/full split and speed are unchanged.
+    if (maxAlleles == 2 && top_genotypes.size() == 2 && locusMotifSize >= 1 && locusMotifSize <= 6) {
+        const int cMajor = top_genotypes[0].second;
+        const int cMinor = top_genotypes[1].second;
+        const int gapUnits = (std::abs(top_genotypes[0].first - top_genotypes[1].first) + locusMotifSize / 2) / locusMotifSize;
+        double stutterVoteRatioThreshold = 0.0;
+        if (gapUnits == 1) {
+            switch (locusMotifSize) {
+                case 1: case 2: stutterVoteRatioThreshold = 0.30; break;
+                case 3:         stutterVoteRatioThreshold = 0.28; break;
+                case 4: case 5: stutterVoteRatioThreshold = 0.25; break;
+                case 6:         stutterVoteRatioThreshold = 0.21; break;
+            }
+        } else if (gapUnits == 2) {
+            switch (locusMotifSize) {
+                case 1: case 2: stutterVoteRatioThreshold = 0.25; break;
+                case 3:         stutterVoteRatioThreshold = 0.21; break;
+                case 4:         stutterVoteRatioThreshold = 0.19; break;
+                case 5:         stutterVoteRatioThreshold = 0.18; break;
+                case 6:         stutterVoteRatioThreshold = 0.12; break;
+            }
+        }
+        if (stutterVoteRatioThreshold > 0.0 && cMinor < stutterVoteRatioThreshold * cMajor) {
+            top_genotypes.resize(1); // collapse stutter -> homozygous major allele
+        }
+    }
+
     std::vector<int> num_repeats;
     for (const auto& g : top_genotypes) {
         num_repeats.push_back(g.first / locusMotifSize);
