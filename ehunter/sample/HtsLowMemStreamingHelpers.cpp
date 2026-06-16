@@ -18,6 +18,8 @@
 #include "genotyping/RepeatGenotype.hh"
 #include "io/LocusSpecDecoding.hh"
 #include "io/ParameterLoading.hh"
+#include "locus/AlleleQualityMetrics.hh"
+#include "reviewer/Metrics.hh"
 #include "sample/MateExtractor.hh"
 #include "spdlog/spdlog.h"
 
@@ -342,11 +344,30 @@ FastReadAnalysisResult processRead(
             if (has_overlap && op_length % locus_motif_size == 0) {
                 result.repeat_sequence_size_in_base_pairs += op_length;
             }
+            // Inserted bases within the repeat (quality metric): count impurity insertions only —
+            // those inside the locus whose length is NOT a whole number of motifs. Whole-motif
+            // insertions are clean repeat-count changes (the allele-vs-reference size), already
+            // captured by the genotype, so excluding them keeps this an interruption/impurity signal.
+            if (op_ref_start_0based >= locus_start_0based && op_ref_start_0based <= locus_end_0based
+                && op_length % locus_motif_size != 0) {
+                result.inserted_bases_within_repeat += op_length;
+            }
         } else if (op == BAM_CSOFT_CLIP) {
             if (ref_offset == 0) {
                 length_of_left_soft_clips = op_length;
             } else {
                 length_of_right_soft_clips = op_length;
+            }
+        } else if (op == BAM_CDEL) {
+            // Deleted bases within the repeat (quality metric): impurity deletions only — the deletion's
+            // overlap with the locus, counted only when the deletion length is NOT a whole number of
+            // motifs. Whole-motif deletions are clean repeat-count changes already captured by the call.
+            if (op_length % locus_motif_size != 0) {
+                const int64_t overlap_start = std::max<int64_t>(op_ref_start_0based, locus_start_0based);
+                const int64_t overlap_end = std::min<int64_t>(op_ref_end_0based, locus_end_0based);
+                if (overlap_end > overlap_start) {
+                    result.deleted_bases_within_repeat += static_cast<int>(overlap_end - overlap_start);
+                }
             }
         }
 
@@ -444,6 +465,15 @@ bool processLocusFast(
     std::vector<int> soft_clipped_read_repeat_sequence_sizes;
     std::map<int, int> allele_size_spanning_read_votes;
     std::map<int, int> allele_size_soft_clipped_read_votes;
+    std::map<int, int> allele_size_flanking_read_votes;
+    // Per-spanning-allele-size accumulators for the allele quality metrics (keyed by repeat size in bp).
+    struct SpanningReadStats {
+        int forwardReads = 0;
+        int reverseReads = 0;
+        long insertedBases = 0;
+        long deletedBases = 0;
+    };
+    std::map<int, SpanningReadStats> allele_size_spanning_read_stats;
     for (const auto& readPair : readPairs) {
 
         const FullRead* reads[] = { &*readPair->firstMate, &*readPair->secondMate };
@@ -469,10 +499,25 @@ bool processLocusFast(
 
 
             if (readAnalysisResult.is_spanning_read && !readAnalysisResult.soft_clipped_bases_contain_repetitive_sequence) {
-                allele_size_spanning_read_votes[readAnalysisResult.repeat_sequence_size_in_base_pairs]++;
+                const int spanningSizeBp = readAnalysisResult.repeat_sequence_size_in_base_pairs;
+                allele_size_spanning_read_votes[spanningSizeBp]++;
+                SpanningReadStats& stats = allele_size_spanning_read_stats[spanningSizeBp];
+                if (read->r.isReversed()) {
+                    stats.reverseReads++;
+                } else {
+                    stats.forwardReads++;
+                }
+                stats.insertedBases += readAnalysisResult.inserted_bases_within_repeat;
+                stats.deletedBases += readAnalysisResult.deleted_bases_within_repeat;
             }
             if (readAnalysisResult.soft_clipped_bases_contain_repetitive_sequence) {
                 soft_clipped_read_repeat_sequence_sizes.push_back(readAnalysisResult.repeat_sequence_size_in_base_pairs);
+            }
+            // Flanking read: overlaps the repeat but anchored on only one side (not spanning), and its
+            // soft-clips carry no repeat sequence (those are handled separately above as larger-allele
+            // support). repeat_sequence_size_in_base_pairs is a lower bound on this read's repeat content.
+            if (!readAnalysisResult.is_spanning_read && !readAnalysisResult.soft_clipped_bases_contain_repetitive_sequence) {
+                allele_size_flanking_read_votes[readAnalysisResult.repeat_sequence_size_in_base_pairs]++;
             }
         }
     }
@@ -602,10 +647,52 @@ bool processLocusFast(
 	for (const auto& alleleVote : allele_size_spanning_read_votes) {
 		countsOfSpanningReads.setCountOf(alleleVote.first / locusMotifSize, alleleVote.second);
 	}
+	// Initialize flanking reads count table (one-flank-anchored reads; see read loop above)
+	for (const auto& alleleVote : allele_size_flanking_read_votes) {
+		countsOfFlankingReads.setCountOf(alleleVote.first / locusMotifSize, alleleVote.second);
+	}
 
 	boost::optional<RepeatGenotype> repeatGenotype;
 	if (!num_repeats.empty()) {
 		repeatGenotype = RepeatGenotype(locusMotifSize, num_repeats);
+	}
+
+	// Derive a per-allele genotype confidence interval from the spread of high-quality reads. Both
+	// allele_size_spanning_read_votes and soft_clipped_read_repeat_sequence_sizes are populated only
+	// from reads that passed the fast-path quality filter in the read loop above (mapped, primary,
+	// mapQ-screened), so the CI is built exclusively from high-quality reads. Each supported spanning
+	// size (>=1 read) is assigned to its nearest called allele and widens that allele's CI to span
+	// [min, max] of its cluster; a soft-clipped read longer than the long allele (a lower bound on a
+	// possible expansion) extends the long allele's upper bound.
+	if (repeatGenotype) {
+		const int shortAlleleUnits = repeatGenotype->shortAlleleSizeInUnits();
+		const int longAlleleUnits = repeatGenotype->longAlleleSizeInUnits();
+		int shortLo = shortAlleleUnits, shortHi = shortAlleleUnits;
+		int longLo = longAlleleUnits, longHi = longAlleleUnits;
+		for (const auto& alleleVote : allele_size_spanning_read_votes) {
+			if (alleleVote.second <= 0) {
+				continue;
+			}
+			const int units = alleleVote.first / locusMotifSize;
+			if (std::abs(units - shortAlleleUnits) <= std::abs(units - longAlleleUnits)) {
+				shortLo = std::min(shortLo, units);
+				shortHi = std::max(shortHi, units);
+			} else {
+				longLo = std::min(longLo, units);
+				longHi = std::max(longHi, units);
+			}
+		}
+		// Homozygous call: both alleles share the single supported cluster.
+		if (shortAlleleUnits == longAlleleUnits) {
+			longLo = shortLo;
+			longHi = shortHi;
+		}
+		// Soft-clipped reads longer than the long allele extend its upper bound (possible under-call).
+		for (const int softClipSizeBp : soft_clipped_read_repeat_sequence_sizes) {
+			longHi = std::max(longHi, softClipSizeBp / locusMotifSize);
+		}
+		repeatGenotype->setShortAlleleSizeInUnitsCi(shortLo, shortHi);
+		repeatGenotype->setLongAlleleSizeInUnitsCi(longLo, longHi);
 	}
 
     // Apply --skip-hom-ref before building findings, so skipped loci don't pay the allocation. Fast
@@ -618,10 +705,84 @@ bool processLocusFast(
         }
     }
 
-	std::unique_ptr<VariantFindings> variantFindingsPtr = std::make_unique<RepeatFindings>(
+	// Per-allele quality metrics from the high-quality spanning reads (the same mapQ-filtered reads as
+	// the CI above). Computed in fast mode: depth (DP), high-quality-unambiguous read count, strand-bias
+	// phred, mean inserted/deleted bases within the repeat, and CI-width / allele-size. NOT computed here
+	// (left at 0): qd (needs per-base qualities or a graph-alignment score) and the flank-normalized
+	// depths (need a flank-window depth tally). These approximate the full genotyper, which derives them
+	// from graph realignment, so they will not match it exactly.
+	RepeatAlleleQualityMetrics qualityMetrics;
+	CountTable countsOfHighQualityUnambiguousReads;
+	if (repeatGenotype) {
+		const int shortAlleleUnits = repeatGenotype->shortAlleleSizeInUnits();
+		const int longAlleleUnits = repeatGenotype->longAlleleSizeInUnits();
+		const bool isHet = repeatGenotype->numAlleles() == 2 && shortAlleleUnits != longAlleleUnits;
+		// clusterTarget: -1 = all reads (hom/hemi single allele), 0 = reads nearer the short allele,
+		// 1 = reads nearer the long allele. Each spanning read is assigned to its nearest called allele,
+		// matching the CI clustering above.
+		auto buildAlleleMetrics = [&](int alleleNumber, int alleleUnits, const NumericInterval& ci,
+			int clusterTarget) {
+			AlleleMetrics allele;
+			allele.alleleNumber = alleleNumber;
+			allele.alleleSize = alleleUnits;
+			int depth = 0;
+			int forwardReads = 0;
+			int reverseReads = 0;
+			long insertedBases = 0;
+			long deletedBases = 0;
+			for (const auto& sizeAndVotes : allele_size_spanning_read_votes) {
+				if (clusterTarget != -1) {
+					const int units = sizeAndVotes.first / locusMotifSize;
+					const bool nearerShort =
+						std::abs(units - shortAlleleUnits) <= std::abs(units - longAlleleUnits);
+					if ((nearerShort ? 0 : 1) != clusterTarget) {
+						continue;
+					}
+				}
+				depth += sizeAndVotes.second;
+				const auto statsIt = allele_size_spanning_read_stats.find(sizeAndVotes.first);
+				if (statsIt != allele_size_spanning_read_stats.end()) {
+					forwardReads += statsIt->second.forwardReads;
+					reverseReads += statsIt->second.reverseReads;
+					insertedBases += statsIt->second.insertedBases;
+					deletedBases += statsIt->second.deletedBases;
+				}
+			}
+			allele.depth = depth;
+			// Spanning reads are mapQ-filtered (high quality) and each pins exactly one size
+			// (unambiguous), so they are this allele's high-quality-unambiguous reads.
+			allele.highQualityUnambiguousReads = depth;
+			allele.strandBiasBinomialPhred = reviewer::computeStrandBiasBinomialPhred(forwardReads, reverseReads);
+			if (depth > 0) {
+				allele.meanInsertedBasesWithinRepeats = static_cast<double>(insertedBases) / depth;
+				allele.meanDeletedBasesWithinRepeats = static_cast<double>(deletedBases) / depth;
+				countsOfHighQualityUnambiguousReads.setCountOf(alleleUnits, depth);
+			}
+			if (alleleUnits > 0) {
+				allele.confidenceIntervalDividedByAlleleSize =
+					static_cast<double>(ci.end() - ci.start()) / alleleUnits;
+			}
+			qualityMetrics.alleles.push_back(allele);
+		};
+		if (isHet) {
+			buildAlleleMetrics(1, shortAlleleUnits, repeatGenotype->shortAlleleSizeInUnitsCi(), 0);
+			buildAlleleMetrics(2, longAlleleUnits, repeatGenotype->longAlleleSizeInUnitsCi(), 1);
+		} else {
+			buildAlleleMetrics(1, shortAlleleUnits, repeatGenotype->shortAlleleSizeInUnitsCi(), -1);
+		}
+		qualityMetrics.variantId = variantId;
+		qualityMetrics.hasMetrics = !qualityMetrics.alleles.empty();
+	}
+
+	auto repeatFindingsPtr = std::make_unique<RepeatFindings>(
 		countsOfSpanningReads, countsOfFlankingReads, countsOfInrepeatReads,
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());
-	locusFindings.findingsForEachVariant.emplace(variantId, std::move(variantFindingsPtr));
+	repeatFindingsPtr->setQuickGenotype(true);  // genotyped via the fast path
+	if (qualityMetrics.hasMetrics) {
+		repeatFindingsPtr->setAlleleQualityMetrics(qualityMetrics);
+		repeatFindingsPtr->setCountsOfHighQualityUnambiguousReads(countsOfHighQualityUnambiguousReads);
+	}
+	locusFindings.findingsForEachVariant.emplace(variantId, std::move(repeatFindingsPtr));
 
     jsonWriter.addRecord(locusSpec, locusFindings);
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)

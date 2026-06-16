@@ -170,6 +170,12 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
         record_["GenotypeConfidenceInterval"] = streamToString(*repeatFindings.optionalGenotype());
     }
 
+    // Only emitted for fast-path (optimized-streaming) genotypes, so full-genotyper output is unchanged.
+    if (repeatFindings.quickGenotype())
+    {
+        record_["QuickGenotype"] = true;
+    }
+
     const auto rfc1Status(repeatFindings.getRFC1Status());
     if (rfc1Status)
     {

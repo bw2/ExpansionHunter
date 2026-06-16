@@ -19,6 +19,8 @@ struct FastReadAnalysisResult {
     bool overlaps_repeats = false;
     bool is_spanning_read = false;
     bool soft_clipped_bases_contain_repetitive_sequence = false;
+    int inserted_bases_within_repeat = 0;  // CIGAR insertions whose position falls within the locus
+    int deleted_bases_within_repeat = 0;   // CIGAR deletions overlapping the locus
 };
 
 

@@ -109,6 +109,12 @@ public:
 
     const CountTable& countsOfHighQualityUnambiguousReads() const { return countsOfHighQualityUnambiguousReads_; }
 
+    // True when this genotype came from the optimized-streaming fast path (processLocusFast) rather
+    // than the full genotyper.
+    void setQuickGenotype(bool quickGenotype) { quickGenotype_ = quickGenotype; }
+
+    bool quickGenotype() const { return quickGenotype_; }
+
     // Compares core findings only: read counts and genotype.
     // Deliberately excludes:
     // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
@@ -137,6 +143,7 @@ private:
     std::vector<std::string> consensusSequences_;   // One consensus sequence per allele
     std::vector<std::string> consensusReadSupport_; // Per-position read support as digit string, one per allele
     CountTable countsOfHighQualityUnambiguousReads_; // Counts by allele size (repeat units)
+    bool quickGenotype_ = false;                     // genotyped via the fast path (processLocusFast)
 };
 
 class SmallVariantFindings : public VariantFindings
