@@ -479,7 +479,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     }
     catch (std::logic_error&)
     {
-        const string message = "Analysis mode must be set to one of: seeking, streaming, low-mem-streaming, optimized-streaming";
+        const string message = "Analysis mode must be set to one of: seeking, streaming, low-mem-streaming, optimized-streaming, region-parallel-streaming";
         throw std::invalid_argument(message);
     }
 

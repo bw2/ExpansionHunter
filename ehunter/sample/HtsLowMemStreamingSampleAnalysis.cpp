@@ -232,15 +232,26 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
             // reverseComplement(), and the same FullReadPair is shared across multiple loci's caches, so
             // genotyping the shared object directly would be a data race between parallel workers.
             Read read = readPair->firstMate->r;
-            Read mate = readPair->secondMate->r;
-
             const LinearAlignmentStats& readStats = readPair->firstMate->s;
-            const LinearAlignmentStats& mateStats = readPair->secondMate->s;
             const int64_t readEnd = readStats.pos + static_cast<int64_t>(read.sequence().length());
-            const int64_t mateEnd = mateStats.pos + static_cast<int64_t>(mate.sequence().length());
-
             const bool readIsInTargetRegion = readIsContainedInAnyExtractionRegion(
                 targetExtractionRegions, readStats.chromId, readStats.pos, readEnd);
+
+            // Single-ended entry (the mate was unmapped/unavailable when the read was cached): analyze the
+            // read on its own, the same way seeking mode handles such singletons via processMates(read,
+            // nullptr). Without a mate there is no out-of-locus end that could align spuriously into the
+            // repeat graph, so the containment-based single/paired routing below does not apply.
+            if (!readPair->secondMate) {
+                if (readIsInTargetRegion) {
+                    out.analyzer->processMates(read, nullptr, locus::RegionType::kTarget, alignerSelector);
+                }
+                continue;
+            }
+
+            Read mate = readPair->secondMate->r;
+            const LinearAlignmentStats& mateStats = readPair->secondMate->s;
+            const int64_t mateEnd = mateStats.pos + static_cast<int64_t>(mate.sequence().length());
+
             const bool mateIsInTargetRegion = readIsContainedInAnyExtractionRegion(
                 targetExtractionRegions, mateStats.chromId, mateStats.pos, mateEnd);
             const bool readIsInAnyRegion = readIsInTargetRegion
@@ -764,6 +775,45 @@ void doTheAnalysis(
 
         // fully parse the current read
         FullRead fullRead = decodeRead(*readStreamer);
+
+        // A read whose mate is unmapped (htslib reports mtid<0) has no mate record to pair with: the
+        // unmapped mate either never appears in the coordinate-sorted stream or arrives with contig -1,
+        // which ends streaming (HtsFileStreamer::isStreamingAlignedReads). Parking the read in
+        // unpairedReadsCache to await a pair that never completes would silently drop it (only completed
+        // pairs are added to the locus caches below). Instead add it now as single-ended evidence to every
+        // active locus whose window contains it, mirroring seeking mode's processMates(read, nullptr)
+        // handling of such singletons.
+        if (!isMateMapped) {
+            shared_ptr<FullReadPair> singleEndedRead = nullptr;
+            for (auto const& locusIndex : locusIndicesCollectingReads) {
+                const LocusDescription* locusDescription = &locusDescriptionCatalog[locusIndex];
+                if (!doesAcontainB(
+                        locusDescription->locusContigIndex(), locusDescription->locusAndFlanksStart(),
+                        locusDescription->locusAndFlanksEnd(), readContigId, readStart, readEnd)) {
+                    continue;
+                }
+                if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
+                    locusCachesMap[locusIndex] = std::make_shared<LocusCache>(
+                        locusIndex,
+                        GenomicRegion {
+                            locusDescription->locusContigIndex(),
+                            locusDescription->locusAndFlanksStart(),
+                            locusDescription->locusAndFlanksEnd()
+                        });
+                }
+                shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
+                // de-duplicate in case the same fragment is encountered more than once for this locus
+                if (!locusCache->seenFragmentIds.insert(fullRead.r.fragmentId()).second) {
+                    continue;
+                }
+                if (singleEndedRead == nullptr) {
+                    singleEndedRead = std::make_shared<FullReadPair>();
+                    singleEndedRead->firstMate = fullRead;
+                }
+                locusCache->readPairs.push_back(singleEndedRead);
+            }
+            continue;
+        }
 
         // if mate if far away, retrieve it using the MateExtractor and add it to the unpairedReadsCache so that
         // the read pair is available immediately. This way we don't have to wait until the read position reaches

@@ -446,12 +446,13 @@ bool processLocusFast(
     int mappedReadCount = 0;
     float averageMapQAtLocus = 0.0;
     for (const auto& readPair : readPairs) {
-        totalReads += 2;
-        if (readPair->firstMate->s.isMapped) {
+        // numMatesSet() is 2 for a normal pair and 1 for a single-ended entry (mate unmapped/unavailable).
+        totalReads += readPair->numMatesSet();
+        if (readPair->firstMate && readPair->firstMate->s.isMapped) {
             averageMapQAtLocus += readPair->firstMate->s.mapq;
             ++mappedReadCount;
         }
-        if (readPair->secondMate->s.isMapped) {
+        if (readPair->secondMate && readPair->secondMate->s.isMapped) {
             averageMapQAtLocus += readPair->secondMate->s.mapq;
             ++mappedReadCount;
         }
@@ -476,10 +477,16 @@ bool processLocusFast(
     std::map<int, SpanningReadStats> allele_size_spanning_read_stats;
     for (const auto& readPair : readPairs) {
 
-        const FullRead* reads[] = { &*readPair->firstMate, &*readPair->secondMate };
+        // secondMate is empty for a single-ended entry (mate unmapped/unavailable); skip it below.
+        const FullRead* reads[] = {
+            readPair->firstMate ? &*readPair->firstMate : nullptr,
+            readPair->secondMate ? &*readPair->secondMate : nullptr };
 
         // process the read and its alignment stats, followed by the mate and its alignment stats
         for (const auto* read : reads) {
+            if (read == nullptr) {
+                continue;
+            }
             if (!read->s.isMapped || read->s.isSupplementaryAlignment || read->s.isSecondaryAlignment) {
                 continue;
             }
