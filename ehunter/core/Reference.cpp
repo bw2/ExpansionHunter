@@ -40,6 +40,10 @@ FastaReference::FastaReference(const string& referencePath, const ReferenceConti
     , bamHeaderContigInfo_(contigInfo)
 {
     htsFastaIndexPtr_ = fai_load(referencePath_.c_str());
+    if (!htsFastaIndexPtr_)
+    {
+        throw std::runtime_error("Failed to load FASTA index for " + referencePath_);
+    }
 
     std::vector<std::pair<std::string, int64_t>> internalNamesAndSizes;
 

@@ -116,7 +116,6 @@ add_library(ExpansionHunterLib
         sample/HtsStreamingSampleAnalysis.hh sample/HtsStreamingSampleAnalysis.cpp
         sample/HtsLowMemStreamingSampleAnalysis.hh sample/HtsLowMemStreamingSampleAnalysis.cpp
         sample/HtsLowMemStreamingHelpers.hh sample/HtsLowMemStreamingHelpers.cpp
-        sample/IndexBasedDepthEstimate.hh sample/IndexBasedDepthEstimate.cpp
         sample/MateExtractor.hh sample/MateExtractor.cpp
         )
 

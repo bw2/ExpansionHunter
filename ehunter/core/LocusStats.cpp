@@ -156,41 +156,45 @@ static int64_t readBasesOverlapInterval(const Read& r, const LinearAlignmentStat
 
 void LocusStatsCalculatorFromReadAlignments::inspect(const FullReadPair& readPair)
 {
-    if (!readPair.firstMate || !readPair.secondMate) {
-        return;
+    // Account for each present, mapped mate independently so that single-ended entries (e.g. reads whose
+    // mate is unmapped, used by the optimized-streaming fast path for genotyping) still contribute to
+    // read-length and coverage stats. The fragment-length contribution is only computed when both mates
+    // are present and mapped.
+    int64_t readBasesOverlapLocus = 0;
+    int64_t mateBasesOverlapLocus = 0;
+
+    if (readPair.firstMate && readPair.firstMate->s.isMapped) {
+        const Read& read = readPair.firstMate->r;
+        readBasesOverlapLocus = readBasesOverlapInterval(read, readPair.firstMate->s, locusRegion_);
+        if (readBasesOverlapLocus > 0) {
+            recordReadLen(read);
+            basesOverlappingLocus_ += readBasesOverlapLocus;
+        }
     }
 
-    const LinearAlignmentStats& readAlignmentStats = readPair.firstMate->s;
-    const LinearAlignmentStats& mateAlignmentStats = readPair.secondMate->s;
+    if (readPair.secondMate && readPair.secondMate->s.isMapped) {
+        const Read& mate = readPair.secondMate->r;
+        mateBasesOverlapLocus = readBasesOverlapInterval(mate, readPair.secondMate->s, locusRegion_);
+        if (mateBasesOverlapLocus > 0) {
+            recordReadLen(mate);
+            basesOverlappingLocus_ += mateBasesOverlapLocus;
+        }
+    }
 
-	if (!readAlignmentStats.isMapped || !mateAlignmentStats.isMapped) {
-		return;
-	}
+    if (readPair.firstMate && readPair.secondMate
+        && readPair.firstMate->s.isMapped && readPair.secondMate->s.isMapped
+        && (readBasesOverlapLocus > 0 || mateBasesOverlapLocus > 0)
+        && readPair.firstMate->s.chromId == readPair.secondMate->s.chromId) {
+        const LinearAlignmentStats& readAlignmentStats = readPair.firstMate->s;
+        const LinearAlignmentStats& mateAlignmentStats = readPair.secondMate->s;
 
-    const Read& read = readPair.firstMate->r;
-    const Read& mate = readPair.secondMate->r;
-
-	const auto readBasesOverlapLocus = readBasesOverlapInterval(read, readAlignmentStats, locusRegion_);
-	if (readBasesOverlapLocus > 0) {
-    	recordReadLen(read);
-    	basesOverlappingLocus_ += readBasesOverlapLocus;
-   	}
-
-   	const auto mateBasesOverlapLocus = readBasesOverlapInterval(mate, mateAlignmentStats, locusRegion_);
-	if (mateBasesOverlapLocus > 0) {
-	    recordReadLen(mate);
-	    basesOverlappingLocus_ += mateBasesOverlapLocus;
-	}
-
-	if ((readBasesOverlapLocus > 0 || mateBasesOverlapLocus > 0)
-		&& readAlignmentStats.chromId == mateAlignmentStats.chromId) {
         const int start = std::min(
             readAlignmentStats.pos,
             mateAlignmentStats.pos);
 
         const int end = std::max(
-            readAlignmentStats.pos + read.sequence().size(),
-            mateAlignmentStats.pos + mate.sequence().size());
+            readAlignmentStats.pos + readPair.firstMate->r.sequence().size(),
+            mateAlignmentStats.pos + readPair.secondMate->r.sequence().size());
 
         if (end - start < 5000) {  // don't record fragment lengths from mates that are mapped far away from each other
             fragLengthAccumulator_(end - start);

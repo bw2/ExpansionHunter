@@ -45,12 +45,4 @@ bool checkIfLocallyPlacedReadPair(
     boost::optional<graphtools::GraphAlignment> readAlignment,
     boost::optional<graphtools::GraphAlignment> mateAlignment, int kMinNonRepeatAlignmentScore);
 
-// Checks if alignment upstream of a given node is high quality
-bool checkIfUpstreamAlignmentIsGood(graphtools::NodeId nodeId, graphtools::GraphAlignment alignment);
-
-// Checks if alignment downstream of a given node is high quality
-bool checkIfDownstreamAlignmentIsGood(graphtools::NodeId nodeId, graphtools::GraphAlignment alignment);
-
-bool checkIfPassesAlignmentFilters(const graphtools::GraphAlignment& alignment);
-
 }

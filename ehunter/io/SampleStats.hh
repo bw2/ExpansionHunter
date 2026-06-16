@@ -29,9 +29,6 @@
 namespace ehunter
 {
 
-// Returns the length of the first read in a HTS file
-int extractReadLength(const std::string& htsFilePath);
-
 ReferenceContigInfo extractReferenceContigInfo(const std::string& htsFilePath);
 
 }

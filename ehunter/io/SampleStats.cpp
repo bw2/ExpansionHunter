@@ -40,52 +40,6 @@ using std::vector;
 namespace ehunter
 {
 
-int extractReadLength(const string& htsFilePath)
-{
-    samFile* htsFilePtr = sam_open(htsFilePath.c_str(), "r");
-    if (!htsFilePtr)
-    {
-        throw std::runtime_error("Failed to read " + htsFilePath);
-    }
-    bam_hdr_t* htsHeaderPtr = sam_hdr_read(htsFilePtr);
-    if (!htsHeaderPtr)
-    {
-        throw std::runtime_error("Failed to read the header of " + htsFilePath);
-    }
-
-    enum
-    {
-        kSupplementaryAlign = 0x800,
-        kSecondaryAlign = 0x100
-    };
-
-    int readLength = 99;
-    bam1_t* htsAlignmentPtr = bam_init1();
-    int ret;
-    while ((ret = sam_read1(htsFilePtr, htsHeaderPtr, htsAlignmentPtr)) >= 0)
-    {
-        const bool isSupplementary = htsAlignmentPtr->core.flag & kSupplementaryAlign;
-        const bool isSecondary = htsAlignmentPtr->core.flag & kSecondaryAlign;
-        const bool isPrimaryAlign = (!isSupplementary) && (!isSecondary);
-        if (isPrimaryAlign)
-        {
-            readLength = htsAlignmentPtr->core.l_qseq;
-            break;
-        }
-    }
-
-    if (ret < 0)
-    {
-        throw std::runtime_error("Failed to extract a read from " + htsFilePath);
-    }
-
-    bam_destroy1(htsAlignmentPtr);
-    bam_hdr_destroy(htsHeaderPtr);
-    sam_close(htsFilePtr);
-
-    return readLength;
-}
-
 ReferenceContigInfo extractReferenceContigInfo(const std::string& htsFilePath)
 {
     std::unique_ptr<samFile, decltype(&hts_close)> htsFilePtr(hts_open(htsFilePath.c_str(), "r"), hts_close);

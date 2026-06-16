@@ -160,6 +160,13 @@ int main(int argc, char** argv)
         spdlog::info("Reading catalog from {}", inputPaths.catalog());
         LocusDescriptionCatalog locusDescriptionCatalog = loadLocusDescriptions(params, reference);
 
+        if (locusDescriptionCatalog.empty())
+        {
+            throw std::runtime_error(
+                "No loci to analyze: the variant catalog is empty (check the catalog file and any "
+                "--locus / --region / --start-with filters)");
+        }
+
         const HeuristicParameters& heuristicParams = params.heuristics();
         const OutputPaths& outputPaths = params.outputPaths();
         if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kOptimizedStreaming

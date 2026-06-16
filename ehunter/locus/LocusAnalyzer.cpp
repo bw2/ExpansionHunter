@@ -395,7 +395,7 @@ LocusFindings LocusAnalyzer::analyze(
                                     isShortAllele = (i == 0);
                                 }
                                 AlleleMetrics allele;
-                                allele.alleleNumber = static_cast<int>(i) + 1;
+                                allele.alleleNumber = isShortAllele ? 1 : 2;
                                 allele.alleleSize = isShortAllele ? shortSize : longSize;
                                 allele.depth = metrics.alleleDepth[i];
                                 // Copy QD for this haplotype

@@ -74,10 +74,10 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
 
         // Output realigned reads to bam:
         writer_->write(
-            locusId_, read.fragmentId(), read.sequence(), read.isFirstMate(), read.isReversed(), read.isReversed(),
+            locusId_, read.fragmentId(), read.sequence(), read.isFirstMate(), read.isReversed(), mate->isReversed(),
             *readAlign);
         writer_->write(
-            locusId_, mate->fragmentId(), mate->sequence(), mate->isFirstMate(), mate->isReversed(), mate->isReversed(),
+            locusId_, mate->fragmentId(), mate->sequence(), mate->isFirstMate(), mate->isReversed(), read.isReversed(),
             *mateAlign);
     }
 

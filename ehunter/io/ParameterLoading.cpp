@@ -63,7 +63,7 @@ struct UserParameters
     int regionExtensionLength;
     double minLocusCoverage = 10.0;
     int qualityCutoffForGoodBaseCall = 20;
-    bool skipUnaligned;
+    bool skipUnaligned = false;
 
     string analysisMode;
     string locus;

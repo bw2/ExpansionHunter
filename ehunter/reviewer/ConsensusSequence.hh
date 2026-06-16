@@ -66,8 +66,9 @@ struct AlleleConsensus
     /// Returns the consensus sequence string with 'N' for unknown positions
     std::string toString() const;
 
-    /// Returns a string where each character is a digit (0-9) representing the read support
-    /// at that position. Coverage values >= 10 are capped to '9', coverage 0 is '0'.
+    /// Returns a string where each character is a digit (0-9) giving the number of reads that agree
+    /// with the consensus base at that position (not total coverage). Counts >= 10 are capped to '9';
+    /// 0 reads or an unknown position is '0'.
     std::string toReadSupportString() const;
 
     /// Returns the count of non-N (known) positions

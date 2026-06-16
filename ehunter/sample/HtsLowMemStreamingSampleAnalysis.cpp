@@ -998,10 +998,6 @@ void htsLowMemStreamingSampleAnalysis(
     Reference& reference,
     BamletWriterPtr bamletWriter)
 {
-    if (locusDescriptionCatalog.empty()) {
-        return;
-    }
-
     //initialize the genomeQuery object
     GenomeQueryCollection genomeQuery(locusDescriptionCatalog);
 
@@ -1050,10 +1046,6 @@ void htsRegionParallelStreamingSampleAnalysis(
     Reference& reference,
     BamletWriterPtr bamletWriter)
 {
-    if (locusDescriptionCatalog.empty()) {
-        return;
-    }
-
     const int farAwayMateDistanceThreshold = 1000;  // base pairs (also used as the per-side streamer halo)
     const int N = (int) locusDescriptionCatalog.size();
     const int P = std::min(std::max(1, programParams.threadCount), N);

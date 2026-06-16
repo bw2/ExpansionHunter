@@ -304,7 +304,7 @@ LocusSpecification decodeLocusSpecification(
                 const GenomicRegion& referenceRegion = locusDescription.referenceRegions().at(variantIndex);
 
                 VariantTypeFromUser variantDescription = locusDescription.variantTypesFromUser().at(variantIndex);
-                const string& variantId = locusDescription.variantIds()[variantIndex];
+                const string& variantId = locusDescription.variantIds().at(variantIndex);
                 VariantType variantType = determineVariantType(feature.type);
                 VariantSubtype variantSubtype
                     = determineVariantSubtype(feature.type, variantDescription, referenceRegion);

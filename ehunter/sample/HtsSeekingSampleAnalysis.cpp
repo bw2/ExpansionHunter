@@ -44,7 +44,6 @@
 #include "locus/LocusAnalyzer.hh"
 #include "sample/AnalyzerFinder.hh"
 #include "sample/HtsFileSeeker.hh"
-#include "sample/IndexBasedDepthEstimate.hh"
 #include "sample/MateExtractor.hh"
 
 using boost::optional;

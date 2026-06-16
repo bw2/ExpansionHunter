@@ -711,18 +711,6 @@ MetricsByVariant getMetrics(
             metrics.highQualityUnambiguousReads[hapIndex] = varHapAccums[hapIndex].highQualUnambiguousCount;
         }
 
-        // Build CountTable of high-quality unambiguous reads by allele size
-        // Uses genotype to map haplotype index to allele size (in repeat units)
-        for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
-        {
-            int alleleSize = metrics.genotype[hapIndex];
-            int count = varHapAccums[hapIndex].highQualUnambiguousCount;
-            if (count > 0)
-            {
-                metrics.countsOfHighQualityUnambiguousReads.incrementCountOf(alleleSize, count);
-            }
-        }
-
         metricsByVariant.push_back(metrics);
     }
 

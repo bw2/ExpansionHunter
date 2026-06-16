@@ -66,10 +66,13 @@ class AlignmentBuffer
 public:
     using buffer_t = std::map<std::string, AlignedFragment>;
 
-    /// Insert a fragment into the buffer if at least one mate overlaps the repeat region
+    /// Insert a fragment into the buffer (keyed by fragment ID).
+    ///
+    /// The repeat-overlap filter is currently disabled (all fragments are kept for visualization
+    /// parity), so this unconditionally inserts and always returns true.
     ///
     /// \param fragment The aligned fragment to insert
-    /// \return true if fragment was inserted, false if it was filtered out
+    /// \return always true
     bool tryInsertFragment(AlignedFragment fragment);
 
     const buffer_t& getBuffer() const { return bufData_; }
