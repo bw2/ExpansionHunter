@@ -199,12 +199,20 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             alleleRecord["AlleleNumber"] = allele.alleleNumber;
             alleleRecord["AlleleSize"] = allele.alleleSize;
             alleleRecord["Depth"] = round3(allele.depth);
-            alleleRecord["QD"] = round3(allele.qd);
+            // QD and the flank-normalized depths are not computed on the fast path, so omit them there
+            // rather than emit a misleading 0.
+            if (!repeatFindings.quickGenotype())
+            {
+                alleleRecord["QD"] = round3(allele.qd);
+            }
             alleleRecord["MeanInsertedBasesWithinRepeats"] = round3(allele.meanInsertedBasesWithinRepeats);
             alleleRecord["MeanDeletedBasesWithinRepeats"] = round3(allele.meanDeletedBasesWithinRepeats);
             alleleRecord["StrandBiasBinomialPhred"] = round3(allele.strandBiasBinomialPhred);
-            alleleRecord["LeftFlankNormalizedDepth"] = round3(allele.leftFlankNormalizedDepth);
-            alleleRecord["RightFlankNormalizedDepth"] = round3(allele.rightFlankNormalizedDepth);
+            if (!repeatFindings.quickGenotype())
+            {
+                alleleRecord["LeftFlankNormalizedDepth"] = round3(allele.leftFlankNormalizedDepth);
+                alleleRecord["RightFlankNormalizedDepth"] = round3(allele.rightFlankNormalizedDepth);
+            }
             alleleRecord["HighQualityUnambiguousReads"] = allele.highQualityUnambiguousReads;
             alleleRecord["ConfidenceIntervalDividedByAlleleSize"] = round3(allele.confidenceIntervalDividedByAlleleSize);
 
