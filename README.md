@@ -26,7 +26,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
   - `--skip-missing-genotypes` skips output of loci with missing genotypes (eg. due to low coverage)
   - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
-  - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus, useful for inspecting evidence in a genome browser
+  - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus
 - **`--reads-index` option**: explicitly specify the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
 - **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  
