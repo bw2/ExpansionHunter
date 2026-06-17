@@ -88,7 +88,6 @@ public:
 
     int32_t currentReadContigId() const { return htsAlignmentPtr_->core.tid; }
     hts_pos_t currentReadPosition() const { return htsAlignmentPtr_->core.pos; }
-    int32_t currentReadLength() const;
     int32_t currentMateContigId() const { return htsAlignmentPtr_->core.mtid; }
     hts_pos_t currentMatePosition() const { return htsAlignmentPtr_->core.mpos; }
 

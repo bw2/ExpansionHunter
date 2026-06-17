@@ -266,6 +266,41 @@ SampleFindings htsStreamingSampleAnalysis(
             continue;
         }
 
+        // A read whose mate has no alignment coordinate (mtid < 0) will never be paired in the
+        // coordinate-sorted stream: such a mate is either absent or sits in the trailing unmapped block
+        // (contig -1), which ends streaming (HtsFileStreamer::isStreamingAlignedReads). Parking the read in
+        // unpairedReads to await a mate that never arrives would silently drop it, so analyze it single-ended
+        // now, mirroring low-mem streaming (isMateMapped = currentMateContigId() >= 0) and seeking mode's
+        // processMates(read, nullptr).
+        //
+        // A placed-unmapped mate (BAM_FUNMAP but mtid >= 0, as BWA-MEM/DRAGEN emit) is intentionally NOT
+        // caught here: it IS streamed and pairs with this read normally, so its in-repeat-read evidence must
+        // be preserved by letting this read fall through to the normal pairing path below.
+        if (readStreamer.currentMateContigId() < 0)
+        {
+            Read singleRead = readStreamer.decodeRead();
+            const int64_t singleReadEnd = readStreamer.currentReadPosition() + singleRead.sequence().length();
+            vector<AnalyzerBundle> singleEndedBundles = genomeQuery.analyzerFinder.query(
+                readStreamer.currentReadContigId(), readStreamer.currentReadPosition(), singleReadEnd);
+            for (auto& bundle : singleEndedBundles)
+            {
+                // The mate slot is required by ReadPair but ignored for kReadOnly (the worker calls
+                // processMates(read, nullptr)); pass a copy of the read to satisfy Read's non-default
+                // constructor. Force kReadOnly because the single-ended query returns kBothReads bundles.
+                HtsStreamingReadPairQueue::ReadPair readPair{
+                    bundle.regionType, AnalyzerInputType::kReadOnly, singleRead, singleRead
+                };
+                if (locusAnalyzerThreadSharedData.readPairQueue.insertReadPair(
+                        bundle.locusIndex, std::move(readPair)))
+                {
+                    pool.push(
+                        processLocusAnalyzerQueue, std::ref(locusAnalyzerThreadSharedData),
+                        std::ref(locusAnalyzerThreadLocalDataPool), bundle.locusIndex);
+                }
+            }
+            continue;
+        }
+
         Read read = readStreamer.decodeRead();
         const auto mateIterator = unpairedReads.find(read.fragmentId());
         if (mateIterator == unpairedReads.end())

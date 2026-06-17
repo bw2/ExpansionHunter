@@ -432,12 +432,9 @@ bool processLocusFast(
 
     LocusStatsCalculatorFromReadAlignments locusStatsCalculator(locusDescription.chromType(), locusReferenceRegion);
 
-	int totalReads = 0;
     int mappedReadCount = 0;
     float averageMapQAtLocus = 0.0;
     for (const auto& readPair : readPairs) {
-        // numMatesSet() is 2 for a normal pair and 1 for a single-ended entry (mate unmapped/unavailable).
-        totalReads += readPair->numMatesSet();
         if (readPair->firstMate && readPair->firstMate->s.isMapped) {
             averageMapQAtLocus += readPair->firstMate->s.mapq;
             ++mappedReadCount;
@@ -579,10 +576,6 @@ bool processLocusFast(
     size_t top_genotypes_count = std::min<size_t>(maxAlleles, allele_size_votes_list.size());
     if (top_genotypes_count > 0) {
         top_genotypes.assign(allele_size_votes_list.begin(), allele_size_votes_list.begin() + top_genotypes_count);
-    }
-
-    if (top_genotypes.empty() && totalReads >= 5) {
-        return false;
     }
 
     const int locusMotifSize = locusMotif.size();

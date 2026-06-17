@@ -217,11 +217,32 @@ static void assertIndexExists(const string& htsFilePath)
 {
     const vector<string> kPossibleIndexExtensions = { ".bai", ".csi", ".crai" };
 
+    // Layout 1: index path is the data path with an index extension appended
+    // (e.g. sample.bam.bai, sample.cram.crai).
     for (const string& indexExtension : kPossibleIndexExtensions)
     {
         if (fs::exists(htsFilePath + indexExtension))
         {
             return;
+        }
+    }
+
+    // Layout 2: index path replaces the .bam/.cram extension (e.g. sample.bai, sample.crai). htslib's
+    // auto-detection (openHtsIndex) accepts this sibling layout, so this precheck must accept it too.
+    const vector<string> kDataExtensions = { ".bam", ".cram" };
+    for (const string& dataExtension : kDataExtensions)
+    {
+        if (htsFilePath.size() >= dataExtension.size()
+            && htsFilePath.compare(htsFilePath.size() - dataExtension.size(), dataExtension.size(), dataExtension) == 0)
+        {
+            const string stem = htsFilePath.substr(0, htsFilePath.size() - dataExtension.size());
+            for (const string& indexExtension : kPossibleIndexExtensions)
+            {
+                if (fs::exists(stem + indexExtension))
+                {
+                    return;
+                }
+            }
         }
     }
 

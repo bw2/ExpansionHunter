@@ -160,21 +160,25 @@ MotifsWithQualWeight_t getAllMotifsWithQualWeight(
     // Get the first and last usable positions in read coordinates of the repeat tract (zero-indexed, closed)
     //
     // Note that the first and last repeat units in the tract are not used (presumably to reduce motif noise?)
-    auto repeatTractRange(std::make_pair(0, readLength - 1));
+    // Use signed arithmetic for the tract bounds: a read that aligns almost entirely to the right flank
+    // makes the right-flank subtraction below exceed the read length. With an unsigned upper bound that
+    // underflows to ~4.29e9, spinning the motif loop ~858M times and harvesting right-flank k-mers as
+    // spurious repeat motifs; with a signed bound, an empty/negative tract simply skips the loop.
+    auto repeatTractRange(std::make_pair(0, static_cast<int>(readLength) - 1));
 
     const auto nodeAlignmentLengths = getGraphNodeAlignmentLengths(alignmentData.readAlignment);
     if ((nodeAlignmentLengths.size() > 0) and (nodeAlignmentLengths[0] != 0))
     {
-        repeatTractRange.first += nodeAlignmentLengths[0] + expectedMotifSize;
+        repeatTractRange.first += static_cast<int>(nodeAlignmentLengths[0] + expectedMotifSize);
     }
     if ((nodeAlignmentLengths.size() > 2) and (nodeAlignmentLengths[2] != 0))
     {
-        repeatTractRange.second -= nodeAlignmentLengths[2] + expectedMotifSize;
+        repeatTractRange.second -= static_cast<int>(nodeAlignmentLengths[2] + expectedMotifSize);
     }
 
     std::vector<std::pair<std::string, double>> motifData;
-    for (unsigned readPos(repeatTractRange.first); readPos < (repeatTractRange.second + 1);
-         readPos += expectedMotifSize)
+    for (int readPos(repeatTractRange.first); readPos <= repeatTractRange.second;
+         readPos += static_cast<int>(expectedMotifSize))
     {
         if (isValidMotifCandidate(readPos))
         {

@@ -446,20 +446,11 @@ RepeatAlignedBases extractRepeatAlignedBases(
     // Default quality weight (Q20 equivalent, as base qualities aren't readily available)
     constexpr double defaultQualityWeight = 0.99;
 
-    // Track our position on the haplotype path and in the read sequence
+    // Track our position on the haplotype path and in the read sequence.
+    // ReadPathAlign::begin already holds prefixLen + startPosition() (computed once in the
+    // ReadPathAlign constructor, Aligns.cpp), so reuse it rather than recomputing the prefix here.
     int hapPathPos = pathAlign.begin; // Position on linearized haplotype
     int queryPos = 0; // Position in read sequence
-
-    // Calculate the prefix length on the haplotype up to where alignment starts
-    // This accounts for the startIndexOnPath
-    int prefixLen = 0;
-    for (int i = 0; i < pathAlign.startIndexOnPath; ++i)
-    {
-        prefixLen += static_cast<int>(haplotypePath.graphRawPtr()->nodeSeq(hapNodeIds[i]).length());
-    }
-
-    // The alignment's start position is within the first aligned node
-    hapPathPos = prefixLen + static_cast<int>(projectedAlign.path().startPosition());
 
     // Process each node in the projected alignment
     for (size_t nodeIdx = 0; nodeIdx < alignNodeIds.size(); ++nodeIdx)

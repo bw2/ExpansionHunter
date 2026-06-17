@@ -136,11 +136,14 @@ static RepeatInsertionResult countRepeatNodeInsertions(
 }
 
 // Compute QD (quality by depth) for all variants and haplotypes
-// QD = sum(readQuality) / alleleDepth. Returns 0.0 if alleleDepth is zero.
+// QD = sum(readQuality) / number of reads overlapping the repeat = mean per-read quality. The numerator
+// (qualitySum) is accumulated once per overlapping read, so the denominator must also be a read count, not
+// the base-coverage alleleDepth — dividing a per-read sum by a base-depth mixes units and inflates QD above
+// 1 for reads that cover only part of the repeat. Returns 0.0 when no reads overlap the repeat.
 static map<string, vector<double>> computeQD(
     const LocusSpecification& locusSpec,
     const map<string, vector<double>>& qualitySums,
-    const map<string, vector<double>>& genotypeDepths)
+    const map<string, vector<double>>& readCounts)
 {
     map<string, vector<double>> qd;
 
@@ -148,14 +151,14 @@ static map<string, vector<double>> computeQD(
     {
         const string& variantId = variantSpec.id();
         const auto& sums = qualitySums.at(variantId);
-        const auto& depths = genotypeDepths.at(variantId);
+        const auto& counts = readCounts.at(variantId);
 
         vector<double> variantQD;
         for (size_t hapIndex = 0; hapIndex < sums.size(); ++hapIndex)
         {
-            if (depths[hapIndex] > 0.0)
+            if (counts[hapIndex] > 0.0)
             {
-                variantQD.push_back(sums[hapIndex] / depths[hapIndex]);
+                variantQD.push_back(sums[hapIndex] / counts[hapIndex]);
             }
             else
             {
@@ -612,11 +615,13 @@ MetricsByVariant getMetrics(
     // Compute per-haplotype depth and derived metrics
     map<string, vector<double>> genotypeDepths;
     map<string, vector<double>> qualitySums;
+    map<string, vector<double>> readCounts;
 
-    // Initialize quality sums per variant
+    // Initialize quality sums and read counts per variant
     for (const auto& variantSpec : locusSpec.variantSpecs())
     {
         qualitySums[variantSpec.id()].resize(paths.size(), 0.0);
+        readCounts[variantSpec.id()].resize(paths.size(), 0.0);
     }
 
     for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
@@ -628,15 +633,18 @@ MetricsByVariant getMetrics(
             genotypeDepths[variantAndDepth.first].push_back(variantAndDepth.second);
         }
 
-        // Store quality sums (per-variant, only from reads overlapping the repeat)
+        // Store quality sums and read counts (per-variant, only from reads overlapping the repeat)
         for (const auto& variantSpec : locusSpec.variantSpecs())
         {
-            qualitySums[variantSpec.id()][hapIndex] = accum.perVariantHaplotype.at(variantSpec.id())[hapIndex].qualitySum;
+            const auto& varHapAccum = accum.perVariantHaplotype.at(variantSpec.id())[hapIndex];
+            qualitySums[variantSpec.id()][hapIndex] = varHapAccum.qualitySum;
+            readCounts[variantSpec.id()][hapIndex] = varHapAccum.numReadsOverlappingRepeat;
         }
     }
 
-    // Compute QD from quality sums and depths
-    const auto qdValues = computeQD(locusSpec, qualitySums, genotypeDepths);
+    // Compute QD as mean per-read quality (sum of read qualities / number of overlapping reads). This is
+    // deliberately normalized by read count, not by the base-coverage alleleDepth reported above.
+    const auto qdValues = computeQD(locusSpec, qualitySums, readCounts);
 
     for (const auto& variantSpec : locusSpec.variantSpecs())
     {

@@ -67,8 +67,14 @@ BamletWriterImpl::BamletWriterImpl(
     : filePtr_(hts_open(bamletPath.c_str(), "wb"), hts_close)
     , bamHeader_(bam_hdr_init(), bam_hdr_destroy)
     , contigInfo_(contigInfo)
-    , writeThread_(&BamletWriterImpl::writeHtsAlignments, this)
 {
+    // Validate the open before doing anything else: writeHeader() dereferences filePtr_->fp.bgzf, so a
+    // failed hts_open (e.g. an unwritable output directory) would otherwise be a null dereference.
+    if (!filePtr_ || !filePtr_->fp.bgzf)
+    {
+        throw std::runtime_error("Failed to open bamlet output file: " + bamletPath);
+    }
+
     for (const auto& locusSpec : regionCatalog)
     {
         initLocusSpec(locusSpec);
@@ -85,6 +91,12 @@ BamletWriterImpl::BamletWriterImpl(
     {
         bam_name2id(bamHeader_.get(), contigInfo_.getContigName(0).c_str());
     }
+
+    // Launch the async writer only after the file, header, and contig dictionary are fully initialized.
+    // If any step above throws, writeThread_ is still default-constructed (non-joinable), so the failed
+    // construction unwinds cleanly — a joinable std::thread destroyed during stack unwinding would call
+    // std::terminate.
+    writeThread_ = std::thread(&BamletWriterImpl::writeHtsAlignments, this);
 }
 
 void BamletWriterImpl::initLocusSpec(const LocusSpecification& locusSpec)
