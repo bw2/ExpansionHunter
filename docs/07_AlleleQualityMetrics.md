@@ -13,7 +13,7 @@ ExpansionHunter --reads input.bam \
                 --reference ref.fa \
                 --variant-catalog catalog.json \
                 --output-prefix output \
-                --disable-quality-metrics
+                --dont-output-quality-metrics
 ```
 
 ## Output Structure

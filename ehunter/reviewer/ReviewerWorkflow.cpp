@@ -178,7 +178,8 @@ std::optional<ReviewerContext> runReviewerWorkflow(
     const LocusSpecification& locusSpec,
     const locus::AlignmentBuffer& alignmentBuffer,
     const LocusFindings& findings,
-    int meanFragLen)
+    int meanFragLen,
+    bool buildConsensus)
 {
     const std::string& locusId = locusSpec.locusId();
 
@@ -258,17 +259,23 @@ std::optional<ReviewerContext> runReviewerWorkflow(
     auto fragAssignment = getBestFragAssignment(topDiplotype, fragPathAlignsById, rng);
     spdlog::debug("REViewer workflow: Assigned {} fragments", fragAssignment.fragIds.size());
 
-    // Build consensus sequences from anchor reads using the same alignment selection as visualization
-    auto consensusResult = buildConsensusFromAnchors(topDiplotype, fragById, fragPathAlignsById, fragAssignment);
-    spdlog::debug("REViewer workflow: Built consensus from {} anchors ({} total fragments)",
-                  consensusResult.totalAnchors, consensusResult.totalFragments);
-
-    // Log per-allele consensus details
-    for (size_t i = 0; i < consensusResult.alleleConsensuses.size(); ++i)
+    // Build consensus sequences from anchor reads using the same alignment selection as visualization.
+    // Skipped (leaving an empty ConsensusResult) when consensus output is disabled via
+    // --dont-output-consensus-sequences, since SVG visualization does not depend on the consensus.
+    ConsensusResult consensusResult;
+    if (buildConsensus)
     {
-        const auto& allele = consensusResult.alleleConsensuses[i];
-        spdlog::debug("REViewer workflow: Allele {} consensus: {} bp repeat, {} known positions, {} anchor reads",
-                      i, allele.repeatLength, allele.knownPositions(), allele.anchorReadCount);
+        consensusResult = buildConsensusFromAnchors(topDiplotype, fragById, fragPathAlignsById, fragAssignment);
+        spdlog::debug("REViewer workflow: Built consensus from {} anchors ({} total fragments)",
+                      consensusResult.totalAnchors, consensusResult.totalFragments);
+
+        // Log per-allele consensus details
+        for (size_t i = 0; i < consensusResult.alleleConsensuses.size(); ++i)
+        {
+            const auto& allele = consensusResult.alleleConsensuses[i];
+            spdlog::debug("REViewer workflow: Allele {} consensus: {} bp repeat, {} known positions, {} anchor reads",
+                          i, allele.repeatLength, allele.knownPositions(), allele.anchorReadCount);
+        }
     }
 
     return ReviewerContext(

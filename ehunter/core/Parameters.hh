@@ -204,10 +204,12 @@ public:
         size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
-        bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false)
+        bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
+        bool initEnableConsensusSequences = true)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
+        , enableConsensusSequences_(initEnableConsensusSequences)
         , copyCatalogFields_(initCopyCatalogFields)
         , skipHomRef_(initSkipHomRef)
         , skipMissingGenotypes_(initSkipMissingGenotypes)
@@ -247,6 +249,7 @@ public:
     bool cacheMates() const { return cacheMates_; }
     bool copyCatalogFields() const { return copyCatalogFields_; }
     bool enableAlleleQualityMetrics() const { return enableAlleleQualityMetrics_; }
+    bool enableConsensusSequences() const { return enableConsensusSequences_; }
     bool skipHomRef() const { return skipHomRef_; }
     bool skipMissingGenotypes() const { return skipMissingGenotypes_; }
     bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
@@ -256,6 +259,7 @@ public:
 
 private:
     bool enableAlleleQualityMetrics_;
+    bool enableConsensusSequences_;
     bool copyCatalogFields_;
     bool skipHomRef_;
     bool skipMissingGenotypes_;

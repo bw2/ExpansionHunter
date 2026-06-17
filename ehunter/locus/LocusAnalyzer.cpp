@@ -44,9 +44,10 @@ namespace locus
 {
 
 LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, BamletWriterPtr writer,
-                             bool enableAlleleQualityMetrics)
+                             bool enableAlleleQualityMetrics, bool enableConsensusSequences)
     : locusSpec_(std::move(locusSpec))
     , enableAlleleQualityMetrics_(enableAlleleQualityMetrics)
+    , enableConsensusSequences_(enableConsensusSequences)
     // Create buffer if requiresAlignmentBuffer() (RFC1, plot-all policy, or has plot conditions)
     // or if allele quality metrics are enabled
     , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics)
@@ -235,7 +236,8 @@ LocusFindings LocusAnalyzer::analyze(
         try
         {
             reviewerContext = reviewer::runReviewerWorkflow(
-                locusSpec_, *alignmentBuffer_, locusFindings, locusFindings.stats.meanFragLength());
+                locusSpec_, *alignmentBuffer_, locusFindings, locusFindings.stats.meanFragLength(),
+                enableConsensusSequences_);
         }
         catch (const std::exception& e)
         {

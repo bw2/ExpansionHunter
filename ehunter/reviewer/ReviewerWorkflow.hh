@@ -80,12 +80,15 @@ bool shouldPlotReadVisualization(
 /// @param alignmentBuffer Paired fragment alignments
 /// @param findings Genotype results
 /// @param meanFragLen Mean fragment length
+/// @param buildConsensus Whether to build consensus allele sequences (skipped to save compute when
+///        consensus output is disabled via --dont-output-consensus-sequences)
 /// @return ReviewerContext if successful, empty optional if workflow fails
 std::optional<ReviewerContext> runReviewerWorkflow(
     const LocusSpecification& locusSpec,
     const locus::AlignmentBuffer& alignmentBuffer,
     const LocusFindings& findings,
-    int meanFragLen);
+    int meanFragLen,
+    bool buildConsensus = true);
 
 }  // namespace reviewer
 }  // namespace ehunter

@@ -78,6 +78,7 @@ struct UserParameters
     bool enableBamletOutput = false;
     bool cacheMates = false;
     bool disableQualityMetrics = false;
+    bool disableConsensusSequences = false;
     bool copyCatalogFields = false;
     bool skipHomRef = false;
     bool skipMissingGenotypes = false;
@@ -123,7 +124,8 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
-        ("disable-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
+        ("dont-output-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
+        ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
         ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
     ;
@@ -520,7 +522,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
-        userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly);
+        userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences);
 }
 
 }

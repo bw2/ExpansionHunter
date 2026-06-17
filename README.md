@@ -15,7 +15,7 @@ This modified version of ExpansionHunter introduces the following new features:
 - **Consensus allele sequences**: Consensus nucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidently-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidently-placed reads are reported as N's (see [Consensus Sequences docs](docs/05_OutputJsonFiles.md#consensus-sequences)).
 - **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md)).
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
-  - `--disable-quality-metrics` disables quality metrics computation if not needed
+  - `--dont-output-quality-metrics` disables quality metrics computation if not needed
 - **Misc. new convenience features and options**:
   - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
   - `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog

@@ -233,7 +233,8 @@ SampleFindings htsStreamingSampleAnalysis(
     graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
     locusAnalyzerThreadSharedData.locusAnalyzers
         = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount,
-                                   programParams.enableAlleleQualityMetrics());
+                                   programParams.enableAlleleQualityMetrics(),
+                                   programParams.enableConsensusSequences());
     GenomeQueryCollection genomeQuery(locusAnalyzerThreadSharedData.locusAnalyzers);
 
     spdlog::info("Streaming reads");

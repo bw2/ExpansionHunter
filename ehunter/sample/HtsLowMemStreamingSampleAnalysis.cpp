@@ -195,7 +195,7 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         // graph-bearing LocusSpecification across the thread boundary. The constructor already
         // std::move's its by-value parameter.
         out.analyzer = std::make_shared<LocusAnalyzer>(std::move(locusSpec), params.heuristics(), bamletWriter,
-                                    params.enableAlleleQualityMetrics());
+                                    params.enableAlleleQualityMetrics(), params.enableConsensusSequences());
         // Route each cached read pair to the analyzer the same way seeking and streaming modes do via
         // AnalyzerFinder::query (sample/AnalyzerFinder.cpp). When the two ends are nearby but only ONE of
         // them is contained in the locus's target extraction region, that pair is processed single-ended,

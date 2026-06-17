@@ -50,7 +50,7 @@ optional arguments.
   `streaming`, `low-mem-streaming`, or `optimized-streaming`. The default mode
   is `seeking`. See further description of analysis modes below.
 
-* `--disable-quality-metrics` Disable per-allele quality metrics computation. By
+* `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
   etc.) for each allele and outputs them in the JSON file. Use this flag to skip
   this computation if the metrics are not needed.

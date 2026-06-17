@@ -62,7 +62,7 @@ public:
     using Node = graphtools::NodeId;
 
     LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, BamletWriterPtr writer,
-                  bool enableAlleleQualityMetrics = true);
+                  bool enableAlleleQualityMetrics = true, bool enableConsensusSequences = true);
 
     const std::string& locusId() const { return locusSpec_.locusId(); }
     const LocusSpecification& locusSpec() const { return locusSpec_; }
@@ -86,8 +86,11 @@ private:
 
     LocusSpecification locusSpec_;
 
-    // Whether to compute allele quality metrics (controlled by --disable-quality-metrics flag)
+    // Whether to compute allele quality metrics (controlled by --dont-output-quality-metrics flag)
     bool enableAlleleQualityMetrics_;
+
+    // Whether to build consensus allele sequences (controlled by --dont-output-consensus-sequences flag)
+    bool enableConsensusSequences_;
 
     // Read alignments are optionally buffered for custom additional analysis at certain loci
     std::shared_ptr<locus::AlignmentBuffer> alignmentBuffer_;
