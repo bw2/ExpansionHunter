@@ -16,7 +16,7 @@ programmatically. Here is a template with the names of the required parameters.
 ```bash
 ExpansionHunter --reads <aligned reads BAM/CRAM file/URL> \
                 --reference <reference genome FASTA file> \
-                --variant-catalog <JSON file specifying variants to genotype> \
+                --catalog <JSON file specifying variants to genotype> \
                 --output-prefix <Prefix for the output files>
 ```
 

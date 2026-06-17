@@ -421,7 +421,7 @@ void doTheAnalysis(
     graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
 
     // Parallel genotyping is enabled only for low-mem-streaming with >1 thread. optimized-streaming (which
-    // also uses processLocusFast / --heuristic-genotyping-only) and single-thread runs keep the serial
+    // also uses processLocusFast / --quick-heuristic-genotyping-only) and single-thread runs keep the serial
     // path below. That path is structurally unchanged (same counters and catalog-ordered output), but it
     // now genotypes via genotypeLocusFull, which copies each Read before processMates instead of passing
     // the shared FullReadPair members by reference. Since align() mutates a Read in place (reverseComplement)

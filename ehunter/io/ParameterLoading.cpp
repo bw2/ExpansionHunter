@@ -127,7 +127,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("dont-output-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
         ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
-        ("heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
+        ("quick-heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, skip full genotyping and output placeholder for complex loci")
     ;
     // clang-format on
 

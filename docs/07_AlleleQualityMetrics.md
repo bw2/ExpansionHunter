@@ -11,7 +11,7 @@ Quality metrics are **enabled by default**. To disable them:
 ```bash
 ExpansionHunter --reads input.bam \
                 --reference ref.fa \
-                --variant-catalog catalog.json \
+                --catalog catalog.json \
                 --output-prefix output \
                 --dont-output-quality-metrics
 ```

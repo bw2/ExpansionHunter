@@ -7,12 +7,14 @@ This modified version of ExpansionHunter introduces the following new features:
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory.
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by uses simple heuristics to detect which loci are almost certainly homozygous reference, and avoids running the full computationally-expensive genotyping algorithm on them. Its memory usage is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
+    - `--quick-heuristic-genotyping-only` makes `optimized-streaming` mode even faster by skipping full genotyping entirely and outputting a placeholder genotype for the complex loci that the heuristics could not resolve
   - `June 11, 2026`: these two new modes now more fully support multi-threading via `--threads N`
 - **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md)).
   - `--plot-all` generates read visualizations for every locus
   - `--disable-all-plots` disables all image generation (overrides catalog settings)
   - `PlotReadVisualization` field in the variant catalog enables conditional image generation based on genotype thresholds (e.g., only visualize when long allele >= 400 repeats)
 - **Consensus allele sequences**: Consensus nucleotide sequences are now reported for each allele. This is a simplistic first implementation that just collapses confidently-placed (ie. darker-colored) reads within the REViewer visualization and takes the most common base at each position. Insertions and deletions within the reads are not incorporated into the consensus sequence. Also, any positions not covered by confidently-placed reads are reported as N's (see [Consensus Sequences docs](docs/05_OutputJsonFiles.md#consensus-sequences)).
+  - `--dont-output-consensus-sequences` disables consensus sequence computation if not needed
 - **Per-allele quality metrics**: New `AlleleQualityMetrics` in JSON output provides detailed quality information for each allele (see [AlleleQualityMetrics docs](docs/07_AlleleQualityMetrics.md)).
   - Metrics include QD (quality by depth), strand bias, flank depth, insertion/deletion rates, and more
   - `--dont-output-quality-metrics` disables quality metrics computation if not needed
@@ -24,6 +26,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
   - `--skip-missing-genotypes` skips output of loci with missing genotypes (eg. due to low coverage)
   - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
+  - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus, useful for inspecting evidence in a genome browser
 - **`--reads-index` option**: explicitly specify the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
 - **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  

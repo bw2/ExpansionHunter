@@ -110,6 +110,10 @@ Example:
 "ConsensusSequencesReadSupport": ["555566", "888877763333333333333333300022"]
 ```
 
+Consensus sequence computation can be disabled with the `--dont-output-consensus-sequences`
+flag, which omits the `ConsensusSequences` and `ConsensusSequencesReadSupport` fields from the
+JSON output.
+
 ## Catalog field passthrough
 
 When `--copy-catalog-fields` is used, any extra fields from the input variant
