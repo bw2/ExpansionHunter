@@ -124,16 +124,6 @@ bool doesAcontainB(int32_t contigIdA, int64_t startA, int64_t endA, int32_t cont
     return false;
 }
 
-bool doesAoverlapB(int32_t contigIdA, int64_t startA, int64_t endA, int32_t contigIdB, int64_t startB, int64_t endB) {
-    if (contigIdA != contigIdB) {
-        return false;
-    }
-    if (startA <= endB && endA >= startB) {
-        return true;
-    }
-    return false;
-}
-
 bool intervalsOverlap(int start1, int end1, int start2, int end2) {
     return end1 >= start2 && start1 <= end2;
 }

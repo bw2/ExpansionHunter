@@ -83,24 +83,6 @@ namespace ehunter
 {
 
 
-std::chrono::system_clock::rep microsecondsSinceEpoch() {
-    auto now = std::chrono::system_clock::now().time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-}
-
-
-bool readOverlapsRepeat(const int32_t& contigId, const int64_t& readStart, const int64_t& readEnd, const LocusDescription& locusDescription) {
-    if (contigId != locusDescription.locusContigIndex()) {
-        return false;
-    }
-
-    //  read  |-----|
-    //          |-----|
-
-    return readStart <= locusDescription.locusWithoutFlanksEnd() && readEnd >= locusDescription.locusWithoutFlanksStart();
-}
-
-
 FullRead decodeRead(const htshelpers::HtsFileStreamer& readStreamer) {
     // fully parse the current read
     LinearAlignmentStats readAlignmentStats;

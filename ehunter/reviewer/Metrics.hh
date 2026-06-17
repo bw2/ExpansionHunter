@@ -54,8 +54,8 @@ struct Metrics
     std::string variantId = "NA";
     std::vector<int> genotype;
     std::vector<double> alleleDepth;
-    // QD: sum of read quality divided by allele depth, per haplotype
-    // If alleleDepth is zero, QD is 0.0
+    // QD: mean per-read alignment quality (sum of per-read quality / number of reads overlapping the repeat),
+    // per haplotype. 0.0 when no reads overlap the repeat.
     std::vector<double> qd;
     // Mean inserted bases in the repeat region per read, per haplotype
     // If readCount is zero, meanInsertedBasesWithinRepeats is 0.0
