@@ -58,8 +58,10 @@ struct AlleleMetrics
     // Count of high-quality reads that unambiguously support this allele
     int highQualityUnambiguousReads = 0;
 
-    // Confidence interval width divided by allele size
-    // Formula: (CI_upper - CI_lower) / AlleleSize
+    // Confidence interval width divided by (allele size + 1)
+    // Formula: (CI_upper - CI_lower) / (AlleleSize + 1)
+    // The +1 (Laplace pseudo-count) keeps this defined at AlleleSize==0 and matches
+    // the calibrator's ci_over_eh = ci_width / (eh + 1).
     double confidenceIntervalDividedByAlleleSize = 0.0;
 };
 

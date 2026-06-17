@@ -349,12 +349,11 @@ LocusFindings LocusAnalyzer::analyze(
                                 totalReverseReads += metrics.reverseStrandReads[i];
                             }
                             allele.strandBiasBinomialPhred = reviewer::computeStrandBiasBinomialPhred(totalForwardReads, totalReverseReads);
-                            // Compute confidenceIntervalDividedByAlleleSize for homozygous case
+                            // Compute confidenceIntervalDividedByAlleleSize for homozygous case.
+                            // Denominator is AlleleSize+1 (Laplace pseudo-count): always defined even at
+                            // AlleleSize==0, and matches the calibrator's ci_over_eh = ci_width/(eh+1).
                             const auto ci = genotype.shortAlleleSizeInUnitsCi();
-                            if (allele.alleleSize > 0)
-                            {
-                                allele.confidenceIntervalDividedByAlleleSize = static_cast<double>(ci.end() - ci.start()) / allele.alleleSize;
-                            }
+                            allele.confidenceIntervalDividedByAlleleSize = static_cast<double>(ci.end() - ci.start()) / (allele.alleleSize + 1);
                             alleleQualityMetrics.alleles.push_back(allele);
                         }
                         else
@@ -440,11 +439,9 @@ LocusFindings LocusAnalyzer::analyze(
                                     allele.strandBiasBinomialPhred = metrics.strandBiasBinomialPhred[i];
                                 }
                                 // Match CI to the short/long allele picked above.
+                                // Denominator is AlleleSize+1 (Laplace pseudo-count) to match ci_over_eh = ci_width/(eh+1).
                                 const auto ci = isShortAllele ? genotype.shortAlleleSizeInUnitsCi() : genotype.longAlleleSizeInUnitsCi();
-                                if (allele.alleleSize > 0)
-                                {
-                                    allele.confidenceIntervalDividedByAlleleSize = static_cast<double>(ci.end() - ci.start()) / allele.alleleSize;
-                                }
+                                allele.confidenceIntervalDividedByAlleleSize = static_cast<double>(ci.end() - ci.start()) / (allele.alleleSize + 1);
                                 alleleQualityMetrics.alleles.push_back(allele);
                             }
                         }

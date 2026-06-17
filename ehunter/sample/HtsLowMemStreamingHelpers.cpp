@@ -748,10 +748,10 @@ bool processLocusFast(
 				allele.meanDeletedBasesWithinRepeats = static_cast<double>(deletedBases) / depth;
 				countsOfHighQualityUnambiguousReads.setCountOf(alleleUnits, depth);
 			}
-			if (alleleUnits > 0) {
-				allele.confidenceIntervalDividedByAlleleSize =
-					static_cast<double>(ci.end() - ci.start()) / alleleUnits;
-			}
+			// Denominator is AlleleSize+1 (Laplace pseudo-count): always defined even at
+			// alleleUnits==0, and matches the calibrator's ci_over_eh = ci_width/(eh+1).
+			allele.confidenceIntervalDividedByAlleleSize =
+				static_cast<double>(ci.end() - ci.start()) / (alleleUnits + 1);
 			qualityMetrics.alleles.push_back(allele);
 		};
 		if (isHet) {
