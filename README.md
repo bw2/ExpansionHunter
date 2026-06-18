@@ -3,7 +3,6 @@
 ### ExpansionHunter fork - under active development
 
 This modified version of ExpansionHunter introduces the following new features:
-- **Converts N chars error to warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory (< 10Gb).
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by using simple heuristics to detect which loci can be confidently genotyped using only spanning reads, and then quickly computing their genotypes without running the full computationally-expensive ExpansionHunter genotyping algorithm. Since any given individual in the population will have no more than ~5k to 10k large expansions relative to the reference genome (see [[Weisburd 2023](https://pubmed.ncbi.nlm.nih.gov/37214979/)]), while genome-wide catalogs can have hundreds of thousands or millions of TR loci, this quick heuristic-based genotyping can be used for the majority of loci, yielding a 3x or more speedup depending on the catalog. The memory usage of this mode is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
@@ -19,22 +18,23 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--dont-output-quality-metrics` disables quality metrics computation if not needed
 - **Misc. new convenience features and options**:
   - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
+  - **Converts N chars error to a warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
   - `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
-  - `--locus` for filtering the input catalog to specific LocusId(s) 
+  - `--locus` for filtering the input catalog to specific LocusId(s)
+  - `--reads-index` explicitly specifies the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
   - `--region` for filtering the input catalog to a specific genomic region
   - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
   - `--skip-missing-genotypes` skips output of loci with missing genotypes (eg. due to low coverage)
   - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
   - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus
-  - `--quick-heuristic-genotyping-only` modifies `optimized-streaming` mode so that it only genotypes loci that can be confidently genotyped using spanning reads, while skipping full genotyping completely. Provided mainly for benchmarking or debugging purposes. 
-- **`--reads-index` option**: explicitly specify the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
+  - `--quick-heuristic-genotyping-only` modifies `optimized-streaming` mode so that it only genotypes loci that can be confidently genotyped using spanning reads, while skipping full genotyping completely. Provided mainly for benchmarking or debugging purposes.
+  - `--cache-mates` enables a cross-locus read cache in `seeking` analysis mode to make it run faster on catalogs where many loci have the same motif (eg. if you have a catalog of only/mostly `CGG` and `CCG` repeats). Since in-repeat reads from all these loci will typically mismap to the same few places in the genome, caching the reads in-memory can subsantially reduce disk access latency. For large catalogs (> 10k loci), it is still better to use `low-mem-streaming` or `optimized-streaming`. 
 - **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  
     `export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`
   - for access to requester-pays buckets, also set environment variable  
     `export GCS_REQUESTER_PAYS_PROJECT=<your gcloud project>`
-- **Cache to speed up seeking mode**: `--cache-mates` option makes `--analysis-mode seeking` run 2x to 3x faster without changing the output
-  - for large catalogs, it is better to use the new "low-mem-streaming" analysis mode. However, if you do want to split a larger variant catalog into multiple shards and then process them using "seeking" mode with `--cache-mates`, it's important to presort the catalog by normalized motif (the alphabetically-first cyclic shift of a motif - ie. AGC rather than CAG). This ensures that loci with the same motif will be processed in the same shard, increasing cache hit rates and therefore speed due to this optimization.
+
 
 Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.
 
