@@ -7,7 +7,6 @@ This modified version of ExpansionHunter introduces the following new features:
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory (< 10Gb).
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by using simple heuristics to detect which loci can be confidently genotyped using only spanning reads, and then quickly computing their genotypes without running the full computationally-expensive ExpansionHunter genotyping algorithm. Since any given individual in the population will have no more than ~5k to 10k large expansions relative to the reference genome (see [[Weisburd 2023](https://pubmed.ncbi.nlm.nih.gov/37214979/)]), while genome-wide catalogs can have hundreds of thousands or millions of TR loci, this quick heuristic-based genotyping can be used for the majority of loci, yielding a 3x or more speedup depending on the catalog. The memory usage of this mode is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
-    - `--quick-heuristic-genotyping-only` makes `optimized-streaming` mode even faster by genotyping only loci that can be resolved using spanning-read heuristics. It skips full genotyping for larger or more complex alleles that cannot be confidently resolved from spanning reads alone.
   - `June 11, 2026`: these two new modes now more fully support multi-threading via `--threads N`
 - **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md)).
   - `--plot-all` generates read visualizations for every locus
@@ -27,6 +26,7 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--skip-missing-genotypes` skips output of loci with missing genotypes (eg. due to low coverage)
   - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
   - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus
+  - `--quick-heuristic-genotyping-only` modifies `optimized-streaming` mode so that it only genotypes loci that can be confidently genotyped using spanning reads, while skipping full genotyping completely. Provided mainly for benchmarking or debugging purposes. 
 - **`--reads-index` option**: explicitly specify the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
 - **Input BAM or FASTA can be read directly from cloud buckets**: allows direct access to remote BAM/CRAM or reference FASTA files in Google Cloud Storage or S3 via functionality provided by htslib 
   - for access to private buckets, set environment variable:  
