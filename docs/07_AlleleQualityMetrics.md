@@ -18,9 +18,12 @@ ExpansionHunter --reads input.bam \
 
 ## Output Structure
 
-The `AlleleQualityMetrics` field appears within each repeat variant record in the
-JSON output. For heterozygous calls, there are two entries in the `Alleles` array;
-for homozygous or hemizygous calls, there is one entry.
+The `AlleleQualityMetrics` field appears within a repeat variant record in the
+JSON output when the metrics could be computed for that variant. It is absent when
+the read-realignment workflow that produces the metrics did not run for the locus
+— for example loci that also contain a `SmallVariant`, no-call records, or runs with `--dont-output-quality-metrics`. For
+heterozygous calls, there are two entries in the `Alleles` array; for homozygous
+or hemizygous calls, there is one entry.
 
 ```json
 "AlleleQualityMetrics": {
@@ -70,8 +73,9 @@ fields below is **not** identical to a full-genotyper call:
   `HighQualityUnambiguousReads` is just the per-allele spanning-read depth on the
   fast path.
 
-Full-genotyper calls (those where the `QuickGenotype: true` field is absent)
-always carry the complete set of fields described below.
+When present, full-genotyper records (those where the `QuickGenotype: true` field
+is absent) carry the complete set of fields described below; fast-path records omit
+these fields.
 
 ## Metric Definitions
 
@@ -87,21 +91,21 @@ Size of the allele in repeat units, matching the value in `Genotype`.
 
 ### Depth
 
-Allele-specific read depth: the count of reads supporting this allele. This is
-derived from the same read assignment used for genotyping.
+Allele-specific read depth at the repeat: the number of read bases
+matched to the repeat node divided by the allele's length in base pairs.
 
 ### QD (Quality by Depth)
 
-The sum of read quality scores divided by allele depth.
+The mean per-read alignment quality over the reads overlapping the repeat.
 
-**Formula:** `QD = sum(readQuality) / Depth`
+**Formula:** `QD = sum(readQuality) / numReadsOverlappingRepeat`
 
-Where `readQuality` for each read is computed as:
-`readQuality = matchedBases / totalBases`
+Where `readQuality` for each read is `matchedBases / totalBases`, and the
+denominator is the number of reads overlapping the repeat node.
 
 A value close to 1.0 indicates high-quality alignments with few mismatches,
 insertions, or deletions. Lower values may indicate mapping issues or sequence
-errors.
+errors. `QD` is not emitted on fast-path (`QuickGenotype`) calls.
 
 ### MeanInsertedBasesWithinRepeats
 

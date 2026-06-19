@@ -102,7 +102,7 @@ vector<double> getTopFragLogliks(FragLogliks& loglikCalc, const unordered_set<in
 
 RepeatGenotype genotype(
     AlleleCount alleleCount, int motifLen, int readLen, int fragLen, AlignMatrix& alignMatrix,
-    bool useImprovedGenotyping)
+    bool isOptimizedStreamingMode)
 {
     filter(alignMatrix);
     FragLogliks fragLoglikCalc(motifLen, readLen, fragLen, &alignMatrix);
@@ -112,7 +112,7 @@ RepeatGenotype genotype(
     if (alleleCount == AlleleCount::kTwo)
     {
         TwoAlleleGenotyper genotyper(
-            motifLen, fragLen, readLen, std::move(topFragLogliks), &fragLoglikCalc, useImprovedGenotyping);
+            motifLen, fragLen, readLen, std::move(topFragLogliks), &fragLoglikCalc, isOptimizedStreamingMode);
         return genotyper.genotype(candidateAlleleSizes);
     }
     else

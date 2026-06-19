@@ -73,9 +73,13 @@ public:
     uint64_t extractedMatesCounter() const { return extractedTotalCounter_; }
     uint64_t extractedMatesFromDiskCounter() const { return extractedFromDiskCounter_; }
 
-    // Moves localCache_ into a heap-allocated immutable cache and returns it so a serial prep pass can build the
-    // cache and then share it read-only across multiple worker MateExtractors. After the move localCache_ is empty.
-    std::shared_ptr<const MateCache> freezeAndShareCache();
+    // Splices the localCache_ shards of several per-thread builder MateExtractors into one immutable cache and
+    // returns it, so a chromosome-stride parallel prep pass can build private shards and then share the union
+    // read-only. The shards must be key-disjoint — guaranteed when each read's single primary alignment is
+    // streamed by exactly one stride worker — so a duplicate key across shards throws std::logic_error (kept
+    // live as defense-in-depth against duplicate primary alignments). Runs on the main thread AFTER all builder
+    // threads have joined; each shard's storage is released as it is spliced (so peak RAM is ~union, not 2x).
+    static std::shared_ptr<const MateCache> mergeAndFreeze(const std::vector<MateExtractor*>& shards);
 
 private:
     void openFile();

@@ -40,13 +40,13 @@ class TwoAlleleGenotyper
 public:
     TwoAlleleGenotyper(
         int motifLen, int fragLen, int readLen, std::vector<double> topFragLogliks, FragLogliks* fragLogliksPtr,
-        bool useImprovedGenotyping = false)
+        bool isOptimizedStreamingMode = false)
         : motifLen_(motifLen)
         , fragLen_(fragLen)
         , readLen_(readLen)
         , topFragLogliks_(std::move(topFragLogliks))
         , fragLogliks_(*fragLogliksPtr)
-        , useImprovedGenotyping_(useImprovedGenotyping)
+        , isOptimizedStreamingMode_(isOptimizedStreamingMode)
     {
     }
 
@@ -64,7 +64,7 @@ private:
     int readLen_;
     std::vector<double> topFragLogliks_;
     FragLogliks& fragLogliks_;
-    bool useImprovedGenotyping_;
+    bool isOptimizedStreamingMode_;
 };
 
 }

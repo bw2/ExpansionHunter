@@ -34,7 +34,9 @@ struct AlleleMetrics
     int alleleNumber = 0;  // 1-based: 1 for short/only allele, 2 for long allele in het calls
     int alleleSize = 0;
 
-    // DP: allele-specific depth (count of reads supporting this allele)
+    // DP: allele-specific depth — a base-level coverage estimate (matched repeat bases / allele length in bp),
+    // computed the same way in both the full and fast-path genotypers, so it is a (often fractional) coverage
+    // value, not an integer read count.
     double depth = 0.0;
 
     // QD: read quality / depth (average read quality for allele-supporting reads)

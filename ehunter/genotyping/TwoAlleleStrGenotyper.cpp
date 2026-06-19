@@ -201,8 +201,8 @@ double TwoAlleleGenotyper::getShortAndLongAlleleLoglik(int shortAlleleSize, int 
     // "small-allele lean"), while loci whose alleles are both shorter than a read remain numerically identical
     // to the default model. Empirically (HG002 truth set) this improves large-allele genotype accuracy with no
     // regression on shorter alleles.
-    const int shortTract = useImprovedGenotyping_ ? std::min(shortAlleleSize * motifLen_, readLen_) : shortAlleleSize * motifLen_;
-    const int longTract = useImprovedGenotyping_ ? std::min(longAlleleSize * motifLen_, readLen_) : longAlleleSize * motifLen_;
+    const int shortTract = isOptimizedStreamingMode_ ? std::min(shortAlleleSize * motifLen_, readLen_) : shortAlleleSize * motifLen_;
+    const int longTract = isOptimizedStreamingMode_ ? std::min(longAlleleSize * motifLen_, readLen_) : longAlleleSize * motifLen_;
     const int shortAlleleLen = shortTract + fragLen_ + 1;
     const int longAlleleLen = longTract + fragLen_ + 1;
     const double shortAlleleFrac = static_cast<double>(shortAlleleLen) / (shortAlleleLen + longAlleleLen);

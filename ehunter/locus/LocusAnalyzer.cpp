@@ -49,8 +49,10 @@ LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParame
     , enableAlleleQualityMetrics_(enableAlleleQualityMetrics)
     , enableConsensusSequences_(enableConsensusSequences)
     // Create buffer if requiresAlignmentBuffer() (RFC1, plot-all policy, or has plot conditions)
-    // or if allele quality metrics are enabled
-    , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics)
+    // or if allele quality metrics or consensus sequences are enabled (both run via the reviewer
+    // workflow, which needs the buffer). Keep these independent so e.g. --dont-output-quality-metrics
+    // does not also suppress consensus output.
+    , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics || enableConsensusSequences)
                        ? std::make_shared<locus::AlignmentBuffer>() : nullptr)
     , aligner_(locusSpec_.locusId(), &locusSpec_.regionGraph(), params, std::move(writer), alignmentBuffer_)
     , statsCalc_(locusSpec_.typeOfChromLocusLocatedOn(), locusSpec_.regionGraph())
@@ -210,7 +212,8 @@ LocusFindings LocusAnalyzer::analyze(
     // Run REViewer workflow once if alignment buffer exists (for metrics and/or SVG)
     std::optional<reviewer::ReviewerContext> reviewerContext;
     const bool needsReviewer = alignmentBuffer_ &&
-        (reviewer::shouldPlotReadVisualization(locusSpec_, locusFindings) || (enableAlleleQualityMetrics_ && alignmentBuffer_->getBuffer().size() > 0));
+        (reviewer::shouldPlotReadVisualization(locusSpec_, locusFindings)
+         || ((enableAlleleQualityMetrics_ || enableConsensusSequences_) && alignmentBuffer_->getBuffer().size() > 0));
 
     // The reviewer workflow's path-construction step (getCandidateDiplotypes) throws if any of the
     // locus's variant specs is a SmallVariant. Bail out early with an info-level message so the

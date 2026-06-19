@@ -169,25 +169,16 @@ int main(int argc, char** argv)
 
         const HeuristicParameters& heuristicParams = params.heuristics();
         const OutputPaths& outputPaths = params.outputPaths();
-        if (params.analysisMode() == AnalysisMode::kLowMemStreaming || params.analysisMode() == AnalysisMode::kOptimizedStreaming
-            || params.analysisMode() == AnalysisMode::kRegionParallelStreaming)
+        if (params.analysisMode() == AnalysisMode::kLowMemStreaming
+            || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
         {
-            const char* modeName = params.analysisMode() == AnalysisMode::kOptimizedStreaming
-                ? "optimized-streaming"
-                : params.analysisMode() == AnalysisMode::kRegionParallelStreaming ? "region-parallel-streaming"
-                                                                                  : "low-mem-streaming";
+            const char* modeName = params.analysisMode() == AnalysisMode::kOptimizedStreaming ? "optimized-streaming"
+                                                                                              : "low-mem-streaming";
             spdlog::info("Running sample analysis in {} mode", modeName);
             BamletWriterPtr bamletWriter = params.enableBamletOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
                 : std::make_shared<BamletWriter>();
-            if (params.analysisMode() == AnalysisMode::kRegionParallelStreaming)
-            {
-                htsRegionParallelStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
-            }
-            else
-            {
-                htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
-            }
+            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
             bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
             return 0;
         }

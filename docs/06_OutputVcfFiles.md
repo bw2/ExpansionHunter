@@ -26,6 +26,6 @@ reads (`SPANNING`) while the length of the expanded allele was estimated from
 in-repeat reads (`INREPEAT`). The confidence interval for the size of the
 expanded allele is (323,376). There are 19 spanning and 3 flanking reads
 consistent with the repeat allele of size 2 (that is 19 reads fully contain the
-repeat of size 2 and 2 flanking reads overlap at most 2 repeat units). Also,
+repeat of size 2 and 3 flanking reads overlap at most 2 repeat units). Also,
 there are 6 flanking and 459 in-repeat reads consistent with the repeat allele
 of size 349.

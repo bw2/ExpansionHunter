@@ -36,7 +36,7 @@ std::unordered_set<int> getAlleleCandidates(int readLen, int motifLen, const Ali
 
 RepeatGenotype genotype(
     AlleleCount alleleCount, int motifLen, int readLen, int fragLen, AlignMatrix& alignMatrix,
-    bool useImprovedGenotyping = false);
+    bool isOptimizedStreamingMode = false);
 
 }
 }

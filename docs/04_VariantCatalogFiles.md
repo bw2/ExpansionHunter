@@ -90,10 +90,10 @@ The final entry describes a repeat region containing multiple short tandem
 repeats in close proximity to each other. The regular expression
 `(CAG)*CAACAG(CCG)*` specifies that this region consists of two short tandem
 repeats with repeat units CAG and CCG separated by the sequence CAACAG.
-Fields `ReferenceRegion` and `VariantStatus` contain reference region and status
-of each constituent repeat. By default, the program assigns an identifier to
+Fields `ReferenceRegion` and `VariantType` contain the reference region and
+variant type of each constituent repeat. By default, the program assigns an identifier to
 each variant consisting of the locus id and reference region. So the two repeats
-receive ids HTT_4:3076603-3076660 and HTT_4:3076666-3076693 respectively. An
+receive ids HTT_4:3076604-3076660 and HTT_4:3076666-3076693 respectively. An
 optional field `VariantId` allows to assign custom variant ids to each
 variant.
 
@@ -110,7 +110,7 @@ itself.
 * `LocusId` Unique identifier of the entire locus
 
 * `LocusStructure` Regular expression defining the structure of the locus. When
-  the locus contains multiple variants, ReferenceRegion and VariantStatus are
+  the locus contains multiple variants, ReferenceRegion and VariantType are
   arrays with associated information for each variant in the same order.
 
 * `ReferenceRegion` 0-based half open reference coordinates of the variant

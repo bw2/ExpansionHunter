@@ -128,8 +128,29 @@ void MateExtractor::addMateToCache(const ReadId& mateReadId, FullRead mate) {
     localCache_.emplace(mateReadId, std::move(mate));
 }
 
-std::shared_ptr<const MateCache> MateExtractor::freezeAndShareCache() {
-    return std::make_shared<const MateCache>(std::move(localCache_));
+std::shared_ptr<const MateCache> MateExtractor::mergeAndFreeze(const std::vector<MateExtractor*>& shards) {
+    std::size_t totalSize = 0;
+    for (const MateExtractor* shard : shards) {
+        totalSize += shard->localCache_.size();
+    }
+
+    MateCache merged;
+    merged.reserve(totalSize);
+    for (MateExtractor* shard : shards) {
+        MateCache& shardCache = shard->localCache_;
+        for (auto it = shardCache.begin(); it != shardCache.end();) {
+            const auto next = std::next(it);
+            if (merged.find(it->first) != merged.end()) {
+                throw std::logic_error("Mate cache shards both contain mate with id " + it->first.fragmentId()
+                    + " (mate number " + std::to_string(static_cast<int>(it->first.mateNumber())) + ")");
+            }
+            merged.insert(shardCache.extract(it));  // node splice: no value copy / no rehash of values
+            it = next;
+        }
+        MateCache().swap(shardCache);  // release this shard's bucket storage now to bound peak RAM
+    }
+
+    return std::make_shared<const MateCache>(std::move(merged));
 }
 
 boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, const GenomicRegion& genomicRegion) {

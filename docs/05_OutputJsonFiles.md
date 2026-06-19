@@ -30,9 +30,11 @@ Repeat records contain the following fields.
   `QuickGenotype` variants the allele quality metrics are approximations and some
   are omitted — see
   [AlleleQualityMetrics](07_AlleleQualityMetrics.md#fast-path-quickgenotype-rows).
-* `CountsOfSpanningReads` Summary of identified spanning reads given as an
-   array with entries `(n, m)` where `n` is the number of repeat units spanned
-   by the spanning read and `m` is the number of such reads
+* `CountsOfSpanningReads` Summary of identified spanning reads given as a JSON
+   string containing comma-separated `(n, m)` entries where `n` is the number of
+   repeat units spanned by the spanning read and `m` is the number of such reads
+   (for example `"(15, 3), (16, 9)"`; an empty summary is the string `"()"`).
+   Note this is a string, not a JSON array.
 * `CountsOfFlankingReads` An analog of `CountsOfSpanningReads` for flanking
   reads
 * `CountsOfInrepeatReads` An analog of `CountsOfSpanningReads` for in-repeat
@@ -56,13 +58,16 @@ Repeat records contain the following fields.
 Records for small variants contain the following fields.
 * `VariantId` Unique variant identifier
 * `VariantType` Always set to "SmallVariant"
-* `VariantSubtype` Either "Insertion", "Deletion", or "Swap" 
-* `RepeatUnit` Repeat unit in the reference orientation
-* `Genotype` Formed, as usual, from `0`s and `1`s corresponding to ref and alt
-  alleles
-* `CountOfAltReads` Number of reads supporting the alt allele
-* `CountOfRefReads` Number of reads supporting the ref allele
+* `VariantSubtype` Either "Insertion", "Deletion", or "Swap"
 * `ReferenceRegion` Reference region of the variant
+* `CountOfRefReads` Number of reads supporting the ref allele
+* `CountOfAltReads` Number of reads supporting the alt allele
+* `StatusOfRefAllele` Presence status of the reference allele
+* `LogLikelihoodRefAllelePresent` Log-likelihood ratio for the reference allele being present
+* `StatusOfAltAllele` Presence status of the alternate allele
+* `LogLikelihoodAltAllelePresent` Log-likelihood ratio for the alternate allele being present
+* `Genotype` (optional) Formed, as usual, from `0`s and `1`s corresponding to ref and alt
+  alleles
 
 ## Skipped locus records
 

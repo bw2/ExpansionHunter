@@ -29,10 +29,8 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <cstdlib>
 #include <chrono>
 #include <ctime>
-#include <deque>
 #include <exception>
 #include <fstream>
-#include <future>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -45,7 +43,6 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <boost/timer/progress_display.hpp>
 
 #include "core/HtsHelpers.hh"
-#include "core/ThreadPool.hh"
 #include "core/Parameters.hh"
 #include "core/Reference.hh"
 #include "io/BamletWriter.hh"
@@ -272,36 +269,132 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
 }
 
 
+// ---------------------------------------------------------------------------------------------------------
+// Chromosome-stride parallel helpers (shared by the --threads 1 direct-write path and the --threads >1
+// per-contig path; see htsLowMemStreamingSampleAnalysis below).
+// ---------------------------------------------------------------------------------------------------------
+
+// Read-streamer region for one contig's loci: [minStart - halo, maxEnd + halo] clamped to [0, contigSize].
+// halo MUST equal farAwayMateDistanceThreshold (== the locus-activation reach); a narrower halo would
+// silently drop reads that activate loci at the contig's locus edges.
+GenomicRegion clampedContigRegion(int32_t contigIndex, int64_t minStart, int64_t maxEnd, int64_t contigSize, int halo)
+{
+    const int64_t begin = std::max<int64_t>(0, minStart - halo);
+    const int64_t end = std::min<int64_t>(contigSize, maxEnd + halo);
+    return GenomicRegion(contigIndex, begin, end);
+}
+
+// Whole-contig regions owned by stride worker `firstContig` under stride `strideT`: the contigs
+// c = firstContig, firstContig+strideT, ... < numContigs, each as [0, contigSize), in ascending index order
+// (satisfies the region streamer's sorted/non-overlapping precondition). Used by the parallel prepass, whose
+// stride scans EVERY contig (cross-contig mates make every contig a potential mate home).
+std::vector<GenomicRegion> wholeContigRegionsForStride(const ReferenceContigInfo& contigInfo, int firstContig, int strideT)
+{
+    std::vector<GenomicRegion> regions;
+    const int numContigs = contigInfo.numContigs();
+    for (int c = firstContig; c < numContigs; c += strideT)
+    {
+        regions.emplace_back(static_cast<int32_t>(c), 0, contigInfo.getContigSize(c));
+    }
+    return regions;
+}
+
+// One per loci-bearing contig: the [catalogBegin, catalogEnd) range of the position-sorted catalog holding
+// that contig's loci, plus the read-streamer region covering them (with the activation halo). Requires the
+// catalog to be position-sorted (--sort-catalog-by position), so each contig's loci form one contiguous run
+// and the slices come out in ascending contig-index (== merge) order.
+struct ContigGenotypingSlice
+{
+    int32_t contigIndex;
+    std::size_t catalogBegin;
+    std::size_t catalogEnd;
+    GenomicRegion region;
+};
+
+std::vector<ContigGenotypingSlice> perContigGenotypingSlices(
+    const LocusDescriptionCatalog& catalog, const ReferenceContigInfo& contigInfo, int halo)
+{
+    std::vector<ContigGenotypingSlice> slices;
+    std::size_t k = 0;
+    while (k < catalog.size())
+    {
+        const int32_t contigIndex = catalog[k].locusContigIndex();
+        int64_t minStart = catalog[k].locusAndFlanksStart();
+        int64_t maxEnd = catalog[k].locusAndFlanksEnd();
+        std::size_t m = k;
+        while (m < catalog.size() && catalog[m].locusContigIndex() == contigIndex)
+        {
+            minStart = std::min(minStart, catalog[m].locusAndFlanksStart());
+            maxEnd = std::max(maxEnd, catalog[m].locusAndFlanksEnd());
+            ++m;
+        }
+        slices.push_back({ contigIndex, k, m,
+            clampedContigRegion(contigIndex, minStart, maxEnd, contigInfo.getContigSize(contigIndex), halo) });
+        k = m;
+    }
+    return slices;
+}
+
+// Genome-wide typical read length: the max sequence length over the first kProbeReadCount primary aligned
+// reads, computed ONCE at startup and held constant for the whole run (and across thread counts). This makes
+// the prepass cache contents and the genotyping admission predicate thread-count-independent. It replaces the
+// previous per-sweep first-read latch that grew mid-traversal and was therefore read-order-dependent.
+int probeTypicalReadLength(const InputPaths& inputPaths)
+{
+    const int kProbeReadCount = 1000;
+    const int kFallbackReadLength = 150;
+    htshelpers::HtsFileStreamer probeStreamer(inputPaths.htsFile(), inputPaths.reference(), 1u);
+    int maxReadLength = 0;
+    int readCount = 0;
+    while (readCount < kProbeReadCount && probeStreamer.tryReadingNextPrimaryAlignment()
+           && probeStreamer.isStreamingAlignedReads())
+    {
+        maxReadLength = std::max(maxReadLength, static_cast<int>(probeStreamer.decodeRead().sequence().length()));
+        ++readCount;
+    }
+    return maxReadLength > 0 ? maxReadLength : kFallbackReadLength;
+}
+
+
+// Scans the read file for read pairs whose mates are far away (different contig, or >= the threshold apart)
+// and that are near a catalog locus, caching them in `mateExtractor`'s localCache_. With an empty
+// `streamerRegions` it streams the WHOLE file (used at --threads 1). With a non-empty `streamerRegions` it
+// index-seeks only those regions (used by each chromosome-stride prepass worker over its owned whole
+// contigs), so several workers can build disjoint private shards concurrently. The caller logs the cache
+// size (per-call counts would interleave across workers).
 void prepareCache(
     const ProgramParameters& params, Reference& reference, const GenomeQueryCollection& genomeQuery,
-    htshelpers::MateExtractor& mateExtractor, const int farAwayMateDistanceThreshold)
+    htshelpers::MateExtractor& mateExtractor, const int farAwayMateDistanceThreshold, const int typicalReadLength,
+    const std::vector<GenomicRegion>& streamerRegions)
 {
-
-    spdlog::info("Caching read pairs with distant mates");
     const InputPaths& inputPaths = params.inputPaths();
 
     // keep track of the previous chromosome id to make sure that the read input file has the same chromosome ordering
     // as the reference fasta
     int previousReadContigId = -1;
-    int typicalReadLength = -1;
 
-    // print the number of threads
-    const unsigned htsDecompressionThreads(std::min(params.threadCount, 12));
-    htshelpers::HtsFileStreamer readStreamer(inputPaths.htsFile(), inputPaths.reference(), htsDecompressionThreads);
-    while (readStreamer.tryReadingNextPrimaryAlignment() && readStreamer.isStreamingAlignedReads())
+    // Whole-file mode (streamerRegions empty) uses all decompression threads and validates the read file's
+    // contig order against the reference FASTA globally. In chromosome-stride mode (non-empty regions) each
+    // worker index-seeks only its owned whole contigs with a single decompression thread (to avoid T-way bgzf
+    // oversubscription across concurrent workers); there the contig-order check only asserts the worker's own
+    // stride is ascending — the global FASTA-vs-BAM order is not revalidated in the parallel prepass.
+    const unsigned streamerDecompressionThreads = streamerRegions.empty() ? std::min(params.threadCount, 12) : 1u;
+    std::unique_ptr<htshelpers::HtsFileStreamer> readStreamer = streamerRegions.empty()
+        ? std::make_unique<htshelpers::HtsFileStreamer>(
+              inputPaths.htsFile(), inputPaths.reference(), streamerDecompressionThreads)
+        : std::make_unique<htshelpers::HtsFileStreamer>(
+              inputPaths.htsFile(), inputPaths.reference(), inputPaths.htsIndexFile(), streamerRegions,
+              streamerDecompressionThreads);
+
+    while (readStreamer->tryReadingNextPrimaryAlignment() && readStreamer->isStreamingAlignedReads())
     {
         //skip unpaired reads
-        if (!readStreamer.currentIsPaired()) {
+        if (!readStreamer->currentIsPaired()) {
             continue;
         }
 
-        // get read length from the 1st read
-        if (typicalReadLength == -1) {
-            typicalReadLength = readStreamer.decodeRead().sequence().length();
-        }
-
-        const int32_t readContigId = readStreamer.currentReadContigId();
-        const int64_t readStart = readStreamer.currentReadPosition();
+        const int32_t readContigId = readStreamer->currentReadContigId();
+        const int64_t readStart = readStreamer->currentReadPosition();
         int64_t readEnd = readStart + typicalReadLength;
 
         // handle readStreamer transitioning from one chromosome to the next
@@ -318,8 +411,8 @@ void prepareCache(
             previousReadContigId = readContigId;
         }
 
-        const int32_t mateContigId = readStreamer.currentMateContigId();
-        const int64_t mateStart = readStreamer.currentMatePosition();
+        const int32_t mateContigId = readStreamer->currentMateContigId();
+        const int64_t mateStart = readStreamer->currentMatePosition();
         int64_t mateEnd = mateStart + typicalReadLength;
 
         // since prepareCache only caches reads with far-away mates, skip reads with nearby mates
@@ -341,24 +434,65 @@ void prepareCache(
 
         // the read and/or the the mate are near a locus and are not close to each other, so cache the read in the mateExtractor
 
-        FullRead fullRead = decodeRead(readStreamer);
+        FullRead fullRead = decodeRead(*readStreamer);
         // Copy the ReadId out before the std::move below: passing both `fullRead.r.readId()` and
         // `std::move(fullRead)` as function args is use-after-move in C++17 (parameter init order is
         // indeterminate, and unlike std::pair's mem-init-list there is no ordering guarantee here).
         ReadId mateReadId = fullRead.r.readId();
         mateExtractor.addMateToCache(mateReadId, std::move(fullRead));
     }
-
-    spdlog::info("Added {} reads to the mate cache",  add_commas_at_thousands(mateExtractor.mateCacheSize()));
 }
 
 
+// Running tally of how each locus was genotyped, summed across all doTheAnalysis calls in a run so the
+// "Processed N loci ..." summary is emitted ONCE for the whole run (at --threads >1 there is one call per
+// loci-bearing contig, so a per-call summary would print many partial, interleaved lines).
+struct GenotypingCounts {
+    int fast = 0;
+    int full = 0;
+    int skipped = 0;
+    int zeroCoverage = 0;
+};
+
+void logGenotypingSummary(const ProgramParameters& params, const GenotypingCounts& counts)
+{
+    const int totalProcessed = counts.fast + counts.full + counts.skipped + counts.zeroCoverage;
+    if (totalProcessed > 0) {
+        const float fastPct = 100.0f * counts.fast / totalProcessed;
+        const float fullPct = 100.0f * counts.full / totalProcessed;
+        if (counts.skipped > 0) {
+            const float skippedPct = 100.0f * counts.skipped / totalProcessed;
+            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, {} ({:.1f}%) loci via full genotyping, and skipped {} ({:.1f}%) loci",
+                add_commas_at_thousands(counts.fast), fastPct,
+                add_commas_at_thousands(counts.full), fullPct,
+                add_commas_at_thousands(counts.skipped), skippedPct);
+        } else {
+            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
+                add_commas_at_thousands(counts.fast), fastPct,
+                add_commas_at_thousands(counts.full), fullPct);
+        }
+        if (counts.zeroCoverage > 0) {
+            const float zeroCoveragePct = 100.0f * counts.zeroCoverage / totalProcessed;
+            if (params.skipMissingGenotypes()) {
+                spdlog::info("Excluded {} ({:.1f}%) loci with zero coverage from output (--skip-missing-genotypes)",
+                    add_commas_at_thousands(counts.zeroCoverage), zeroCoveragePct);
+            } else {
+                spdlog::info("Emitted {} ({:.1f}%) no-call records for loci with zero coverage",
+                    add_commas_at_thousands(counts.zeroCoverage), zeroCoveragePct);
+            }
+        }
+    }
+}
+
+// Accumulates this call's per-locus genotyping tallies into `counts` (summed across calls by the caller).
+// The "Processed N loci ..." summary is logged here only in whole-file mode (showProgress, i.e. --threads 1);
+// at --threads >1 the per-contig calls stay silent and the orchestrator logs one aggregate summary.
 void doTheAnalysis(
     const ProgramParameters& params, Reference& reference, LocusDescriptionCatalog& locusDescriptionCatalog,
     const GenomeQueryCollection& genomeQuery, htshelpers::MateExtractor& mateExtractor,
-    BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold,
+    BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold, const int typicalReadLength,
     IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter,
-    const std::vector<GenomicRegion>& streamerRegions)
+    const std::vector<GenomicRegion>& streamerRegions, GenotypingCounts& counts)
 {
     if (locusDescriptionCatalog.empty()) {
         return;
@@ -369,9 +503,10 @@ void doTheAnalysis(
     int skippedCount = 0;
     int zeroCoverageCount = 0;
 
-    // Constructed below only in whole-file mode (showProgress). In region-parallel mode P workers run this
-    // function concurrently and a progress_display writes its layout to std::cout on construction, so one per
-    // worker would garble the terminal. Left null when showProgress is false.
+    // Constructed below only in whole-file mode (showProgress). With a non-empty streamerRegions multiple
+    // per-contig chromosome-stride workers run this function concurrently and a progress_display writes its
+    // layout to std::cout on construction, so one per worker would garble the terminal. Left null when
+    // showProgress is false.
     std::unique_ptr<boost::timer::progress_display> progressBar;
 
     const int threadCount = params.threadCount;
@@ -382,8 +517,9 @@ void doTheAnalysis(
     // jsonWriter and vcfWriter are injected by the caller. Each sweep finalizes its own writer via the
     // jsonWriter.close()/vcfWriter.close() calls at the end of this function.
 
-    // When streamerRegions is non-empty the read stream is restricted to those regions (region-parallel mode);
-    // gating the progress bar on whole-file mode avoids garbled interleaved output across concurrent sweeps.
+    // When streamerRegions is non-empty the read stream is restricted to those regions (one per-contig
+    // chromosome-stride genotyping worker); gating the progress bar on whole-file mode avoids garbled
+    // interleaved output across concurrent sweeps.
     const bool showProgress = streamerRegions.empty();
     if (showProgress) {
         progressBar = std::make_unique<boost::timer::progress_display>(locusDescriptionCatalog.size());
@@ -412,7 +548,6 @@ void doTheAnalysis(
     // keep track of the previous chromosome id to make sure that the read input file has the same chromosome ordering
     // as the reference fasta
     int previousReadContigId = -1;
-    int typicalReadLength = -1;
 
     // A single AlignerSelector (and thus a single PinnedDagAligner with its large DP score matrices)
     // reused across all full-genotyped loci on the serial path. The aligner is graph-agnostic — the graph
@@ -420,48 +555,16 @@ void doTheAnalysis(
     // buffers warm instead of reallocating ~hundreds of KB per locus.
     graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
 
-    // Parallel genotyping is enabled only for low-mem-streaming with >1 thread. optimized-streaming (which
-    // also uses processLocusFast / --quick-heuristic-genotyping-only) and single-thread runs keep the serial
-    // path below. That path is structurally unchanged (same counters and catalog-ordered output), but it
-    // now genotypes via genotypeLocusFull, which copies each Read before processMates instead of passing
-    // the shared FullReadPair members by reference. Since align() mutates a Read in place (reverseComplement)
-    // and one read pair can belong to multiple loci, this fixes a prior cross-locus mutation of shared reads
-    // and so may change serial output for catalogs with overlapping loci relative to earlier releases.
-    const bool useParallelGenotyping =
-        (params.analysisMode() == AnalysisMode::kLowMemStreaming) && (threadCount > 1);
+    // Genotyping runs serially within this call (one contig / whole-file sweep per call); cross-contig
+    // parallelism is handled by the caller. genotypeLocusFull copies each Read before processMates instead
+    // of passing the shared FullReadPair members by reference. Since align() mutates a Read in place
+    // (reverseComplement) and one read pair can belong to multiple loci, this fixes a prior cross-locus
+    // mutation of shared reads and so may change output for catalogs with overlapping loci relative to
+    // earlier releases.
 
-    // One AlignerSelector per worker thread, since its DP scratch matrices are mutated per align() call.
-    std::vector<std::unique_ptr<graphtools::AlignerSelector>> threadAligners;
-    if (useParallelGenotyping) {
-        threadAligners.reserve(threadCount);
-        for (int t = 0; t < threadCount; ++t) {
-            threadAligners.push_back(
-                std::make_unique<graphtools::AlignerSelector>(params.heuristics().alignerType()));
-        }
-    }
-
-    // Ordered queue of pending per-locus outputs. FIFO order == ascending locusIndex == catalog/coordinate
-    // order, so output is written deterministically regardless of which worker finishes first. An item is
-    // either an in-flight future (full genotyping on the pool) or an already-built result (zero-coverage).
-    struct PendingItem {
-        bool isFuture = false;
-        std::future<LocusOutput> future;
-        LocusOutput ready;
-    };
-    std::deque<PendingItem> pending;
-    // Cap in-flight + buffered loci to bound memory (low-mem mode); the pool keeps draining as we go.
-    const size_t maxPending = static_cast<size_t>(threadCount) * 4;
-
-    // Declared after threadAligners and pending so that on scope exit (including exception unwinding) the
-    // pool is destroyed FIRST: ~thread_pool() runs and joins every queued/running task while the aligners
-    // those tasks dereference are still alive. std::future destructors from the pool's packaged_tasks do
-    // not block, so the pool itself — not the futures buffered in `pending` — is what joins the workers.
-    ctpl::thread_pool genotypingPool(useParallelGenotyping ? threadCount : 0);
-
-    // Write one finished locus result. Single-threaded: called inline on the serial path, and only from
-    // the main thread while draining the pending queue on the parallel path. Counter semantics match the
-    // previous serial code (a locus reaching full genotyping is counted as full-genotyped even if it
-    // produces no record because of --skip-hom-ref / --skip-missing-genotypes or an error).
+    // Write one finished locus result, inline as each locus is genotyped, in catalog order. Counter
+    // semantics: a locus reaching full genotyping is counted as full-genotyped even if it produces no record
+    // because of --skip-hom-ref / --skip-missing-genotypes or an error.
     auto writeOutput = [&](LocusOutput& out) {
         switch (out.kind) {
             case LocusOutput::Kind::kNoCoverage:
@@ -487,17 +590,6 @@ void doTheAnalysis(
         }
     };
 
-    // Drain the pending queue in FIFO order until at most `keep` items remain. keep==0 is a full barrier
-    // (used before evicting the reference contig cache and at EOF).
-    auto drainPending = [&](size_t keep) {
-        while (pending.size() > keep) {
-            PendingItem item = std::move(pending.front());
-            pending.pop_front();
-            LocusOutput out = item.isFuture ? item.future.get() : std::move(item.ready);
-            writeOutput(out);
-        }
-    };
-
     // Analyze every locus index in locusIndicesReadyForAnalysis, then clear the queue.
     // Defined as a lambda so the same code path runs both during streaming and during the post-EOF drain
     // (otherwise loci still in flight when EOF is reached would silently disappear from the output).
@@ -509,16 +601,8 @@ void doTheAnalysis(
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
                 // Locus has zero coverage; emit a no-call record identical to seeking/streaming mode (see
                 // writeZeroCoverageRecord) so the output is consistent across analysis modes.
-                if (useParallelGenotyping) {
-                    PendingItem item;
-                    item.ready.locusIndex = locusIndex;
-                    item.ready.kind = LocusOutput::Kind::kNoCoverage;
-                    item.ready.locusId = locusDescriptionCatalog[locusIndex].locusId();
-                    pending.push_back(std::move(item));
-                } else {
-                    zeroCoverageCount++;
-                    writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter);
-                }
+                zeroCoverageCount++;
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter);
                 continue;
             }
             const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
@@ -537,41 +621,8 @@ void doTheAnalysis(
 
             if (needToProcessSlowly) {
                 if (params.heuristicGenotypingOnly()) {
-                    if (useParallelGenotyping) {
-                        // Route through the ordered pending queue (like kNoCoverage) so this skipped
-                        // record is emitted in catalog order relative to other buffered records, rather
-                        // than written directly ahead of lower-index records still buffered in `pending`.
-                        PendingItem item;
-                        item.ready.locusIndex = locusIndex;
-                        item.ready.kind = LocusOutput::Kind::kHeuristicOnlySkip;
-                        item.ready.locusId = locusDescriptionCatalog[locusIndex].locusId();
-                        pending.push_back(std::move(item));
-                    } else {
-                        skippedCount++;
-                        jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
-                    }
-                } else if (useParallelGenotyping) {
-                    // Dispatch full genotyping to the pool. locusCache is captured by value (shared_ptr),
-                    // so the worker keeps it alive even after the map entry is erased below.
-                    //
-                    // Note: the JSON/VCF records are buffered in `pending` and written in catalog order, but
-                    // the bamlet (--enable-bamlet-output) records are written directly from the worker via
-                    // LocusAligner::align -> BamletWriter::write, so their order in <prefix>_realigned.bam is
-                    // worker-completion order, i.e. nondeterministic across runs in parallel mode. This is
-                    // intentional: the bamlet is SO:unknown and consumers (e.g. REViewer) match records by
-                    // read name + the XG graph-alignment tag, not file order. The serial path writes them in
-                    // locus order. To make the bamlet deterministic in parallel mode, buffer each worker's
-                    // realigned reads in the LocusOutput and replay them from writeOutput in catalog order.
-                    PendingItem item;
-                    item.isFuture = true;
-                    item.future = genotypingPool.push(
-                        [&params, &reference, &locusDescriptionCatalog, locusIndex, locusCache, bamletWriter,
-                         &threadAligners](int threadId) {
-                            return genotypeLocusFull(params, reference, locusIndex,
-                                locusDescriptionCatalog[locusIndex], locusCache->readPairs,
-                                *threadAligners[threadId], bamletWriter);
-                        });
-                    pending.push_back(std::move(item));
+                    skippedCount++;
+                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
                 } else {
                     LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
                         locusDescriptionCatalog[locusIndex], locusCache->readPairs, alignerSelector, bamletWriter);
@@ -586,15 +637,13 @@ void doTheAnalysis(
             }
         }
         locusIndicesReadyForAnalysis.clear();
-
-        if (useParallelGenotyping) {
-            drainPending(maxPending);
-        }
     };
 
-    spdlog::info("Starting to process {} loci", add_commas_at_thousands(locusDescriptionCatalog.size()));
-    // In whole-file mode use all decompression threads; in region mode use a single one to avoid
-    // P-way x htsDecompressionThreads bgzf thread oversubscription across concurrent region sweeps.
+    if (showProgress) {
+        spdlog::info("Starting to process {} loci", add_commas_at_thousands(locusDescriptionCatalog.size()));
+    }
+    // In whole-file mode use all decompression threads; in region-restricted mode use a single one to avoid
+    // worker-count x htsDecompressionThreads bgzf thread oversubscription across concurrent stride workers.
     const unsigned streamerDecompressionThreads = streamerRegions.empty() ? htsDecompressionThreads : 1u;
     std::unique_ptr<htshelpers::HtsFileStreamer> readStreamer = streamerRegions.empty()
         ? std::make_unique<htshelpers::HtsFileStreamer>(
@@ -608,11 +657,6 @@ void doTheAnalysis(
         //skip unpaired reads
         if (!readStreamer->currentIsPaired()) {
             continue;
-        }
-
-        // get read length from the 1st read
-        if (typicalReadLength == -1) {
-            typicalReadLength = readStreamer->decodeRead().sequence().length();
         }
 
         const int32_t readContigId = readStreamer->currentReadContigId();
@@ -642,26 +686,10 @@ void doTheAnalysis(
             }
             previousReadContigId = readContigId;
 
-            // Before evicting the previous contig's sequence from the reference cache, finish genotyping
-            // every locus on it. Workers read the cached contig inside decodeLocusSpecification, so the
-            // cache must stay valid until they complete. Once a read on the next contig arrives, all
-            // loci still collecting reads belong to the previous contig (coordinate order), so flush them
-            // here exactly as the per-read loop below would, then fully drain the pool.
-            if (useParallelGenotyping) {
-                // Flush unconditionally. Besides loci still collecting reads, locusIndicesReadyForAnalysis
-                // can hold loci left unprocessed by a prior per-read `continue`; the old `if (!collecting
-                // .empty())` guard skipped those, so they were genotyped only after the contig was evicted
-                // — racing in the unsynchronized faidx cache-miss path. (processReadyLoci no-ops on empty.)
-                for (auto idx : locusIndicesCollectingReads) {
-                    locusIndicesReadyForAnalysis.push_back(idx);
-                }
-                locusIndicesCollectingReads.clear();
-                processReadyLoci();
-                drainPending(0);
-            }
-
             // load the next chromosome into the cache
-            spdlog::info("Processing loci on {}", chromosomeName);
+            if (showProgress) {
+                spdlog::info("Processing loci on {}", chromosomeName);
+            }
             reference.clearContigCache();
             try {
                 reference.loadContigIntoCache(chromosomeName);
@@ -844,8 +872,10 @@ void doTheAnalysis(
         FullRead fullMate = std::move(unpairedReadIter->second);
         unpairedReadsCache.erase(unpairedReadIter);
 
-        // Since both the read & mate are now available, double-check that the readEnd and mateEnd coordinates were
-        // computed correctly and that the read length parsed from the 1st read in the BAM file was not atypical
+        // Both the read & mate are now available, so recompute readEnd/mateEnd from their ACTUAL sequence
+        // lengths (the readEnd/mateEnd above used the genome-wide typicalReadLength estimate). typicalReadLength
+        // is a constant seeded once at startup (max over the first primary reads) and is deliberately NOT grown
+        // here, so the cache-admission and locus-activation decisions are thread-count-independent.
         const int readSequenceLength = (int) fullRead.r.sequence().length();
         if (readSequenceLength != typicalReadLength) {
             readEnd = readStart + readSequenceLength;
@@ -853,9 +883,6 @@ void doTheAnalysis(
         const int mateSequenceLength = (int) fullMate.r.sequence().length();
         if (mateSequenceLength != typicalReadLength) {
             mateEnd = mateStart + mateSequenceLength;
-        }
-        if (typicalReadLength < readSequenceLength || typicalReadLength < mateSequenceLength) {
-            typicalReadLength = std::max(readSequenceLength, mateSequenceLength);
         }
 
         // iterate over locusIndicesCollectingReads and, for each locus, add the current read pair to its LocusCache
@@ -932,44 +959,30 @@ void doTheAnalysis(
     }
     processReadyLoci();
 
-    // Wait for all in-flight workers and write their results before tearing down the pool / reference.
-    if (useParallelGenotyping) {
-        drainPending(0);
-    }
-
     reference.clearContigCache();
 
-    spdlog::info("Writing JSON and VCF output files");
+    if (showProgress) {
+        spdlog::info("Writing JSON and VCF output files");
+    }
 
     jsonWriter.close();
     vcfWriter.close();
 
-    const int totalProcessed = fastGenotypedCount + fullGenotypedCount + skippedCount + zeroCoverageCount;
-    if (totalProcessed > 0) {
-        const float fastPct = 100.0f * fastGenotypedCount / totalProcessed;
-        const float fullPct = 100.0f * fullGenotypedCount / totalProcessed;
-        if (skippedCount > 0) {
-            const float skippedPct = 100.0f * skippedCount / totalProcessed;
-            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, {} ({:.1f}%) loci via full genotyping, and skipped {} ({:.1f}%) loci",
-                add_commas_at_thousands(fastGenotypedCount), fastPct,
-                add_commas_at_thousands(fullGenotypedCount), fullPct,
-                add_commas_at_thousands(skippedCount), skippedPct);
-        } else {
-            spdlog::info("Processed {} ({:.1f}%) loci via fast genotyping, and {} ({:.1f}%) loci via full genotyping",
-                add_commas_at_thousands(fastGenotypedCount), fastPct,
-                add_commas_at_thousands(fullGenotypedCount), fullPct);
-        }
-        if (zeroCoverageCount > 0) {
-            const float zeroCoveragePct = 100.0f * zeroCoverageCount / totalProcessed;
-            if (params.skipMissingGenotypes()) {
-                spdlog::info("Excluded {} ({:.1f}%) loci with zero coverage from output (--skip-missing-genotypes)",
-                    add_commas_at_thousands(zeroCoverageCount), zeroCoveragePct);
-            } else {
-                spdlog::info("Emitted {} ({:.1f}%) no-call records for loci with zero coverage",
-                    add_commas_at_thousands(zeroCoverageCount), zeroCoveragePct);
-            }
-        }
+    GenotypingCounts callCounts;
+    callCounts.fast = fastGenotypedCount;
+    callCounts.full = fullGenotypedCount;
+    callCounts.skipped = skippedCount;
+    callCounts.zeroCoverage = zeroCoverageCount;
+    // Whole-file mode (--threads 1) is the only place this call sees the run-wide totals, so it logs the
+    // summary itself. At --threads >1 each per-contig call stays silent and the orchestrator sums the
+    // per-worker tallies and logs one aggregate summary.
+    if (showProgress) {
+        logGenotypingSummary(params, callCounts);
     }
+    counts.fast += callCounts.fast;
+    counts.full += callCounts.full;
+    counts.skipped += callCounts.skipped;
+    counts.zeroCoverage += callCounts.zeroCoverage;
 }
 
 
@@ -1001,106 +1014,127 @@ void htsLowMemStreamingSampleAnalysis(
 
     const int farAwayMateDistanceThreshold = 1000;  // base pairs
     const InputPaths& inputPaths = programParams.inputPaths();
+    const int threadCount = std::max(1, programParams.threadCount);
 
-    htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
+    // Phase 0: seed a single genome-wide typicalReadLength and build the far-away-mate admission predicate
+    // from the FULL catalog (so the prepass predicate is a superset of every per-contig genotyping predicate).
+    const int typicalReadLength = probeTypicalReadLength(inputPaths);
 
-    prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold);
+    // --threads 1: serial whole-file far-away-mate prepass, then the original whole-file single-pass analysis
+    // writing straight to the final JSON/VCF — no temp files, no merge, no region restriction, no cache freeze.
+    // This IS the golden serial baseline that every higher thread count must reproduce byte-for-byte.
+    if (threadCount == 1)
+    {
+        htshelpers::MateExtractor mateExtractor(
+            inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
+        spdlog::info("Caching read pairs with distant mates");
+        prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold,
+                     typicalReadLength, {});
+        spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
 
-    //perform the main bam/cram traversal and analysis
-    IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields());
-    IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
-    doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
-                  farAwayMateDistanceThreshold, jsonWriter, vcfWriter, {});
-
-}
-
-
-// Region-parallel variant of the low-mem streaming analysis. The coordinate-sorted catalog is split into
-// P contiguous, equal-locus-count slices (one per worker). A single serial prepass builds the far-away
-// mate cache once; it is then frozen and shared read-only across all workers. Each worker runs a private
-// full sweep restricted to its slice's genomic span (+/- a farAwayMateDistanceThreshold halo) with its own
-// file handle / FastaReference / MateExtractor, writing a per-region temp JSON+VCF. After all workers join,
-// the temp files are merged in genomic (ascending region) order into the final outputs. Intra-worker
-// genotyping is serial because the analysis mode is kRegionParallelStreaming (not kLowMemStreaming).
-void htsRegionParallelStreamingSampleAnalysis(
-    LocusDescriptionCatalog& locusDescriptionCatalog,
-    const ProgramParameters& programParams,
-    Reference& reference,
-    BamletWriterPtr bamletWriter)
-{
-    const int farAwayMateDistanceThreshold = 1000;  // base pairs (also used as the per-side streamer halo)
-    const int N = (int) locusDescriptionCatalog.size();
-    const int P = std::min(std::max(1, programParams.threadCount), N);
-
-    spdlog::info("Running region-parallel-streaming analysis with {} workers over {} loci", P, N);
-
-    // Capture the contig info by const-ref before spawning threads so workers never touch the shared
-    // `reference` object; each worker builds its own FastaReference from this contig info instead.
-    const ReferenceContigInfo& contigInfo = reference.contigInfo();
-    const InputPaths& inputPaths = programParams.inputPaths();
-
-    // Serial prepass: build the shared far-away mate cache once, then freeze it for read-only sharing.
-    GenomeQueryCollection fullGenomeQuery(locusDescriptionCatalog);
-    htshelpers::MateExtractor cacheBuilder(
-        inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
-    prepareCache(programParams, reference, fullGenomeQuery, cacheBuilder, farAwayMateDistanceThreshold);
-    std::shared_ptr<const htshelpers::MateCache> sharedCache = cacheBuilder.freezeAndShareCache();
-
-    // Partition the catalog into P contiguous equal-locus slices using floor boundaries. All slices are
-    // non-empty because P <= N. For each slice also compute its per-contig streamer regions and temp paths.
-    std::vector<LocusDescriptionCatalog> slices;
-    std::vector<std::vector<GenomicRegion>> sliceRegions;
-    std::vector<std::string> jsonPaths;
-    std::vector<std::string> vcfPaths;
-    slices.reserve(P);
-    sliceRegions.reserve(P);
-    jsonPaths.reserve(P);
-    vcfPaths.reserve(P);
-
-    for (int i = 0; i < P; ++i) {
-        const int lo = (int) ((long long) i * N / P);
-        const int hi = (int) ((long long) (i + 1) * N / P);
-        slices.emplace_back(locusDescriptionCatalog.begin() + lo, locusDescriptionCatalog.begin() + hi);
-        const LocusDescriptionCatalog& slice = slices.back();
-
-        // One GenomicRegion per contig the slice touches. The slice is coordinate-sorted, so same-contig
-        // loci are contiguous; collapse each contig's loci into [minStart - halo, maxEnd + halo] clamped to
-        // [0, contigLen].
-        std::vector<GenomicRegion> regionsForSlice;
-        size_t k = 0;
-        while (k < slice.size()) {
-            const int32_t c = slice[k].locusContigIndex();
-            int64_t minStart = slice[k].locusAndFlanksStart();
-            int64_t maxEnd = slice[k].locusAndFlanksEnd();
-            size_t m = k;
-            while (m < slice.size() && slice[m].locusContigIndex() == c) {
-                minStart = std::min(minStart, slice[m].locusAndFlanksStart());
-                maxEnd = std::max(maxEnd, slice[m].locusAndFlanksEnd());
-                ++m;
-            }
-            const int64_t beg = std::max<int64_t>(0, minStart - farAwayMateDistanceThreshold);
-            const int64_t end = std::min<int64_t>(contigInfo.getContigSize(c), maxEnd + farAwayMateDistanceThreshold);
-            regionsForSlice.emplace_back(c, beg, end);
-            k = m;
-        }
-        sliceRegions.push_back(std::move(regionsForSlice));
-
-        jsonPaths.push_back(programParams.outputPaths().outputPrefix() + ".region" + std::to_string(i) + ".json");
-        vcfPaths.push_back(programParams.outputPaths().outputPrefix() + ".region" + std::to_string(i) + ".vcf");
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields());
+        IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
+        GenotypingCounts counts;  // filled by doTheAnalysis; it also logs the summary itself in whole-file mode
+        doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
+                      farAwayMateDistanceThreshold, typicalReadLength, jsonWriter, vcfWriter, {}, counts);
+        return;
     }
 
-    // Best-effort removal of the per-region temp files, as an RAII guard so it runs on every exit path: the
-    // normal return after the merge below, and stack unwinding when a worker failure is rethrown. ENOENT is
-    // ignored because a worker that failed early may never have created its temp file.
+    const ReferenceContigInfo& contigInfo = reference.contigInfo();
+    const int numContigs = std::max(1, contigInfo.numContigs());
+
+    // PARALLEL PREPASS (--threads > 1): T workers each scan their owned whole contigs (chromosome stride
+    // c % T == w; the prepass stride scans EVERY contig because a cross-contig mate makes any contig a
+    // potential mate home) via the index, inserting far-away mates into a PRIVATE per-worker shard cache —
+    // no shared writes, no locks. The shards are key-disjoint (each read's single primary alignment is
+    // streamed by exactly one worker), so after every worker joins they are spliced into one immutable cache
+    // on the main thread by mergeAndFreeze (which throws on the never-expected duplicate key).
+    const int prepassWorkerCount = std::min(threadCount, numContigs);
+    std::vector<std::unique_ptr<htshelpers::MateExtractor>> prepassShards;
+    prepassShards.reserve(prepassWorkerCount);
+    for (int w = 0; w < prepassWorkerCount; ++w)
+    {
+        prepassShards.push_back(std::make_unique<htshelpers::MateExtractor>(
+            inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold));
+    }
+    spdlog::info("Caching read pairs with distant mates");
+    {
+        std::vector<std::exception_ptr> prepassExceptions(prepassWorkerCount);
+        std::vector<std::thread> prepassWorkers;
+        prepassWorkers.reserve(prepassWorkerCount);
+        for (int w = 0; w < prepassWorkerCount; ++w)
+        {
+            prepassWorkers.emplace_back([&, w]() {
+                try
+                {
+                    prepareCache(programParams, reference, genomeQuery, *prepassShards[w],
+                        farAwayMateDistanceThreshold, typicalReadLength,
+                        wholeContigRegionsForStride(contigInfo, w, threadCount));
+                }
+                catch (...)
+                {
+                    prepassExceptions[w] = std::current_exception();
+                }
+            });
+        }
+        for (std::thread& worker : prepassWorkers)
+        {
+            worker.join();
+        }
+        for (int w = 0; w < prepassWorkerCount; ++w)
+        {
+            if (prepassExceptions[w])
+            {
+                spdlog::error("Chromosome-stride prepass worker {} failed", w);
+                std::rethrow_exception(prepassExceptions[w]);
+            }
+        }
+    }
+
+    // Freeze: splice the disjoint shards into one immutable cache on the main thread (happens-after every
+    // prepass join via std::thread::join), then publish it read-only to the genotyping workers by value.
+    std::vector<htshelpers::MateExtractor*> shardPtrs;
+    shardPtrs.reserve(prepassShards.size());
+    for (const std::unique_ptr<htshelpers::MateExtractor>& shard : prepassShards)
+    {
+        shardPtrs.push_back(shard.get());
+    }
+    std::shared_ptr<const htshelpers::MateCache> frozenCache = htshelpers::MateExtractor::mergeAndFreeze(shardPtrs);
+    spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(frozenCache->size()));
+
+    // PARALLEL GENOTYPING (--threads > 1): split the position-sorted catalog into one slice per loci-bearing
+    // contig, genotype each on a chromosome-stride worker (its own FastaReference / MateExtractor over the
+    // frozen cache / region-restricted streamer) into a per-contig temp JSON+VCF, then merge the temps in
+    // ascending-contig-index order. Output is byte-identical to the threadCount==1 direct-write path: each
+    // contig's loci are emitted in coordinate order into one temp file, concatenated in contig (== coordinate)
+    // order.
+    const std::vector<ContigGenotypingSlice> slices =
+        perContigGenotypingSlices(locusDescriptionCatalog, contigInfo, farAwayMateDistanceThreshold);
+
+    std::vector<std::string> jsonPaths;
+    std::vector<std::string> vcfPaths;
+    jsonPaths.reserve(slices.size());
+    vcfPaths.reserve(slices.size());
+    for (const ContigGenotypingSlice& slice : slices)
+    {
+        const std::string contigSuffix = ".contig" + std::to_string(slice.contigIndex);
+        jsonPaths.push_back(programParams.outputPaths().outputPrefix() + contigSuffix + ".json");
+        vcfPaths.push_back(programParams.outputPaths().outputPrefix() + contigSuffix + ".vcf");
+    }
+
+    // Remove the per-contig temp files on any exit path (success or exception). Ignores ENOENT.
     struct TempFileRemover
     {
         const std::vector<std::string>& jsonPaths;
         const std::vector<std::string>& vcfPaths;
         ~TempFileRemover()
         {
-            for (const std::vector<std::string>* paths : { &jsonPaths, &vcfPaths }) {
-                for (const std::string& path : *paths) {
-                    if (std::remove(path.c_str()) != 0 && errno != ENOENT) {
+            for (const std::vector<std::string>* paths : { &jsonPaths, &vcfPaths })
+            {
+                for (const std::string& path : *paths)
+                {
+                    if (std::remove(path.c_str()) != 0 && errno != ENOENT)
+                    {
                         spdlog::warn("Could not remove temporary file {}", path);
                     }
                 }
@@ -1108,51 +1142,78 @@ void htsRegionParallelStreamingSampleAnalysis(
         }
     } tempFileRemover{ jsonPaths, vcfPaths };
 
-    // Spawn P worker threads. Each worker only reads its OWN index i of the shared vectors (no aliasing).
-    // bamletWriter is internally thread-safe; sharedCache is an immutable shared_ptr<const>; contigInfo is
-    // a const reference captured before any threads start. Any exception thrown by a worker is captured into
-    // workerExceptions[i] and rethrown on the main thread after join.
-    std::vector<std::exception_ptr> workerExceptions(P);
+    // Genotype the per-contig slices on chromosome-stride worker threads: worker w owns the contigs whose
+    // index ≡ w (mod threadCount), so each loci-bearing contig is processed by exactly one worker, and each
+    // worker writes only its own contigs' temp files (distinct paths → no file contention). Spawn at most
+    // min(threadCount, numContigs) workers; a worker that owns no loci-bearing contig simply does nothing.
+    // Each worker owns a private FastaReference + MateExtractor (the frozen cache is shared read-only by
+    // value; localCache_ and the htsFile/bam1_t seek buffers are per-worker mutable and MUST NOT be shared).
+    const int workerCount = std::min(threadCount, std::max(1, contigInfo.numContigs()));
+    std::vector<std::exception_ptr> workerExceptions(workerCount);
+    std::vector<GenotypingCounts> workerCounts(workerCount);  // per-worker tallies, summed after join
     std::vector<std::thread> workers;
-    workers.reserve(P);
-    for (int i = 0; i < P; ++i) {
-        workers.emplace_back([&, i]() {
-            try {
-                FastaReference workerReference(inputPaths.reference(), contigInfo);
-                htshelpers::MateExtractor workerMateExtractor(
-                    inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, sharedCache,
-                    farAwayMateDistanceThreshold);
-                GenomeQueryCollection sliceGenomeQuery(slices[i]);
-                IterativeJsonWriter jsonWriter(
-                    programParams.sample(), workerReference.contigInfo(), jsonPaths[i],
-                    programParams.copyCatalogFields());
-                IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
-                doTheAnalysis(programParams, workerReference, slices[i], sliceGenomeQuery, workerMateExtractor,
-                              bamletWriter, farAwayMateDistanceThreshold, jsonWriter, vcfWriter, sliceRegions[i]);
-            } catch (...) {
-                workerExceptions[i] = std::current_exception();
+    workers.reserve(workerCount);
+    for (int w = 0; w < workerCount; ++w)
+    {
+        workers.emplace_back([&, w]() {
+            try
+            {
+                for (std::size_t i = 0; i < slices.size(); ++i)
+                {
+                    const ContigGenotypingSlice& slice = slices[i];
+                    if (slice.contigIndex % threadCount != w)
+                    {
+                        continue;  // owned by another stride worker
+                    }
+                    LocusDescriptionCatalog subsetCatalog(locusDescriptionCatalog.begin() + slice.catalogBegin,
+                        locusDescriptionCatalog.begin() + slice.catalogEnd);
+                    GenomeQueryCollection subsetGenomeQuery(subsetCatalog);
+                    FastaReference workerReference(inputPaths.reference(), contigInfo);
+                    htshelpers::MateExtractor workerMateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(),
+                        inputPaths.reference(), true, frozenCache, farAwayMateDistanceThreshold);
+                    IterativeJsonWriter jsonWriter(programParams.sample(), workerReference.contigInfo(),
+                        jsonPaths[i], programParams.copyCatalogFields());
+                    IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
+                    const std::vector<GenomicRegion> streamerRegions{ slice.region };
+                    doTheAnalysis(programParams, workerReference, subsetCatalog, subsetGenomeQuery,
+                        workerMateExtractor, bamletWriter, farAwayMateDistanceThreshold, typicalReadLength,
+                        jsonWriter, vcfWriter, streamerRegions, workerCounts[w]);
+                }
+            }
+            catch (...)
+            {
+                workerExceptions[w] = std::current_exception();
             }
         });
     }
-
-    for (auto& worker : workers) {
+    for (std::thread& worker : workers)
+    {
         worker.join();
     }
-
-    // Propagate the first worker failure (if any) to main's catch before merging or cleaning up.
-    for (int i = 0; i < P; ++i) {
-        if (workerExceptions[i]) {
-            spdlog::error("Region-parallel-streaming worker {} failed", i);
-            std::rethrow_exception(workerExceptions[i]);
+    // Rethrow the first worker failure (after all joins) so no merge runs on partial output.
+    for (int w = 0; w < workerCount; ++w)
+    {
+        if (workerExceptions[w])
+        {
+            spdlog::error("Chromosome-stride genotyping worker {} failed", w);
+            std::rethrow_exception(workerExceptions[w]);
         }
     }
 
-    // Merge per-region temp files in ascending (== genomic) order into the final outputs.
-    spdlog::info("Merging {} per-region output files into final JSON and VCF", P);
+    spdlog::info("Merging {} per-contig output files into final JSON and VCF", slices.size());
     mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths);
     mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
 
-    // The per-region temp files are removed by tempFileRemover (RAII) on scope exit.
+    // One run-wide summary (each per-contig worker call stayed silent; sum their tallies here).
+    GenotypingCounts aggregateCounts;
+    for (const GenotypingCounts& workerTally : workerCounts)
+    {
+        aggregateCounts.fast += workerTally.fast;
+        aggregateCounts.full += workerTally.full;
+        aggregateCounts.skipped += workerTally.skipped;
+        aggregateCounts.zeroCoverage += workerTally.zeroCoverage;
+    }
+    logGenotypingSummary(programParams, aggregateCounts);
 }
 
 }

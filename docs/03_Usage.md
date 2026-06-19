@@ -2,14 +2,16 @@
 
 Expansion Hunter requires the following inputs:
 1. A BAM or a CRAM file containing aligned reads from a PCR-free WGS sample.
-    1. The BAM or CRAM file must be sorted and indexed if using the seeking [analysis mode](#analysis-modes).
+    1. The BAM or CRAM file must be sorted, and must be indexed for every [analysis mode](#analysis-modes) except plain `streaming`.
     2. The BAM or CRAM file may be a local filesystem path or [URL](#url-support).
 4. A FASTA file with a reference genome assembly (which must be the same as the one used to align the reads)
 5. A [variant catalog file](04_VariantCatalogFiles.md).
 
 Expansion Hunter outputs a VCF file and a JSON file with variant genotypes and
-other useful information along with a BAMlet containing alignments of reads that
-overlap or located in close proximity to each variant. The VCF and JSON files
+other useful information. It can also optionally output a BAMlet containing
+alignments of reads that overlap or are located in close proximity to each
+variant, but only if the `--enable-bamlet-output` flag is specified (see
+[Optional arguments](#optional-arguments) below). The VCF and JSON files
 are largely equivalent, but the JSON file may be easier to parse
 programmatically. Here is a template with the names of the required parameters.
 
@@ -57,11 +59,7 @@ optional arguments.
 
 * `--enable-bamlet-output` Output a BAM file containing realigned reads
   that overlap or are located in close proximity to each variant. The file is
-  written to `<output-prefix>_realigned.bam`. Note: in `low-mem-streaming` mode with
-  more than one thread, the order of records in this BAM is nondeterministic across
-  runs (records are written as worker threads finish each locus). The records
-  themselves are identical run-to-run; only their ordering varies. The JSON and VCF
-  outputs remain deterministically ordered.
+  written to `<output-prefix>_realigned.bam`.
 
 * `--copy-catalog-fields` Copy extra annotation fields from the input variant
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
@@ -97,7 +95,7 @@ does not require that the BAM or CRAM file is sorted or indexed.
 #### Low-mem-streaming mode
 
 Changes how data is read from the input BAM or CRAM file in order to keep memory usage (typically < 10 GB) and is independent of catalog size.
-The output stays nearly identical to `streaming` mode. 
+The output stays nearly identical to `streaming` mode.
 
 #### Optimized-streaming mode
 

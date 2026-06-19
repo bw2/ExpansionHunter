@@ -703,7 +703,7 @@ bool processLocusFast(
 	// from graph realignment, so they will not match it exactly.
 	RepeatAlleleQualityMetrics qualityMetrics;
 	CountTable countsOfHighQualityUnambiguousReads;
-	if (repeatGenotype) {
+	if (repeatGenotype && params.enableAlleleQualityMetrics()) {
 		const int shortAlleleUnits = repeatGenotype->shortAlleleSizeInUnits();
 		const int longAlleleUnits = repeatGenotype->longAlleleSizeInUnits();
 		const bool isHet = repeatGenotype->numAlleles() == 2 && shortAlleleUnits != longAlleleUnits;
@@ -716,6 +716,7 @@ bool processLocusFast(
 			allele.alleleNumber = alleleNumber;
 			allele.alleleSize = alleleUnits;
 			int depth = 0;
+			long matchedRepeatBases = 0;
 			int forwardReads = 0;
 			int reverseReads = 0;
 			long insertedBases = 0;
@@ -730,6 +731,9 @@ bool processLocusFast(
 					}
 				}
 				depth += sizeAndVotes.second;
+				// Each spanning read traversed a repeat tract of sizeAndVotes.first bp, so that is its matched-
+				// base count within the repeat (the fast-path analogue of the full genotyper's STR-node matches).
+				matchedRepeatBases += static_cast<long>(sizeAndVotes.first) * sizeAndVotes.second;
 				const auto statsIt = allele_size_spanning_read_stats.find(sizeAndVotes.first);
 				if (statsIt != allele_size_spanning_read_stats.end()) {
 					forwardReads += statsIt->second.forwardReads;
@@ -738,9 +742,14 @@ bool processLocusFast(
 					deletedBases += statsIt->second.deletedBases;
 				}
 			}
-			allele.depth = depth;
-			// Spanning reads are mapQ-filtered (high quality) and each pins exactly one size
-			// (unambiguous), so they are this allele's high-quality-unambiguous reads.
+			// DP is a base-level coverage estimate (matched repeat bases / allele length in bp), matching
+			// the full genotyper's allele depth so the field carries the same units in both modes. For reads
+			// that exactly span the called allele this equals the spanning-read count; it diverges when reads
+			// observe a different size than the called allele.
+			const long alleleLengthBp = static_cast<long>(alleleUnits) * locusMotifSize;
+			allele.depth = alleleLengthBp > 0 ? static_cast<double>(matchedRepeatBases) / alleleLengthBp : 0.0;
+			// Spanning reads are mapQ-filtered (high quality) and each pins exactly one size (unambiguous),
+			// so the COUNT of them is this allele's high-quality-unambiguous read count.
 			allele.highQualityUnambiguousReads = depth;
 			allele.strandBiasBinomialPhred = reviewer::computeStrandBiasBinomialPhred(forwardReads, reverseReads);
 			if (depth > 0) {

@@ -159,10 +159,12 @@ target_link_libraries(ExpansionHunter ExpansionHunterLib)
 add_executable(UnitTests
         tests/AlignMatrixTest.cpp
         tests/AlignmentBufferTest.cpp
+        tests/AnalysisModeTest.cpp
         tests/AlignmentClassifierTest.cpp
         tests/AlignmentSummaryTest.cpp
         tests/AlleleCheckerTest.cpp
         tests/CatalogLoadingPlotTest.cpp
+        tests/ChromosomeStrideTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
         tests/ConcurrentQueueTest.cpp
         tests/ConsensusSequenceTest.cpp
@@ -177,6 +179,7 @@ add_executable(UnitTests
         tests/HtsLowMemStreamingHelpersTest.cpp
         tests/LocusSpecificationPlotTest.cpp
         tests/LocusStatsTest.cpp
+        tests/MateExtractorMergeTest.cpp
         tests/ReadSupportCalculatorTest.cpp
         tests/ReadTest.cpp
         tests/RegionGraphTest.cpp
@@ -202,6 +205,7 @@ add_subdirectory(locus)
 add_subdirectory(reviewer)
 
 target_link_libraries(UnitTests ExpansionHunterLib GTest::GTest GTest::Main)
+target_compile_definitions(UnitTests PRIVATE EH_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 
 add_test(NAME UnitTests COMMAND UnitTests)
 

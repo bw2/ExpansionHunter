@@ -42,8 +42,7 @@ enum class AnalysisMode
     kSeeking,
     kStreaming,
     kLowMemStreaming,
-    kOptimizedStreaming,
-    kRegionParallelStreaming
+    kOptimizedStreaming
 };
 
 enum class LogLevel
@@ -159,8 +158,8 @@ public:
     int orientationPredictorKmerLen() const { return orientationPredictorKmerLen_; }
     int orientationPredictorMinKmerCount() const { return orientationPredictorMinKmerCount_; }
 
-    bool useImprovedGenotyping() const { return useImprovedGenotyping_; }
-    void setUseImprovedGenotyping(bool value) { useImprovedGenotyping_ = value; }
+    bool isOptimizedStreamingMode() const { return isOptimizedStreamingMode_; }
+    void setIsOptimizedStreamingMode(bool value) { isOptimizedStreamingMode_ = value; }
 
 private:
     int regionExtensionLength_;
@@ -173,7 +172,7 @@ private:
     int seedAffixTrimLength_;
     int orientationPredictorKmerLen_;
     int orientationPredictorMinKmerCount_;
-    bool useImprovedGenotyping_ = false;
+    bool isOptimizedStreamingMode_ = false;
 };
 
 // Per-locus parameters (settable from variant catalog) controlling genotyping
@@ -191,8 +190,8 @@ struct GenotyperParameters
     double minLocusCoverage;
     // Minimal number of reads spanning a variant breakpoint
     int minBreakpointSpanningReads = 5;
-    // Use geometry-based per-allele read-yield mixing weight (enabled in optimized-streaming mode)
-    bool useImprovedGenotyping = false;
+    // Cap the repeat tract at one read length in the per-allele read-yield mixing weight (enabled in optimized-streaming mode)
+    bool isOptimizedStreamingMode = false;
 };
 
 class ProgramParameters
