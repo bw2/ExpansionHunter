@@ -6,7 +6,7 @@ This modified version of ExpansionHunter introduces the following new features:
 - **New analysis modes**:
   - `--analysis-mode low-mem-streaming` is like `streaming` mode and produces nearly identical output, but uses much less memory (< 10Gb).
   - `--analysis-mode optimized-streaming` significantly speeds up analysis of large catalogs (> ~10k loci) by using simple heuristics to detect which loci can be confidently genotyped using only spanning reads, and then quickly computing their genotypes without running the full computationally-expensive ExpansionHunter genotyping algorithm. Since any given individual in the population will have no more than ~5k to 10k large expansions relative to the reference genome (see [[Weisburd 2023](https://pubmed.ncbi.nlm.nih.gov/37214979/)]), while genome-wide catalogs can have hundreds of thousands or millions of TR loci, this quick heuristic-based genotyping can be used for the majority of loci, yielding a 3x or more speedup depending on the catalog. The memory usage of this mode is also low (< 10Gb) and independent of catalog size, similar to `low-mem-streaming` mode.
-  - `June 11, 2026`: these two new modes now more fully support multi-threading via `--threads N`
+  - `June 11, 2026`: these two new modes now fully support multi-threading via `--threads N`
 - **Integrated read visualizations**: REViewer functionality is now built directly into ExpansionHunter, outputting SVG read pileup images without needing a separate post-processing step (see [VariantCatalog docs](docs/04_VariantCatalogFiles.md)).
   - `--plot-all` generates read visualizations for every locus
   - `--disable-all-plots` disables all image generation (overrides catalog settings)
