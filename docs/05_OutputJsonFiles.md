@@ -23,12 +23,19 @@ Repeat records contain the following fields.
 * `VariantSubtype` Either "Repeat" or "RareRepeat"
 * `Genotype` Repeat genotype given by the size of each repeat allele
 * `GenotypeConfidenceInterval` Size confidence interval for each repeat allele
+* `QuickGenotype` (optional) Boolean flag. When using
+  `--analysis-mode optimized-streaming`, this flag marks genotypes produced by the
+  fast heuristic path rather than the full genotyper. The field is absent for
+  full-genotyper calls, so a consumer should treat "absent" as `false`. On
+  `QuickGenotype` variants the allele quality metrics are approximations and some
+  are omitted — see
+  [AlleleQualityMetrics](07_AlleleQualityMetrics.md#fast-path-quickgenotype-rows).
 * `CountsOfSpanningReads` Summary of identified spanning reads given as an
    array with entries `(n, m)` where `n` is the number of repeat units spanned
-   by the flanking read and `m` is the number of such reads
-* `CountsOfFlankingReads` An analog of `CountsOfSpanningReads` for in-repeat
+   by the spanning read and `m` is the number of such reads
+* `CountsOfFlankingReads` An analog of `CountsOfSpanningReads` for flanking
   reads
-* `CountsOfInrepeatReads` An analog of `CountsOfSpanningReads` for spanning
+* `CountsOfInrepeatReads` An analog of `CountsOfSpanningReads` for in-repeat
   reads
 * `CountsOfHighQualityUnambiguousReads` (optional) Summary of high-quality
   unambiguous reads by allele size, in the same format as `CountsOfSpanningReads`.
@@ -56,6 +63,31 @@ Records for small variants contain the following fields.
 * `CountOfAltReads` Number of reads supporting the alt allele
 * `CountOfRefReads` Number of reads supporting the ref allele
 * `ReferenceRegion` Reference region of the variant
+
+## Skipped locus records
+
+In the streaming output modes (e.g. `--analysis-mode optimized-streaming`) the JSON is written
+incrementally, one locus record at a time. When a locus is skipped instead of
+analyzed, a compact placeholder is written under `LocusResults` in place of the
+usual locus result. It has a different shape than a normal locus record:
+
+* `LocusId` Locus identifier
+* `Status` Always `"skipped"` for these records
+* `Reason` Human-readable explanation of why the locus was skipped
+
+Example:
+```json
+"MY_LOCUS": {
+    "LocusId": "MY_LOCUS",
+    "Status": "skipped",
+    "Reason": "..."
+}
+```
+
+A consumer iterating over `LocusResults` should check for `"Status": "skipped"`
+and handle these records separately: they do not contain `Variants`, `Coverage`,
+`ReadLength`, `FragmentLength`, `AlleleCount`, or any of the other fields
+described above.
 
 ## Allele quality metrics
 

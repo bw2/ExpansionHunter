@@ -50,6 +50,29 @@ for homozygous or hemizygous calls, there is one entry.
 }
 ```
 
+## Fast-path (`QuickGenotype`) rows
+
+In `--analysis-mode optimized-streaming` some loci are genotyped by a fast heuristic
+(`processLocusFast`) instead of the full genotyper. Those variant records carry
+`"QuickGenotype": true` (see [Output JSON files](05_OutputJsonFiles.md)). On these
+rows the allele quality metrics differ from the full genotyper, so the set of
+fields below is **not** identical to a full-genotyper call:
+
+- **Omitted fields:** `QD`, `LeftFlankNormalizedDepth`, and
+  `RightFlankNormalizedDepth` are not computed and are absent from each allele
+  object. A consumer that uses these should treat their absence on a
+  `QuickGenotype` row as "not available" rather than as a failing (e.g. zero)
+  value.
+- **Approximated fields:** `Depth`, `HighQualityUnambiguousReads`,
+  `StrandBiasBinomialPhred`, `MeanInsertedBasesWithinRepeats`, and
+  `MeanDeletedBasesWithinRepeats` are derived from the high-quality spanning-read
+  counts rather than from full graph realignment. In particular,
+  `HighQualityUnambiguousReads` is just the per-allele spanning-read depth on the
+  fast path.
+
+Full-genotyper calls (those where the `QuickGenotype: true` field is absent)
+always carry the complete set of fields described below.
+
 ## Metric Definitions
 
 ### AlleleNumber
@@ -150,7 +173,7 @@ heterozygous calls) or lower-quality alignments.
 
 Width of the confidence interval normalized by allele size.
 
-**Formula:** `(CI_upper - CI_lower) / AlleleSize`
+**Formula:** `(CI_upper - CI_lower) / (AlleleSize + 1)`
 
 Smaller values indicate more precise genotype estimates. Values close to 0
 indicate high confidence; larger values indicate uncertainty.
