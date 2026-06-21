@@ -204,7 +204,7 @@ public:
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
-        bool initEnableConsensusSequences = true)
+        bool initEnableConsensusSequences = true, int initMaxReadsPerLocus = 5000)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -213,6 +213,7 @@ public:
         , skipHomRef_(initSkipHomRef)
         , skipMissingGenotypes_(initSkipMissingGenotypes)
         , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
+        , maxReadsPerLocus_(initMaxReadsPerLocus)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -252,6 +253,8 @@ public:
     bool skipHomRef() const { return skipHomRef_; }
     bool skipMissingGenotypes() const { return skipMissingGenotypes_; }
     bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
+    // Max reads processed per locus in low-mem/optimized streaming (reservoir-sampled); 0 = unlimited.
+    int maxReadsPerLocus() const { return maxReadsPerLocus_; }
 
     int threadCount;
     bool enableBamletOutput;
@@ -263,6 +266,7 @@ private:
     bool skipHomRef_;
     bool skipMissingGenotypes_;
     bool heuristicGenotypingOnly_;
+    int maxReadsPerLocus_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

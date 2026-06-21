@@ -88,9 +88,19 @@ FullRead decodeRead(const htshelpers::HtsFileStreamer& readStreamer) {
 }
 
 
+// 64-bit FNV-1a hash, used to derive a per-locus reservoir-sampling seed from the (stable) locusId so the
+// sample a locus retains is independent of catalog subsetting / thread count, keeping output byte-identical
+// across --threads.
+inline uint64_t fnv1a64(const std::string& s)
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (unsigned char c : s) { h ^= c; h *= 0x100000001b3ULL; }
+    return h;
+}
+
 struct LocusCache {
-    LocusCache(int locusIndex, const GenomicRegion& locusInterval)
-    : locusIndex(locusIndex), locusInterval(locusInterval) {}
+    LocusCache(int locusIndex, const GenomicRegion& locusInterval, const std::string& locusId)
+    : locusIndex(locusIndex), locusInterval(locusInterval), rngState_(fnv1a64(locusId)) {}
 
     // Stores all reads + mates that will be analyzed for a given locus.
     int locusIndex;
@@ -102,8 +112,68 @@ struct LocusCache {
     std::vector<shared_ptr<FullReadPair>> readPairs;
 
     // fragment ids already added to readPairs, used to avoid double-counting a far-away pair whose
-    // two ends are both contained in this locus window (each end is streamed in a separate iteration)
+    // two ends are both contained in this locus window (each end is streamed in a separate iteration).
+    // Bounded by the reservoir: once readPairs reaches the cap, admitFragment() stops inserting here, so
+    // this set never holds more than ~capPairs entries (see admitFragment).
     std::unordered_set<FragmentId> seenFragmentIds;
+
+    // Decide whether `fragmentId` should be offered to this locus, applying per-locus duplicate suppression.
+    // Returns true (admit) for a fragment not seen before. Once the reservoir is full (readPairs at capPairs)
+    // we stop tracking fragment ids — otherwise seenFragmentIds would grow to O(distinct reads) at the very
+    // pathological loci the cap exists to bound. Past that point a far-away pair whose two ends both land in
+    // this window may be offered twice, which only perturbs already-sampled over-cap loci and stays
+    // deterministic across --threads (the cap is reached at the same offer under any thread count). When the
+    // cap is disabled (capPairs == 0) this is exactly the previous unbounded dedup.
+    bool admitFragment(const FragmentId& fragmentId, std::size_t capPairs)
+    {
+        if (capPairs != 0 && readPairs.size() >= capPairs)
+        {
+            return true;
+        }
+        return seenFragmentIds.insert(fragmentId).second;
+    }
+
+    // Add a (deduped) read pair to this locus, keeping at most `capPairs` entries via reservoir sampling
+    // (Algorithm R). capPairs == 0 means no cap. While the locus is below the cap this is a plain
+    // push_back, so loci that never exceed the cap end up with exactly the same readPairs (in the same
+    // order) as without the cap — only over-cap loci (e.g. centromeric/satellite pileups) get sampled.
+    // The replacement choice uses a per-locus RNG seeded from the locusId, and reads are offered in
+    // coordinate-stream order (the same order under any --threads), so the retained sample is deterministic
+    // and identical across thread counts.
+    void offerReadPair(const shared_ptr<FullReadPair>& readPair, std::size_t capPairs)
+    {
+        if (capPairs == 0 || readPairs.size() < capPairs)
+        {
+            readPairs.push_back(readPair);
+        }
+        else
+        {
+            const uint64_t j = nextRandom(offeredCount_ + 1);  // uniform in [0, offeredCount_]
+            if (j < capPairs)
+            {
+                readPairs[j] = readPair;
+            }
+        }
+        ++offeredCount_;
+    }
+
+private:
+    // number of read pairs offered so far (before the current one); drives the reservoir replacement odds
+    uint64_t offeredCount_ = 0;
+    uint64_t rngState_;
+
+    // splitmix64, returning a value uniform in [0, bound). The modulo bias is negligible here (bound is at
+    // most a few million while the generator is full 64-bit), and avoiding <random> keeps the per-locus
+    // state at 8 bytes — important since one LocusCache exists per active locus.
+    uint64_t nextRandom(uint64_t bound)
+    {
+        rngState_ += 0x9E3779B97F4A7C15ULL;
+        uint64_t z = rngState_;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z = z ^ (z >> 31);
+        return z % bound;
+    }
 };
 
 
@@ -498,6 +568,12 @@ void doTheAnalysis(
         return;
     }
 
+    // Per-locus reservoir-sampling cap, expressed in read pairs. The user-facing --max-reads-per-locus is in
+    // reads, and each cached entry is a read pair (~2 reads), so halve it. <= 0 disables the cap; a positive
+    // value keeps at least 1 pair so a tiny setting can never be mistaken for "unlimited".
+    const std::size_t capReadPairsPerLocus = params.maxReadsPerLocus() <= 0
+        ? 0 : static_cast<std::size_t>(std::max(1, params.maxReadsPerLocus() / 2));
+
     int fastGenotypedCount = 0;
     int fullGenotypedCount = 0;
     int skippedCount = 0;
@@ -809,18 +885,19 @@ void doTheAnalysis(
                             locusDescription->locusContigIndex(),
                             locusDescription->locusAndFlanksStart(),
                             locusDescription->locusAndFlanksEnd()
-                        });
+                        },
+                        locusDescription->locusId());
                 }
                 shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
                 // de-duplicate in case the same fragment is encountered more than once for this locus
-                if (!locusCache->seenFragmentIds.insert(fullRead.r.fragmentId()).second) {
+                if (!locusCache->admitFragment(fullRead.r.fragmentId(), capReadPairsPerLocus)) {
                     continue;
                 }
                 if (singleEndedRead == nullptr) {
                     singleEndedRead = std::make_shared<FullReadPair>();
                     singleEndedRead->firstMate = fullRead;
                 }
-                locusCache->readPairs.push_back(singleEndedRead);
+                locusCache->offerReadPair(singleEndedRead, capReadPairsPerLocus);
             }
             continue;
         }
@@ -904,12 +981,13 @@ void doTheAnalysis(
             shared_ptr<LocusCache> locusCache;
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
                 //create a new LocusCache object add it to the locusCachesMap and locusCaches list
-                locusCache = std::make_shared<LocusCache>(locusIndex, 
+                locusCache = std::make_shared<LocusCache>(locusIndex,
                     GenomicRegion {
                         locusDescription->locusContigIndex(),
                         locusDescription->locusAndFlanksStart(),
                         locusDescription->locusAndFlanksEnd()
-                    });
+                    },
+                    locusDescription->locusId());
                 locusCachesMap[locusIndex] = locusCache;
             }
 
@@ -918,7 +996,7 @@ void doTheAnalysis(
             // skip if this fragment's pair was already added to this locus (e.g. a far-away pair whose
             // upstream and downstream ends are both contained in this locus window are streamed, and
             // processed, in two separate iterations)
-            if (!locusCache->seenFragmentIds.insert(fullRead.r.fragmentId()).second) {
+            if (!locusCache->admitFragment(fullRead.r.fragmentId(), capReadPairsPerLocus)) {
                 continue;
             }
 
@@ -926,7 +1004,7 @@ void doTheAnalysis(
                 readPair = std::make_shared<FullReadPair>(fullRead, fullMate);
             }
 
-            locusCache->readPairs.push_back(readPair);
+            locusCache->offerReadPair(readPair, capReadPairsPerLocus);
         }
 
 		// if all loci have been processed, break out of the loop
