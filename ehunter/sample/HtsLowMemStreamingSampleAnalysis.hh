@@ -37,4 +37,9 @@ namespace ehunter
 void htsLowMemStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionCatalog,
 	const ProgramParameters& programParams, Reference& reference, BamletWriterPtr bamletWriter);
 
+// Genome-wide typical read length: the max sequence length over the first ~1000 primary aligned reads
+// (fallback 150 bp if none are found). Computed once at startup and reused for read-length-dependent
+// catalog filtering as well as the low-mem-streaming far-away-mate window.
+int probeTypicalReadLength(const InputPaths& inputPaths);
+
 }

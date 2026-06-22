@@ -24,6 +24,7 @@
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/device/file.hpp>
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -45,6 +46,8 @@
 #include "core/Parameters.hh"
 #include "io/BamletWriter.hh"
 #include "io/CatalogLoading.hh"
+#include "io/GraphBlueprint.hh"
+#include "io/StringUtils.hh"
 #include "locus/LocusSpecification.hh"
 #include "io/JsonWriter.hh"
 #include "io/ParameterLoading.hh"
@@ -83,6 +86,74 @@ static void filterSkippedLoci(
 
     regionCatalog = std::move(filteredRegionCatalog);
     sampleFindings = std::move(filteredSampleFindings);
+}
+
+// Drop catalog loci that cannot be reliably genotyped from reads of the given length: those whose repeat
+// reference region is wider than 2x the read length, or whose repeat motif is longer than half the read
+// length. This mirrors the existing ">5 Ns in the flanks" catalog filter (see extendLocusStructure in
+// io/LocusSpecDecoding.cpp): each dropped locus is logged and excluded from all output.
+static void filterLociByReadLength(LocusDescriptionCatalog& locusDescriptionCatalog, int typicalReadLength)
+{
+    if (typicalReadLength <= 0)
+    {
+        return;
+    }
+
+    LocusDescriptionCatalog keptLoci;
+    keptLoci.reserve(locusDescriptionCatalog.size());
+    for (auto& locusDescription : locusDescriptionCatalog)
+    {
+        const int64_t referenceRegionWidth
+            = locusDescription.locusWithoutFlanksEnd() - locusDescription.locusWithoutFlanksStart();
+        if (referenceRegionWidth > 2 * static_cast<int64_t>(typicalReadLength))
+        {
+            spdlog::warn(
+                "Skipping locus {}: reference region width ({} bp) is more than 2x the read length ({} bp)",
+                locusDescription.locusId(), add_commas_at_thousands(static_cast<long>(referenceRegionWidth)),
+                typicalReadLength);
+            continue;
+        }
+
+        size_t largestMotifLength = 0;
+        try
+        {
+            for (const auto& feature : decodeFeaturesFromRegex(locusDescription.locusStructure()))
+            {
+                if (feature.type == GraphBlueprintFeatureType::kSkippableRepeat
+                    || feature.type == GraphBlueprintFeatureType::kUnskippableRepeat)
+                {
+                    largestMotifLength = std::max(largestMotifLength, feature.sequences.front().length());
+                }
+            }
+        }
+        catch (const std::exception&)
+        {
+            // Leave structurally-malformed loci for the normal decode path to report/skip rather than
+            // dropping them here for an unrelated parse error.
+            keptLoci.push_back(std::move(locusDescription));
+            continue;
+        }
+
+        if (2 * static_cast<int64_t>(largestMotifLength) > typicalReadLength)
+        {
+            spdlog::warn(
+                "Skipping locus {}: repeat motif length ({} bp) is more than half the read length ({} bp)",
+                locusDescription.locusId(), add_commas_at_thousands(static_cast<unsigned long>(largestMotifLength)),
+                typicalReadLength);
+            continue;
+        }
+
+        keptLoci.push_back(std::move(locusDescription));
+    }
+
+    const size_t numSkipped = locusDescriptionCatalog.size() - keptLoci.size();
+    if (numSkipped > 0)
+    {
+        spdlog::info("Skipped {} of {} loci whose motif or reference region is too large for the {} bp read length",
+            add_commas_at_thousands(static_cast<unsigned long>(numSkipped)),
+            add_commas_at_thousands(static_cast<unsigned long>(locusDescriptionCatalog.size())), typicalReadLength);
+    }
+    locusDescriptionCatalog = std::move(keptLoci);
 }
 
 template <typename T> static void writeToFile(std::string fileName, T streamable)
@@ -165,6 +236,17 @@ int main(int argc, char** argv)
             throw std::runtime_error(
                 "No loci to analyze: the variant catalog is empty (check the catalog file and any "
                 "--locus / --region / --start-with filters)");
+        }
+
+        // Skip loci that cannot be reliably genotyped at this sample's read length: those whose repeat
+        // motif is larger than half the read length, or whose reference region is wider than 2x the read
+        // length. Mirrors the >5-Ns-in-flanks catalog filter and applies to all analysis modes.
+        filterLociByReadLength(locusDescriptionCatalog, probeTypicalReadLength(inputPaths));
+        if (locusDescriptionCatalog.empty())
+        {
+            throw std::runtime_error(
+                "No loci to analyze: every catalog locus was filtered out because its motif is larger than "
+                "half the read length or its reference region is wider than 2x the read length");
         }
 
         const HeuristicParameters& heuristicParams = params.heuristics();
