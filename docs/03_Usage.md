@@ -44,7 +44,7 @@ optional arguments.
    to search for informative reads. Set to 1000 by default.
 
 * `--max-depth <int>` In `low-mem-streaming` and `optimized-streaming` modes,
-   caps the average read depth processed per locus using reservoir sampling, to
+   limits the number of reads processed per locus using reservoir sampling, to
    bound memory and runtime at pathological high-coverage loci (e.g.
    centromeric/satellite repeats). The cap is per-locus and scales with the
    locus window width, so all loci are limited to the same depth rather than the
