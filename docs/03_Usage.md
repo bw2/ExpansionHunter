@@ -46,11 +46,8 @@ optional arguments.
 * `--max-depth <int>` In `low-mem-streaming` and `optimized-streaming` modes,
    limits the number of reads processed per locus using reservoir sampling, to
    bound memory and runtime at extremely high-coverage loci (e.g.
-   centromeric/satellite repeats). The cap is per-locus and scales with the
-   locus window width, so all loci are limited to the same depth rather than the
-   same absolute read count. Loci below the cap are unaffected, and the retained
-   sample is deterministic and identical across `--threads`. Set to 100 by
-   default; set to 0 to disable the cap.
+   centromeric/satellite repeats) where millions of reads can otherwise pile up.
+   Set to 100 by default; set to 0 to disable the cap.
 
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
   path or URL explicitly, instead of auto-detecting it from the `--reads` path.
