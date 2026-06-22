@@ -204,7 +204,7 @@ public:
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
-        bool initEnableConsensusSequences = true, int initMaxDepth = 100, bool initOutputGenotypeTiming = false)
+        bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)

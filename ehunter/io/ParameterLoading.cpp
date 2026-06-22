@@ -83,7 +83,7 @@ struct UserParameters
     bool skipHomRef = false;
     bool skipMissingGenotypes = false;
     bool heuristicGenotypingOnly = false;
-    int maxDepth = 100;
+    int maxDepth = 150;
     bool outputGenotypeTiming = false;
 };
 
@@ -130,7 +130,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
         ("quick-heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, genotype only loci resolvable from spanning-read heuristics and skip full genotyping for larger/more complex alleles")
-        ("max-depth", po::value<int>(&params.maxDepth)->default_value(100), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
+        ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
         ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to low-mem-streaming and optimized-streaming modes.")
     ;
     // clang-format on
