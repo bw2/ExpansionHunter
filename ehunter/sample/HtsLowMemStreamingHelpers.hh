@@ -50,8 +50,8 @@ FastReadAnalysisResult processRead(
 
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
-    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, IterativeJsonWriter& jsonWriter,
-    IterativeVcfWriter& vcfWriter);
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
 
 // Emit a no-call record for a locus with zero coverage, identical to what seeking/streaming mode produce,
 // without running genotyping. For single-region loci it builds a flankless stub LocusSpecification

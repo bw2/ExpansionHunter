@@ -176,6 +176,11 @@ struct LocusCache {
     // Per-locus reservoir size in read pairs; 0 = unlimited. Derived from --max-depth (see constructor).
     std::size_t maxReadPairs() const { return maxReadPairs_; }
 
+    // True if this locus exceeded its reservoir cap — more read pairs were offered than maxReadPairs_, so the
+    // retained set is a reservoir sample (Algorithm R) rather than every read. False when the cap is disabled
+    // (maxReadPairs_ == 0) or the locus stayed at/under the cap (its read set is complete, byte-identical to no cap).
+    bool reservoirSampled() const { return maxReadPairs_ != 0 && offeredCount_ > maxReadPairs_; }
+
 private:
     // number of read pairs offered so far (before the current one); drives the reservoir replacement odds
     uint64_t offeredCount_ = 0;
@@ -245,7 +250,7 @@ bool readIsContainedInAnyExtractionRegion(
 // error isolation of the serial path.
 LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& reference, unsigned locusIndex,
                   const LocusDescription& locusDescription,
-                  const std::vector<shared_ptr<FullReadPair>>& readPairs,
+                  const std::vector<shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
                   graphtools::AlignerSelector& alignerSelector,
                   BamletWriterPtr bamletWriter) {
 
@@ -254,6 +259,12 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
     out.locusId = locusDescription.locusId();
 
     try {
+        // Per-locus full-genotyping timing (thread-CPU clock) starts here so it covers graph decode + read
+        // alignment + analyze(); only sampled under --output-genotype-timing.
+        const bool recordGenotypingTime = params.outputGenotypeTiming();
+        timespec genotypingStart{};
+        if (recordGenotypingTime) { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingStart); }
+
         const Sex& sampleSex = params.sample().sex();
         // convert the lite-weight LocusDescription object into the heavier LocusSpecification
         LocusSpecification locusSpec = decodeLocusSpecification(locusDescription, reference, params.heuristics(), true);
@@ -344,6 +355,27 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
 
         // genotype the locus
         out.findings = out.analyzer->analyze(sampleSex, boost::none, params.outputPaths().outputPrefix());
+
+        // Thread-CPU genotyping time for this locus (immune to contention from the other --threads workers),
+        // measured only under --output-genotype-timing.
+        boost::optional<double> genotypingTimeMillis;
+        if (recordGenotypingTime) {
+            timespec genotypingEnd{};
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingEnd);
+            genotypingTimeMillis = (genotypingEnd.tv_sec - genotypingStart.tv_sec) * 1e3
+                + (genotypingEnd.tv_nsec - genotypingStart.tv_nsec) / 1e6;
+        }
+
+        // Annotate each repeat variant's findings: ReservoirSampling when this locus's read set was capped by
+        // --max-depth (mirrors the fast path's setReservoirSampling), and GenotypingTimeMillis when timing is on.
+        if (reservoirSampled || genotypingTimeMillis) {
+            for (auto& variantIdAndFindings : out.findings.findingsForEachVariant) {
+                if (auto* repeatFindings = dynamic_cast<RepeatFindings*>(variantIdAndFindings.second.get())) {
+                    if (reservoirSampled) { repeatFindings->setReservoirSampling(true); }
+                    if (genotypingTimeMillis) { repeatFindings->setGenotypingTimeMillis(*genotypingTimeMillis); }
+                }
+            }
+        }
 
         // --skip-hom-ref / --skip-missing-genotypes: genotyped but emit no record (still counts as full-genotyped)
         out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
@@ -705,7 +737,8 @@ void doTheAnalysis(
             bool needToProcessSlowly = true;
             if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
                 const bool doneGenotyping = processLocusFast(params, reference,
-                    locusDescriptionCatalog[locusIndex], locusCache->readPairs, jsonWriter, vcfWriter);
+                    locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
+                    jsonWriter, vcfWriter);
 
                 needToProcessSlowly = !doneGenotyping;
                 if (doneGenotyping) {
@@ -719,7 +752,8 @@ void doTheAnalysis(
                     jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
                 } else {
                     LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
-                        locusDescriptionCatalog[locusIndex], locusCache->readPairs, alignerSelector, bamletWriter);
+                        locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
+                        alignerSelector, bamletWriter);
                     writeOutput(out);
                 }
             }
@@ -1069,12 +1103,10 @@ void doTheAnalysis(
     callCounts.full = fullGenotypedCount;
     callCounts.skipped = skippedCount;
     callCounts.zeroCoverage = zeroCoverageCount;
-    // Whole-file mode (--threads 1) is the only place this call sees the run-wide totals, so it logs the
-    // summary itself. At --threads >1 each per-contig call stays silent and the orchestrator sums the
-    // per-worker tallies and logs one aggregate summary.
-    if (showProgress) {
-        logGenotypingSummary(params, callCounts);
-    }
+    // The genotyping summary is logged once by the orchestrator (htsLowMemStreamingSampleAnalysis) after this
+    // returns -- in whole-file mode from the counts filled here, in --threads >1 mode from the summed per-worker
+    // tallies -- so it always prints exactly once at the end, independent of showProgress (the per-contig progress
+    // gate). This call only accumulates its tallies into the caller's counts.
     counts.fast += callCounts.fast;
     counts.full += callCounts.full;
     counts.skipped += callCounts.skipped;
@@ -1130,9 +1162,10 @@ void htsLowMemStreamingSampleAnalysis(
 
         IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields());
         IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
-        GenotypingCounts counts;  // filled by doTheAnalysis; it also logs the summary itself in whole-file mode
+        GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
         doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
                       farAwayMateDistanceThreshold, typicalReadLength, jsonWriter, vcfWriter, {}, counts);
+        logGenotypingSummary(programParams, counts);
         return;
     }
 

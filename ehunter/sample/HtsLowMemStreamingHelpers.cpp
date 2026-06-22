@@ -410,8 +410,8 @@ FastReadAnalysisResult processRead(
 
 bool processLocusFast(
     const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
-    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, IterativeJsonWriter& jsonWriter,
-    IterativeVcfWriter& vcfWriter) {
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter) {
 
     if (locusDescription.referenceRegions().size() != 1) {
         // fast processing is only implemented for loci with a single repeat region
@@ -777,6 +777,7 @@ bool processLocusFast(
 		countsOfSpanningReads, countsOfFlankingReads, countsOfInrepeatReads,
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());
 	repeatFindingsPtr->setQuickGenotype(true);  // genotyped via the fast path
+	repeatFindingsPtr->setReservoirSampling(reservoirSampled);  // read set capped by --max-depth
 	if (qualityMetrics.hasMetrics) {
 		repeatFindingsPtr->setAlleleQualityMetrics(qualityMetrics);
 		repeatFindingsPtr->setCountsOfHighQualityUnambiguousReads(countsOfHighQualityUnambiguousReads);

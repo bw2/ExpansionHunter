@@ -204,7 +204,7 @@ public:
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
-        bool initEnableConsensusSequences = true, int initMaxDepth = 100)
+        bool initEnableConsensusSequences = true, int initMaxDepth = 100, bool initOutputGenotypeTiming = false)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -214,6 +214,7 @@ public:
         , skipMissingGenotypes_(initSkipMissingGenotypes)
         , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
         , maxDepth_(initMaxDepth)
+        , outputGenotypeTiming_(initOutputGenotypeTiming)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -257,6 +258,9 @@ public:
     // reservoir cap is derived from this depth and the window width (reference repeat regions + flanks), so the
     // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingSampleAnalysis.
     int maxDepth() const { return maxDepth_; }
+    // When true (--output-genotype-timing), record each full-genotyped locus's thread-CPU genotyping time
+    // (milliseconds) in the JSON as GenotypingTimeMillis. Off by default since timing makes output non-deterministic.
+    bool outputGenotypeTiming() const { return outputGenotypeTiming_; }
 
     int threadCount;
     bool enableBamletOutput;
@@ -269,6 +273,7 @@ private:
     bool skipMissingGenotypes_;
     bool heuristicGenotypingOnly_;
     int maxDepth_;
+    bool outputGenotypeTiming_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

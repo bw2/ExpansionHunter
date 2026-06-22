@@ -115,6 +115,18 @@ public:
 
     bool quickGenotype() const { return quickGenotype_; }
 
+    // True when this locus's read set was reservoir-sampled because it exceeded the --max-depth cap
+    // (see LocusCache in HtsLowMemStreamingSampleAnalysis.cpp). Emitted as "ReservoirSampling": true.
+    void setReservoirSampling(bool reservoirSampling) { reservoirSampling_ = reservoirSampling; }
+
+    bool reservoirSampling() const { return reservoirSampling_; }
+
+    // Thread-CPU time (milliseconds) spent fully genotyping this locus, recorded only under --output-genotype-timing.
+    // Unset for fast-path genotypes (and when the flag is off). Emitted as "GenotypingTimeMillis".
+    void setGenotypingTimeMillis(double genotypingTimeMillis) { genotypingTimeMillis_ = genotypingTimeMillis; }
+
+    boost::optional<double> genotypingTimeMillis() const { return genotypingTimeMillis_; }
+
     // Compares core findings only: read counts and genotype.
     // Deliberately excludes:
     // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
@@ -144,6 +156,8 @@ private:
     std::vector<std::string> consensusReadSupport_; // Per-position read support as digit string, one per allele
     CountTable countsOfHighQualityUnambiguousReads_; // Counts by allele size (repeat units)
     bool quickGenotype_ = false;                     // genotyped via the fast path (processLocusFast)
+    bool reservoirSampling_ = false;                 // read set reservoir-sampled due to the --max-depth cap
+    boost::optional<double> genotypingTimeMillis_;   // thread-CPU full-genotyping time (ms), --output-genotype-timing
 };
 
 class SmallVariantFindings : public VariantFindings

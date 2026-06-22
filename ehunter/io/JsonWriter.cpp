@@ -176,6 +176,18 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
         record_["QuickGenotype"] = true;
     }
 
+    // Only emitted for loci whose read set was reservoir-sampled because it exceeded the --max-depth cap.
+    if (repeatFindings.reservoirSampling())
+    {
+        record_["ReservoirSampling"] = true;
+    }
+
+    // Only emitted under --output-genotype-timing (full-genotyped loci); off by default to keep output deterministic.
+    if (repeatFindings.genotypingTimeMillis())
+    {
+        record_["GenotypingTimeMillis"] = round3(*repeatFindings.genotypingTimeMillis());
+    }
+
     const auto rfc1Status(repeatFindings.getRFC1Status());
     if (rfc1Status)
     {
