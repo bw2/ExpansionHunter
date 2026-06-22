@@ -181,6 +181,10 @@ struct LocusCache {
     // (maxReadPairs_ == 0) or the locus stayed at/under the cap (its read set is complete, byte-identical to no cap).
     bool reservoirSampled() const { return maxReadPairs_ != 0 && offeredCount_ > maxReadPairs_; }
 
+    // Total read pairs offered to this locus (admitted + dropped). Exceeds maxReadPairs() exactly when
+    // reservoir sampling was triggered.
+    uint64_t offeredCount() const { return offeredCount_; }
+
 private:
     // number of read pairs offered so far (before the current one); drives the reservoir replacement odds
     uint64_t offeredCount_ = 0;
@@ -732,6 +736,12 @@ void doTheAnalysis(
                 continue;
             }
             const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
+
+            if (locusCache->reservoirSampled()) {
+                spdlog::info("Reservoir-sampled locus {} down to {} read pairs (offered {}, exceeded --max-depth {})",
+                    locusDescriptionCatalog[locusIndex].locusId(), locusCache->maxReadPairs(),
+                    locusCache->offeredCount(), params.maxDepth());
+            }
 
             // TODO check if # of reads >= minLocusCoverage and skip locus if not
             bool needToProcessSlowly = true;
