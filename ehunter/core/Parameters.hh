@@ -258,8 +258,9 @@ public:
     // reservoir cap is derived from this depth and the window width (reference repeat regions + flanks), so the
     // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingSampleAnalysis.
     int maxDepth() const { return maxDepth_; }
-    // When true (--output-genotype-timing), record each full-genotyped locus's thread-CPU genotyping time
-    // (milliseconds) in the JSON as GenotypingTimeMillis. Off by default since timing makes output non-deterministic.
+    // When true (--output-genotype-timing), record each locus's thread-CPU genotyping time (milliseconds) in
+    // the JSON as GenotypingTimeMillis, on both the full-genotyper and optimized-streaming fast paths.
+    // Off by default since timing makes output non-deterministic.
     bool outputGenotypeTiming() const { return outputGenotypeTiming_; }
 
     int threadCount;

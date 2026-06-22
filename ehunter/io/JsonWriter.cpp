@@ -182,7 +182,7 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
         record_["ReservoirSampling"] = true;
     }
 
-    // Only emitted under --output-genotype-timing (full-genotyped loci); off by default to keep output deterministic.
+    // Only emitted under --output-genotype-timing (full-genotyped and fast-path loci); off by default to keep output deterministic.
     if (repeatFindings.genotypingTimeMillis())
     {
         record_["GenotypingTimeMillis"] = round3(*repeatFindings.genotypingTimeMillis());

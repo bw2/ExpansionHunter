@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <htslib/sam.h>
 #include <htslib/hts.h>
 
@@ -413,6 +414,14 @@ bool processLocusFast(
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
     IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter) {
 
+    // Per-locus fast-path timing (thread-CPU clock), mirroring the full-genotyper path in
+    // HtsLowMemStreamingSampleAnalysis.cpp; covers graph decode + read processing + heuristic genotyping.
+    // Only sampled under --output-genotype-timing. Started before the structural fall-back checks below; the
+    // measured value is only read on the success path that actually emits a fast-path genotype.
+    const bool recordGenotypingTime = params.outputGenotypeTiming();
+    timespec genotypingStart{};
+    if (recordGenotypingTime) { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingStart); }
+
     if (locusDescription.referenceRegions().size() != 1) {
         // fast processing is only implemented for loci with a single repeat region
         return false;
@@ -778,6 +787,13 @@ bool processLocusFast(
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());
 	repeatFindingsPtr->setQuickGenotype(true);  // genotyped via the fast path
 	repeatFindingsPtr->setReservoirSampling(reservoirSampled);  // read set capped by --max-depth
+	if (recordGenotypingTime) {
+		timespec genotypingEnd{};
+		clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingEnd);
+		repeatFindingsPtr->setGenotypingTimeMillis(
+			(genotypingEnd.tv_sec - genotypingStart.tv_sec) * 1e3
+			+ (genotypingEnd.tv_nsec - genotypingStart.tv_nsec) / 1e6);
+	}
 	if (qualityMetrics.hasMetrics) {
 		repeatFindingsPtr->setAlleleQualityMetrics(qualityMetrics);
 		repeatFindingsPtr->setCountsOfHighQualityUnambiguousReads(countsOfHighQualityUnambiguousReads);

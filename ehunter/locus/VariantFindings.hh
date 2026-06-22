@@ -121,8 +121,9 @@ public:
 
     bool reservoirSampling() const { return reservoirSampling_; }
 
-    // Thread-CPU time (milliseconds) spent fully genotyping this locus, recorded only under --output-genotype-timing.
-    // Unset for fast-path genotypes (and when the flag is off). Emitted as "GenotypingTimeMillis".
+    // Thread-CPU time (milliseconds) spent genotyping this locus, recorded only under --output-genotype-timing
+    // (on both the full-genotyper and optimized-streaming fast paths). Unset when the flag is off.
+    // Emitted as "GenotypingTimeMillis".
     void setGenotypingTimeMillis(double genotypingTimeMillis) { genotypingTimeMillis_ = genotypingTimeMillis; }
 
     boost::optional<double> genotypingTimeMillis() const { return genotypingTimeMillis_; }
