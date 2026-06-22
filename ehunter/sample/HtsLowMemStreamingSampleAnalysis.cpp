@@ -738,9 +738,10 @@ void doTheAnalysis(
             const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
 
             if (locusCache->reservoirSampled()) {
-                spdlog::info("Reservoir-sampled locus {} down to {} read pairs (offered {}, exceeded --max-depth {})",
-                    locusDescriptionCatalog[locusIndex].locusId(), locusCache->maxReadPairs(),
-                    locusCache->offeredCount(), params.maxDepth());
+                spdlog::info("Locus {} exceeded --max-depth ({}) and was reservoir-sampled down to {} read pairs "
+                             "({:.1f}% of the {} total available)",
+                    locusDescriptionCatalog[locusIndex].locusId(), params.maxDepth(), locusCache->maxReadPairs(),
+                    100.0 * locusCache->maxReadPairs() / locusCache->offeredCount(), locusCache->offeredCount());
             }
 
             // TODO check if # of reads >= minLocusCoverage and skip locus if not
