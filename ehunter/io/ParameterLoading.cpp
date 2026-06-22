@@ -83,7 +83,7 @@ struct UserParameters
     bool skipHomRef = false;
     bool skipMissingGenotypes = false;
     bool heuristicGenotypingOnly = false;
-    int maxReadsPerLocus = 5000;
+    int maxDepth = 100;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -129,7 +129,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
         ("quick-heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, genotype only loci resolvable from spanning-read heuristics and skip full genotyping for larger/more complex alleles")
-        ("max-reads-per-locus", po::value<int>(&params.maxReadsPerLocus)->default_value(5000), "In low-mem-streaming/optimized-streaming modes, cap the number of reads processed per locus using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats); 0 disables the cap")
+        ("max-depth", po::value<int>(&params.maxDepth)->default_value(100), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
     ;
     // clang-format on
 
@@ -519,7 +519,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences,
-        userParams.maxReadsPerLocus);
+        userParams.maxDepth);
 }
 
 }

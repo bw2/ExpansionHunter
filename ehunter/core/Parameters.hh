@@ -204,7 +204,7 @@ public:
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
-        bool initEnableConsensusSequences = true, int initMaxReadsPerLocus = 5000)
+        bool initEnableConsensusSequences = true, int initMaxDepth = 100)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -213,7 +213,7 @@ public:
         , skipHomRef_(initSkipHomRef)
         , skipMissingGenotypes_(initSkipMissingGenotypes)
         , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
-        , maxReadsPerLocus_(initMaxReadsPerLocus)
+        , maxDepth_(initMaxDepth)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -253,8 +253,10 @@ public:
     bool skipHomRef() const { return skipHomRef_; }
     bool skipMissingGenotypes() const { return skipMissingGenotypes_; }
     bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
-    // Max reads processed per locus in low-mem/optimized streaming (reservoir-sampled); 0 = unlimited.
-    int maxReadsPerLocus() const { return maxReadsPerLocus_; }
+    // Target max average base-level depth over the locus window in low-mem/optimized streaming. Each locus's
+    // reservoir cap is derived from this depth and the window width (reference repeat regions + flanks), so the
+    // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingSampleAnalysis.
+    int maxDepth() const { return maxDepth_; }
 
     int threadCount;
     bool enableBamletOutput;
@@ -266,7 +268,7 @@ private:
     bool skipHomRef_;
     bool skipMissingGenotypes_;
     bool heuristicGenotypingOnly_;
-    int maxReadsPerLocus_;
+    int maxDepth_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;
