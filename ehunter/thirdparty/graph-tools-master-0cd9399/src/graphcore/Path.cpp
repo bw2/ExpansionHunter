@@ -35,11 +35,16 @@ namespace graphtools
 
 void Path::assertValidity() const
 {
+    // These guard against malformed paths (programmer error), not valid-input conditions, and run on every
+    // Path construction (hot in alignment). assertConnected() in particular loops hasEdge() over the path.
+    // Compiled out under NDEBUG (release) to remove the per-construction sweep.
+#ifndef NDEBUG
     assertNonEmpty();
     assertFirstNodePosValid();
     assertLastNodePosValid();
     assertPositionsOrdered();
     assertConnected();
+#endif
 }
 
 void Path::assertPositionsOrdered() const

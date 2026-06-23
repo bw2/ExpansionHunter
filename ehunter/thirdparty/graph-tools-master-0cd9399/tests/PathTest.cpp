@@ -44,34 +44,46 @@ TEST(CreatingPath, ZeroLengthPathSpanningAnEdge_NoExceptionThrown)
 
 #ifdef _DEBUG
 
+// Path::assertValidity (and the per-check helpers it calls) is compiled out under NDEBUG (release) for
+// speed, so these malformed-path constructions only throw in debug builds. See Path.cpp.
 TEST(CreatingPath, PathWithUnorderedNodes_ExceptionThrown)
 {
     Graph graph = makeStrGraph("TTT", "AT", "CCCCC");
+#ifndef NDEBUG
     ASSERT_ANY_THROW(Path(&graph, 1, { 2, 1 }, 1));
+#endif
 }
 
 TEST(CreatingPath, PathStartingOutsideOfNodesequence_ExceptionThrown)
 {
     Graph graph = makeStrGraph("TTT", "AT", "CCCCC");
+#ifndef NDEBUG
     ASSERT_ANY_THROW(Path(&graph, 4, { 0, 1, 2 }, 1));
+#endif
 }
 
 TEST(CreatingPath, PathEndingOutsideOfNodesequence_ExceptionThrown)
 {
     Graph graph = makeStrGraph("TTT", "AT", "CCCCC");
+#ifndef NDEBUG
     ASSERT_ANY_THROW(Path(&graph, 3, { 0, 1, 2 }, 10));
+#endif
 }
 
 TEST(CreatingPath, PathWithEndBeforeStart_ExceptionThrown)
 {
     Graph graph = makeStrGraph("TTT", "AT", "CCCCC");
+#ifndef NDEBUG
     ASSERT_ANY_THROW(Path(&graph, 3, { 0 }, 1));
+#endif
 }
 
 TEST(CreatingPath, DisconnectedPath_ExceptionThrown)
 {
     Graph graph = makeSwapGraph("TTT", "AT", "GG", "CCCCC");
+#ifndef NDEBUG
     ASSERT_ANY_THROW(Path(&graph, 0, { 0, 3 }, 0));
+#endif
 }
 
 #endif

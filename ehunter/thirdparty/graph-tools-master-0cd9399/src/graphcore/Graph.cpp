@@ -41,22 +41,7 @@ void Graph::init(size_t numnodes_)
     reverse_adjacency_list_.resize(numnodes_);
 }
 
-void Graph::assertNodeExists(NodeId node_id) const
-{
-    if (node_id >= nodes_.size())
-    {
-        throw std::logic_error("Node with id " + to_string(node_id) + " does not exist");
-    }
-}
-
-void Graph::assertEdgeExists(NodeIdPair node_id_pair) const
-{
-    if (!hasEdge(node_id_pair.first, node_id_pair.second))
-    {
-        throw std::logic_error(
-            "There is no edge between " + to_string(node_id_pair.first) + " and " + to_string(node_id_pair.second));
-    }
-}
+// assertNodeExists / assertEdgeExists are now inline-defined (and NDEBUG-gated) in Graph.hh.
 
 void assertValidSequence(string const& seq)
 {

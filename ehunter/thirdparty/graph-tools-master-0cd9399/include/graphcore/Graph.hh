@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <iostream>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -93,8 +94,31 @@ public:
 
 private:
     void init(size_t num_nodes);
-    void assertNodeExists(NodeId node_id) const;
-    void assertEdgeExists(NodeIdPair edge) const;
+    // Validity guards against programmer error (invalid node/edge ids). Compiled out under NDEBUG (release):
+    // they sit on hot accessors (nodeSeq/nodeName/addEdge) and only catch bugs, never valid-input conditions.
+    void assertNodeExists(NodeId node_id) const
+    {
+#ifndef NDEBUG
+        if (node_id >= nodes_.size())
+        {
+            throw std::logic_error("Node with id " + std::to_string(node_id) + " does not exist");
+        }
+#else
+        (void)node_id;
+#endif
+    }
+    void assertEdgeExists(NodeIdPair edge) const
+    {
+#ifndef NDEBUG
+        if (!hasEdge(edge.first, edge.second))
+        {
+            throw std::logic_error(
+                "There is no edge between " + std::to_string(edge.first) + " and " + std::to_string(edge.second));
+        }
+#else
+        (void)edge;
+#endif
+    }
     std::vector<Node> nodes_;
     std::unordered_map<NodeIdPair, Labels> edge_labels_;
     AdjacencyList adjacency_list_;

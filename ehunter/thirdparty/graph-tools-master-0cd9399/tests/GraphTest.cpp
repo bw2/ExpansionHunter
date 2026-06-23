@@ -44,8 +44,12 @@ TEST(NodeNameManipulation, TypicalNode_NodeNameSet)
 TEST(NodeNameManipulation, NonexistingNode_ExceptionRaised)
 {
     Graph graph(1);
+    // assertNodeExists is compiled out under NDEBUG (release) for speed, so these checks only throw in
+    // debug builds. See Graph.hh.
+#ifndef NDEBUG
     ASSERT_ANY_THROW(graph.setNodeName(1, "LF"));
     ASSERT_ANY_THROW(graph.nodeName(1));
+#endif
 }
 
 TEST(NodeSequenceManipulation, TypicalSequence_SequenceSet)
