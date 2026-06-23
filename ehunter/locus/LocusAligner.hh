@@ -22,6 +22,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 #include <boost/optional.hpp>
 
@@ -69,6 +71,20 @@ private:
     OrientationPredictor orientationPredictor_;
     BamletWriterPtr writer_;
     AlignmentBufferPtr alignmentBuffer_;
+
+    // Per-locus memoization of single-read alignment. align(Read&, AlignerSelector&) depends only on the
+    // read sequence, so identical sequences in a deep pileup (common on wide/repetitive loci) get re-aligned
+    // redundantly. Cache the orientation decision + resulting alignment keyed by the read's original sequence
+    // and reuse them; this is byte-identical to recomputing. The cache lives for the LocusAligner's lifetime
+    // (one locus) and is only ever touched by a single thread (each LocusAnalyzer queue runs on one thread),
+    // so no locking is needed. Insertion stops at kMaxAlignCacheEntries to bound memory on pathological loci.
+    struct CachedAlign
+    {
+        OrientationPrediction orientation;
+        OptionalAlign align;
+    };
+    static constexpr std::size_t kMaxAlignCacheEntries = 100000;
+    mutable std::unordered_map<std::string, CachedAlign> alignCache_;
 };
 
 }

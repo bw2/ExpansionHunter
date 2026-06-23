@@ -86,24 +86,43 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
 
 LocusAligner::OptionalAlign LocusAligner::align(Read& read, graphtools::AlignerSelector& alignerSelector) const
 {
-    OrientationPrediction predictedOrientation = orientationPredictor_.predict(read.sequence());
+    // Key on the original (pre-orientation) sequence. Look up by const reference first so a cache hit (or a
+    // miss on an all-unique locus) costs no string copy; only copy when we need an owned key to insert,
+    // before reverseComplement() below mutates read.sequence().
+    auto cached = alignCache_.find(read.sequence());
+    if (cached != alignCache_.end())
+    {
+        // Replay align()'s in-place side effect on the read before returning the memoized result.
+        if (cached->second.orientation == OrientationPrediction::kAlignsInReverseComplementOrientation)
+        {
+            read.reverseComplement();
+        }
+        return cached->second.align;
+    }
 
+    std::string sequence = read.sequence();
+    OrientationPrediction predictedOrientation = orientationPredictor_.predict(sequence);
+
+    OptionalAlign result;
     if (predictedOrientation == OrientationPrediction::kAlignsInReverseComplementOrientation)
     {
         read.reverseComplement();
     }
-    else if (predictedOrientation == OrientationPrediction::kDoesNotAlign)
+    if (predictedOrientation != OrientationPrediction::kDoesNotAlign)
     {
-        return {};
+        auto readAligns = aligner_.align(read.sequence(), alignerSelector);
+        if (!readAligns.empty())
+        {
+            result = computeCanonicalAlignment(readAligns);
+        }
     }
 
-    auto readAligns = aligner_.align(read.sequence(), alignerSelector);
-    if (readAligns.empty())
+    if (alignCache_.size() < kMaxAlignCacheEntries)
     {
-        return {};
+        alignCache_.emplace(std::move(sequence), CachedAlign { predictedOrientation, result });
     }
 
-    return computeCanonicalAlignment(readAligns);
+    return result;
 }
 
 }
