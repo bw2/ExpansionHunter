@@ -181,6 +181,23 @@ has three required fields:
 If **any** condition in the array evaluates to true for the genotyped allele sizes,
 an SVG file will be generated with the naming pattern `<output-prefix>.<LocusId>.svg`.
 
+#### Interaction with `optimized-streaming` (fast path)
+
+In `--analysis-mode optimized-streaming`, eligible loci are genotyped by a fast
+heuristic (`processLocusFast`) that performs no read-to-graph realignment and so
+cannot produce read visualizations. To keep images available, plot-eligible loci
+are automatically routed to the full genotyper instead:
+
+* `--plot-all` forces **every** locus through full genotyping (the fast path is
+  skipped entirely).
+* With catalog `PlotReadVisualization` conditions, the fast path still genotypes
+  the locus first, then evaluates the conditions against that genotype; if any
+  condition fires it re-runs the locus through full genotyping so the image (and
+  the full-genotyper quality metrics) can be produced. Loci whose conditions do
+  not fire keep their fast-path genotype (`"QuickGenotype": true`).
+* `--disable-all-plots` suppresses all image generation, so the fast path is used
+  wherever it applies.
+
 ### Examples
 
 Visualize Huntington's disease locus when in the pathogenic range:

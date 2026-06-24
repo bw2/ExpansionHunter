@@ -21,6 +21,7 @@
 #include "io/ParameterLoading.hh"
 #include "locus/AlleleQualityMetrics.hh"
 #include "reviewer/Metrics.hh"
+#include "reviewer/ReviewerWorkflow.hh"
 #include "sample/MateExtractor.hh"
 #include "spdlog/spdlog.h"
 
@@ -422,6 +423,17 @@ bool processLocusFast(
     timespec genotypingStart{};
     if (recordGenotypingTime) { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingStart); }
 
+    // --plot-all requests a REViewer image for every locus. The fast path performs no read-to-graph
+    // realignment, so it can neither render an image nor compute the graph-based metrics REViewer needs;
+    // decline up front so the full genotyper handles (and plots) this locus. (--plot-all and
+    // --disable-all-plots are mutually exclusive, so the guard is belt-and-suspenders.)
+    // Skip this when --quick-heuristic-genotyping-only is set: full genotyping is disabled in that mode,
+    // so declining would only drop the locus to a skipped record (no genotype, no plot) -- keep the fast
+    // genotype instead.
+    if (params.plotAll() && !params.disableAllPlots() && !params.heuristicGenotypingOnly()) {
+        return false;
+    }
+
     if (locusDescription.referenceRegions().size() != 1) {
         // fast processing is only implemented for loci with a single repeat region
         return false;
@@ -799,6 +811,17 @@ bool processLocusFast(
 		repeatFindingsPtr->setCountsOfHighQualityUnambiguousReads(countsOfHighQualityUnambiguousReads);
 	}
 	locusFindings.findingsForEachVariant.emplace(variantId, std::move(repeatFindingsPtr));
+
+	// Conditional plotting: the fast path has now produced the genotype + metrics, so evaluate the
+	// catalog plot conditions against these findings. If any fires, this locus needs a REViewer image,
+	// which the fast path can't render (no graph realignment) -- decline so the full genotyper re-runs
+	// and plots it. (Respects --disable-all-plots; the --plot-all case was handled at function entry.)
+	// As above, skip when --quick-heuristic-genotyping-only is set: declining would only drop the locus
+	// to a skipped record instead of running full genotyping, so keep the fast genotype.
+	if (!params.disableAllPlots() && !params.heuristicGenotypingOnly()
+		&& reviewer::shouldPlotReadVisualization(locusSpec, locusFindings)) {
+		return false;
+	}
 
     jsonWriter.addRecord(locusSpec, locusFindings);
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
