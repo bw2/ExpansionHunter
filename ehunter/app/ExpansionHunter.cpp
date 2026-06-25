@@ -317,7 +317,7 @@ int main(int argc, char** argv)
         VcfWriter vcfWriter(sampleParams.id(), reference, regionCatalog, sampleFindings);
         writeToFile(outputPaths.vcf(), vcfWriter);
 
-        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings, params.copyCatalogFields());
+        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings, params.copyCatalogFields(), params.genotypeQualityModel().get());
         writeToFile(outputPaths.json(), jsonWriter);
     }
     catch (const std::exception& e)

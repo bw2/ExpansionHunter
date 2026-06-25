@@ -29,7 +29,7 @@ Repeat records contain the following fields.
   full-genotyper calls, so a consumer should treat "absent" as `false`. On
   `QuickGenotype` variants the allele quality metrics are approximations and some
   are omitted — see
-  [AlleleQualityMetrics](07_AlleleQualityMetrics.md#fast-path-quickgenotype-rows).
+  [AlleleQualityMetrics](07_AlleleQualityMetrics.md#quick-path-quickgenotype-rows).
 * `CountsOfSpanningReads` Summary of identified spanning reads given as a JSON
    string containing comma-separated `(n, m)` entries where `n` is the number of
    repeat units spanned by the spanning read and `m` is the number of such reads

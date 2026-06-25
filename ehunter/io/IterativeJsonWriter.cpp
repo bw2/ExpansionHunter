@@ -47,8 +47,9 @@ IterativeJsonWriter::IterativeJsonWriter(
     const SampleParameters& sampleParams,
     const ReferenceContigInfo& contigInfo,
     const std::string& outputFilePath,
-    bool copyCatalogFields)
-    : contigInfo_(contigInfo), firstRecord_(true), copyCatalogFields_(copyCatalogFields)
+    bool copyCatalogFields,
+    const gq::GenotypeQualityModel* qualityModel)
+    : contigInfo_(contigInfo), firstRecord_(true), copyCatalogFields_(copyCatalogFields), qualityModel_(qualityModel)
 {
 	outFile_.open(outputFilePath, std::ios::out | std::ios::binary);
 	if (!outFile_)
@@ -103,7 +104,7 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
         const string& variantId = variantIdAndFindings.first;
         const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec);
+        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
         variantIdAndFindings.second->accept(&variantWriter);
         variantRecords[variantId] = variantWriter.record();
     }

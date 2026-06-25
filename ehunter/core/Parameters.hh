@@ -37,6 +37,11 @@
 namespace ehunter
 {
 
+namespace gq
+{
+struct GenotypeQualityModel;
+}
+
 enum class AnalysisMode
 {
     kSeeking,
@@ -263,6 +268,18 @@ public:
     // Off by default since timing makes output non-deterministic.
     bool outputGenotypeTiming() const { return outputGenotypeTiming_; }
 
+    // The genotype-quality model used to annotate output (embedded by default, or loaded
+    // from --genotype-quality-model). Null when no model is available, in which case no
+    // quality fields are emitted.
+    const std::shared_ptr<const gq::GenotypeQualityModel>& genotypeQualityModel() const
+    {
+        return genotypeQualityModel_;
+    }
+    void setGenotypeQualityModel(std::shared_ptr<const gq::GenotypeQualityModel> model)
+    {
+        genotypeQualityModel_ = std::move(model);
+    }
+
     int threadCount;
     bool enableBamletOutput;
 
@@ -290,6 +307,7 @@ private:
     bool disableAllPlots_;
     LogLevel logLevel_;
     bool cacheMates_;
+    std::shared_ptr<const gq::GenotypeQualityModel> genotypeQualityModel_;
 };
 
 }

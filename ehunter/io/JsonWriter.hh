@@ -30,15 +30,24 @@
 namespace ehunter
 {
 
+namespace gq
+{
+struct GenotypeQualityModel;
+}
+
 class VariantJsonWriter : public VariantFindingsVisitor
 {
 public:
+    // When qualityModel is non-null, per-allele genotype-quality fields
+    // (PredictedLengthCorrectionFactor / pTooShort / pTooLong) are added to each
+    // AlleleQualityMetrics allele record. A null model leaves output unchanged.
     VariantJsonWriter(
         const ReferenceContigInfo& contigInfo, const LocusSpecification& locusSpec,
-        const VariantSpecification& variantSpec)
+        const VariantSpecification& variantSpec, const gq::GenotypeQualityModel* qualityModel = nullptr)
         : contigInfo_(contigInfo)
         , locusSpec_(locusSpec)
         , variantSpec_(variantSpec)
+        , qualityModel_(qualityModel)
     {
     }
 
@@ -51,6 +60,7 @@ private:
     const ReferenceContigInfo& contigInfo_;
     const LocusSpecification& locusSpec_;
     const VariantSpecification& variantSpec_;
+    const gq::GenotypeQualityModel* qualityModel_;
     nlohmann::json record_;
 };
 
@@ -59,7 +69,8 @@ class JsonWriter
 public:
     JsonWriter(
         const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
-        const SampleFindings& sampleFindings, bool copyCatalogFields = false);
+        const SampleFindings& sampleFindings, bool copyCatalogFields = false,
+        const gq::GenotypeQualityModel* qualityModel = nullptr);
 
     void write(std::ostream& out);
 
@@ -69,6 +80,7 @@ private:
     const RegionCatalog& regionCatalog_;
     const SampleFindings& sampleFindings_;
     bool copyCatalogFields_;
+    const gq::GenotypeQualityModel* qualityModel_;
 };
 
 std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter);

@@ -41,7 +41,8 @@ class IterativeJsonWriter
 {
 public:
 	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
-		const std::string& outputFilePath, bool copyCatalogFields = false);
+		const std::string& outputFilePath, bool copyCatalogFields = false,
+		const gq::GenotypeQualityModel* qualityModel = nullptr);
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
@@ -56,6 +57,7 @@ private:
     boost::iostreams::filtering_ostream outStream_;
     bool firstRecord_;
     bool copyCatalogFields_;
+    const gq::GenotypeQualityModel* qualityModel_;
     bool closed_ = false;
 };
 

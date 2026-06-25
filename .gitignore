@@ -1,10 +1,7 @@
-.DS_Store
-.idea
 cmake-build-debug
 test-example
 build
-.vscode
-/.cproject
-/.project
-/.settings/
-/.gitignore
+
+# Ignore all hidden files and directories except .gitignore itself
+.*
+!.gitignore

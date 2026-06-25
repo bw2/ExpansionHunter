@@ -29,44 +29,35 @@ optional arguments.
 
 * `--sex <arg>` Specifies sex of the sample; can be either `male` or `female`
   (default). This parameter only affects repeats on sex chromosomes.
-
 * `--threads <int>` Specifies how many threads to can be used accelerate analysis
    of large variant catalogs. Set to 1 by default. Typically seeking mode can
    benefit from relatively high thread counts, while for streaming mode
    there is limited benefit beyond about 16 threads.
-
 * `--min-locus-coverage <int>` Specifies minimum read coverage depth at loci
    on diploid chromosomes required to attempt genotyping. Automatically reduced
    to half for loci on haploid chromosomes. The locus will be skipped if the
    coverage falls below this value. Set to 10 by default.
-
 * `--region-extension-length <int>` Specifies how far from on/off-target regions
    to search for informative reads. Set to 1000 by default.
-
 * `--max-depth <int>` In `low-mem-streaming` and `optimized-streaming` modes,
    this sets a limit on the number of reads processed per locus using reservoir sampling.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
    Set to 100 by default; set to 0 to disable the cap.
-
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
   path or URL explicitly, instead of auto-detecting it from the `--reads` path.
   This is useful when the index file is in a different location than the reads
   file, or when using cloud URLs where auto-detection may not work.
-
 * `--analysis-mode <mode>` Specify analysis mode, which can be `seeking`,
   `streaming`, `low-mem-streaming`, or `optimized-streaming`. The default mode
   is `seeking`. See further description of analysis modes below.
-
 * `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
   etc.) for each allele and outputs them in the JSON file. Use this flag to skip
   this computation if the metrics are not needed.
-
 * `--enable-bamlet-output` Output a BAM file containing realigned reads
   that overlap or are located in close proximity to each variant. The file is
   written to `<output-prefix>_realigned.bam`.
-
 * `--copy-catalog-fields` Copy extra annotation fields from the input variant
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to

@@ -1171,7 +1171,7 @@ void htsLowMemStreamingSampleAnalysis(
                      typicalReadLength, {});
         spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
 
-        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields());
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get());
         IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
         GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
         doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
@@ -1312,7 +1312,7 @@ void htsLowMemStreamingSampleAnalysis(
                     htshelpers::MateExtractor workerMateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(),
                         inputPaths.reference(), true, frozenCache, farAwayMateDistanceThreshold);
                     IterativeJsonWriter jsonWriter(programParams.sample(), workerReference.contigInfo(),
-                        jsonPaths[i], programParams.copyCatalogFields());
+                        jsonPaths[i], programParams.copyCatalogFields(), programParams.genotypeQualityModel().get());
                     IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
                     const std::vector<GenomicRegion> streamerRegions{ slice.region };
                     doTheAnalysis(programParams, workerReference, subsetCatalog, subsetGenomeQuery,

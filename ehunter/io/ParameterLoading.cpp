@@ -29,6 +29,7 @@
 #include <boost/program_options.hpp>
 
 #include "app/Version.hh"
+#include "genotype_quality/GenotypeQualityModel.hh"
 #include "graphcore/GraphReferenceMapping.hh"
 #include "io/SampleStats.hh"
 
@@ -85,6 +86,7 @@ struct UserParameters
     bool heuristicGenotypingOnly = false;
     int maxDepth = 150;
     bool outputGenotypeTiming = false;
+    std::string genotypeQualityModelPath;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -132,6 +134,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("quick-heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, genotype only loci resolvable from spanning-read heuristics and skip full genotyping for larger/more complex alleles")
         ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
         ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to low-mem-streaming and optimized-streaming modes.")
+        ("genotype-quality-model", po::value<string>(&params.genotypeQualityModelPath), "Path to a genotype-quality model (.json or .json.gz) used to add per-allele PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong fields. Overrides the model compiled into the binary.")
     ;
     // clang-format on
 
@@ -515,13 +518,41 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         throw std::invalid_argument(message);
     }
 
-    return ProgramParameters(
+    // Load the genotype-quality model: the explicit --genotype-quality-model path takes
+    // precedence over the model compiled into the binary. Quality metrics must be enabled
+    // for the model to have its AlleleQualityMetrics features to annotate, so skip the
+    // (multi-MB parse + resident tree) load entirely when metrics are disabled.
+    std::shared_ptr<const gq::GenotypeQualityModel> genotypeQualityModel;
+    if (!userParams.disableQualityMetrics)
+    {
+        if (!userParams.genotypeQualityModelPath.empty())
+        {
+            try
+            {
+                genotypeQualityModel
+                    = std::make_shared<const gq::GenotypeQualityModel>(gq::loadGenotypeQualityModel(userParams.genotypeQualityModelPath));
+            }
+            catch (const std::exception& e)
+            {
+                throw std::invalid_argument(
+                    "Failed to load --genotype-quality-model '" + userParams.genotypeQualityModelPath + "': " + e.what());
+            }
+        }
+        else
+        {
+            genotypeQualityModel = gq::loadEmbeddedGenotypeQualityModel();
+        }
+    }
+
+    ProgramParameters programParameters(
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences,
         userParams.maxDepth, userParams.outputGenotypeTiming);
+    programParameters.setGenotypeQualityModel(std::move(genotypeQualityModel));
+    return programParameters;
 }
 
 }

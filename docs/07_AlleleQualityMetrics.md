@@ -40,7 +40,11 @@ or hemizygous calls, there is one entry.
             "LeftFlankNormalizedDepth": 1.2,
             "RightFlankNormalizedDepth": 1.1,
             "HighQualityUnambiguousReads": 12,
-            "ConfidenceIntervalDividedByAlleleSize": 0.0
+            "ConfidenceIntervalDividedByAlleleSize": 0.0,
+            "PredictedLengthCorrectionFactor": 1.0,
+            "pOk": 0.94,
+            "pTooShort": 0.04,
+            "pTooLong": 0.02
         },
         {
             "AlleleNumber": 2,
@@ -53,29 +57,7 @@ or hemizygous calls, there is one entry.
 }
 ```
 
-## Fast-path (`QuickGenotype`) rows
 
-In `--analysis-mode optimized-streaming` some loci are genotyped by a fast heuristic
-(`processLocusFast`) instead of the full genotyper. Those variant records carry
-`"QuickGenotype": true` (see [Output JSON files](05_OutputJsonFiles.md)). On these
-rows the allele quality metrics differ from the full genotyper, so the set of
-fields below is **not** identical to a full-genotyper call:
-
-- **Omitted fields:** `QD`, `LeftFlankNormalizedDepth`, and
-  `RightFlankNormalizedDepth` are not computed and are absent from each allele
-  object. A consumer that uses these should treat their absence on a
-  `QuickGenotype` row as "not available" rather than as a failing (e.g. zero)
-  value.
-- **Approximated fields:** `Depth`, `HighQualityUnambiguousReads`,
-  `StrandBiasBinomialPhred`, `MeanInsertedBasesWithinRepeats`, and
-  `MeanDeletedBasesWithinRepeats` are derived from the high-quality spanning-read
-  counts rather than from full graph realignment. In particular,
-  `HighQualityUnambiguousReads` is just the per-allele spanning-read depth on the
-  fast path.
-
-When present, full-genotyper records (those where the `QuickGenotype: true` field
-is absent) carry the complete set of fields described below; fast-path records omit
-these fields.
 
 ## Metric Definitions
 
@@ -100,12 +82,11 @@ The mean per-read alignment quality over the reads overlapping the repeat.
 
 **Formula:** `QD = sum(readQuality) / numReadsOverlappingRepeat`
 
-Where `readQuality` for each read is `matchedBases / totalBases`, and the
-denominator is the number of reads overlapping the repeat node.
+Where the denominator is the number of reads overlapping the repeat node, while `readQuality` for each read = `matchedBases / totalBases`
 
 A value close to 1.0 indicates high-quality alignments with few mismatches,
 insertions, or deletions. Lower values may indicate mapping issues or sequence
-errors. `QD` is not emitted on fast-path (`QuickGenotype`) calls.
+errors. `QD` is not emitted on quick-path (`QuickGenotype: true`) calls (see below).
 
 ### MeanInsertedBasesWithinRepeats
 
@@ -189,42 +170,79 @@ indicate high confidence; larger values indicate uncertainty.
 | 0.1-0.5 | Moderate confidence |
 | > 0.5 | Low confidence (large uncertainty relative to size) |
 
-## Example Filtering Strategies
+## Genotype-quality model predictions
 
-### Basic quality filter
+In addition to the read-derived metrics above, ExpansionHunter now attaches
+per-allele predictions from a genotype-quality model — a small
+gradient-boosted-tree model (either the default one, or
+supplied with `--genotype-quality-model`). The model takes the allele's quality
+metrics and read profile as input and predicts (a) how far the call is likely to be
+from the true allele size and (b) the direction of any error.
+
+These four fields are added to each allele object:
+
+| Field | Meaning |
+|-------|---------|
+| `PredictedLengthCorrectionFactor` | Estimated `called_size / true_size`. |
+| `pOk` | Probability the call is close to the true size. |
+| `pTooShort` | Probability the call under-estimates the true size. |
+| `pTooLong` | Probability the call over-estimates the true size. |
+
+`pOk + pTooShort + pTooLong` sum to 1 (up to rounding).
+
+### PredictedLengthCorrectionFactor
+
+The model's estimate of the called size divided by the true size (`called / true`):
+
+- `≈ 1.0` — the call is consistent with the predicted true size.
+- `< 1.0` — the call is likely **too short** (the true allele is larger).
+- `> 1.0` — the call is likely **too long** (the true allele is smaller).
+
+A size-corrected estimate can be computed as  `AlleleSize / PredictedLengthCorrectionFactor`.
+
+### pOk, pTooShort, pTooLong
+
+A calibrated 3-way probability over whether the call is within tolerance (`pOk`), an
+under-call (`pTooShort`), or an over-call (`pTooLong`). `pOk` is the primary
+confidence signal: high `pOk` means the call is probably already correct, while low
+`pOk` flags a call the model expects to be off (and the two directional probabilities
+say which way).
+
+**Suggested use (apply gate).** The length correction is most useful exactly where the
+model is unsure the call is right. A reasonable policy is to apply
+`PredictedLengthCorrectionFactor` only when `pOk < 0.5`, leaving confident calls unchanged:
 
 ```python
-# Require reasonable depth and quality
-if metrics["Depth"] >= 5 and metrics["QD"] >= 0.8:
-    # Pass filter
+def corrected_size(allele):
+    eh = allele["AlleleSize"]
+    if allele.get("pOk", 1.0) < 0.5 and "PredictedLengthCorrectionFactor" in allele:
+        return eh / allele["PredictedLengthCorrectionFactor"]
+    return eh
 ```
 
-### Strand bias filter
+Applying the correction to high-`pOk` calls is generally counter-productive (it moves
+already-correct calls), so gating on `pOk` is recommended rather than correcting every
+allele.
 
-```python
-# Filter out calls with extreme strand bias
-if metrics["StrandBiasBinomialPhred"] < 30:
-    # Pass filter
-```
+## Quick-path (`QuickGenotype: true`) rows
 
-### Comprehensive filter
+In `--analysis-mode optimized-streaming` some loci are genotyped by a fast heuristic
+instead of the full genotyper. Those variant records carry
+`"QuickGenotype": true` (see [Output JSON files](05_OutputJsonFiles.md)). On these
+rows the allele quality metrics differ from those computed using the full genotyper:
 
-```python
-def passes_quality_filter(allele_metrics):
-    return (
-        allele_metrics["Depth"] >= 5 and
-        allele_metrics["QD"] >= 0.75 and
-        allele_metrics["StrandBiasBinomialPhred"] < 30 and
-        allele_metrics["HighQualityUnambiguousReads"] >= 3 and
-        allele_metrics["LeftFlankNormalizedDepth"] >= 0.3 and
-        allele_metrics["RightFlankNormalizedDepth"] >= 0.3
-    )
-```
+- **Omitted fields:** `QD`, `LeftFlankNormalizedDepth`, and
+  `RightFlankNormalizedDepth` are not computed and are absent from each allele
+  object. A consumer that uses these should treat their absence as "not available" rather than as a zero
+  value.
+- **Approximated fields:** `Depth`, `HighQualityUnambiguousReads`,
+  `StrandBiasBinomialPhred`, `MeanInsertedBasesWithinRepeats`, and
+  `MeanDeletedBasesWithinRepeats` are derived from the high-quality spanning-read
+  counts rather than from full graph realignment. In particular,
+  `HighQualityUnambiguousReads` is just the per-allele spanning-read depth on the
+  quick path.
 
 ## Notes
 
-- Metrics are computed using the same read-to-haplotype assignments used for
-  genotyping and read visualization
 - For homozygous calls, reads from both haplotypes are combined into a single
   allele's metrics
-- Values are rounded to 3 decimal places in the JSON output

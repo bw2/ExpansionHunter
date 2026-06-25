@@ -30,6 +30,7 @@
 
 #include "core/Common.hh"
 #include "core/ReadSupportCalculator.hh"
+#include "genotype_quality/GenotypeQualityAnnotator.hh"
 
 namespace ehunter
 {
@@ -55,12 +56,13 @@ std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter)
 
 JsonWriter::JsonWriter(
     const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
-    const SampleFindings& sampleFindings, bool copyCatalogFields)
+    const SampleFindings& sampleFindings, bool copyCatalogFields, const gq::GenotypeQualityModel* qualityModel)
     : sampleParams_(sampleParams)
     , contigInfo_(contigInfo)
     , regionCatalog_(regionCatalog)
     , sampleFindings_(sampleFindings)
     , copyCatalogFields_(copyCatalogFields)
+    , qualityModel_(qualityModel)
 {
 }
 
@@ -103,7 +105,7 @@ void JsonWriter::write(std::ostream& out)
             const string& variantId = variantIdAndFindings.first;
             const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec);
+            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
             variantIdAndFindings.second->accept(&variantWriter);
             variantRecords[variantId] = variantWriter.record();
         }
@@ -227,6 +229,28 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             }
             alleleRecord["HighQualityUnambiguousReads"] = allele.highQualityUnambiguousReads;
             alleleRecord["ConfidenceIntervalDividedByAlleleSize"] = round3(allele.confidenceIntervalDividedByAlleleSize);
+
+            // Genotype-quality model predictions (only when a model is loaded and the genotype is present).
+            if (qualityModel_ != nullptr && repeatFindings.optionalGenotype())
+            {
+                const RepeatGenotype& genotype = *repeatFindings.optionalGenotype();
+                const int alleleRank = allele.alleleNumber - 1;
+                const NumericInterval ci = (alleleRank <= 0) ? genotype.shortAlleleSizeInUnitsCi()
+                                                             : genotype.longAlleleSizeInUnitsCi();
+                const gq::LocusFeatureContext ctx{
+                    static_cast<int>(repeatUnit.length()),
+                    static_cast<int>(variantSpec_.referenceLocus().length()),
+                    repeatFindings.countsOfSpanningReads(),
+                    repeatFindings.countsOfFlankingReads(),
+                    repeatFindings.countsOfHighQualityUnambiguousReads()};
+                const gq::AllelePrediction pred = gq::predictAllele(
+                    *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
+                    ci.end(), allele);
+                alleleRecord["PredictedLengthCorrectionFactor"] = round3(pred.lengthCorrectionFactor);
+                alleleRecord["pOk"] = round3(pred.pOk);
+                alleleRecord["pTooShort"] = round3(pred.pTooShort);
+                alleleRecord["pTooLong"] = round3(pred.pTooLong);
+            }
 
             allelesArray.push_back(alleleRecord);
         }
