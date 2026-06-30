@@ -94,6 +94,7 @@ add_library(ExpansionHunterLib
         core/ReadSupportCalculator.hh core/ReadSupportCalculator.cpp
         core/ThreadPool.hh
         core/WeightedPurityCalculator.hh core/WeightedPurityCalculator.cpp
+        core/RepeatPurity.hh core/RepeatPurity.cpp
         genotyping/AlignMatrix.hh genotyping/AlignMatrix.cpp
         genotyping/AlignMatrixFiltering.hh genotyping/AlignMatrixFiltering.cpp
         genotyping/AlleleChecker.hh genotyping/AlleleChecker.cpp
@@ -222,6 +223,7 @@ add_executable(UnitTests
         tests/ReadTest.cpp
         tests/RegionGraphTest.cpp
         tests/RepeatAnalyzerTest.cpp
+        tests/RepeatPurityTest.cpp
         tests/RepeatGenotypeTest.cpp
         tests/ReviewerAlignsTest.cpp
         tests/ReviewerFragLenFilterTest.cpp

@@ -72,9 +72,10 @@ LocusSpecification::LocusSpecification(
 
 void LocusSpecification::addVariantSpecification(
     std::string id, VariantClassification classification, GenomicRegion referenceLocus, vector<NodeId> nodes,
-    optional<NodeId> refNode)
+    optional<NodeId> refNode, double referenceRepeatPurity)
 {
-    variantSpecs_.emplace_back(std::move(id), classification, std::move(referenceLocus), std::move(nodes), refNode);
+    variantSpecs_.emplace_back(
+        std::move(id), classification, std::move(referenceLocus), std::move(nodes), refNode, referenceRepeatPurity);
 }
 
 const VariantSpecification& LocusSpecification::getVariantSpecById(const std::string& variantSpecId) const

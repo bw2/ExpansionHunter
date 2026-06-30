@@ -48,6 +48,10 @@ struct AlleleMetrics
     // Mean deleted bases in the repeat node per read
     double meanDeletedBasesWithinRepeats = 0.0;
 
+    // ReadRepeatPurity: pooled base-weighted fraction of repeat-region read bases (across this allele's
+    // supporting reads) that match the catalog motif. -1.0 = not computed (field omitted from JSON).
+    double readRepeatPurity = -1.0;
+
     // Binomial test p-value (phred-scaled) for strand bias (deviation from 50/50)
     double strandBiasBinomialPhred = 0.0;
 

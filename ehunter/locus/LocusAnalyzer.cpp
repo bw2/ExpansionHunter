@@ -314,6 +314,21 @@ LocusFindings LocusAnalyzer::analyze(
                                 totalMeanDeletedBasesWeighted += metrics.meanDeletedBasesWithinRepeats[i] * metrics.alleleDepth[i];
                             }
                             allele.meanDeletedBasesWithinRepeats = (totalDepth > 0.0) ? (totalMeanDeletedBasesWeighted / totalDepth) : 0.0;
+                            // For homozygous, depth-weight the per-haplotype ReadRepeatPurity, skipping
+                            // haplotypes with no repeat-region read bases (purity == -1). -1 if none qualify.
+                            double totalReadRepeatPurityWeighted = 0.0;
+                            double totalReadRepeatPurityDepth = 0.0;
+                            for (size_t i = 0; i < metrics.readRepeatPurity.size() && i < metrics.alleleDepth.size(); ++i)
+                            {
+                                if (metrics.readRepeatPurity[i] >= 0.0)
+                                {
+                                    totalReadRepeatPurityWeighted += metrics.readRepeatPurity[i] * metrics.alleleDepth[i];
+                                    totalReadRepeatPurityDepth += metrics.alleleDepth[i];
+                                }
+                            }
+                            allele.readRepeatPurity = (totalReadRepeatPurityDepth > 0.0)
+                                ? (totalReadRepeatPurityWeighted / totalReadRepeatPurityDepth)
+                                : -1.0;
                             // For homozygous, weight the per-haplotype normalized flank depths by allele depth.
                             // An unweighted mean of per-haplotype ratios only equals the correct combined ratio
                             // when allele depths are identical, which is rarely true under stochastic read sampling.
@@ -416,6 +431,11 @@ LocusFindings LocusAnalyzer::analyze(
                                 if (i < metrics.meanDeletedBasesWithinRepeats.size())
                                 {
                                     allele.meanDeletedBasesWithinRepeats = metrics.meanDeletedBasesWithinRepeats[i];
+                                }
+                                // Copy ReadRepeatPurity for this haplotype (-1 if no repeat-region read bases)
+                                if (i < metrics.readRepeatPurity.size())
+                                {
+                                    allele.readRepeatPurity = metrics.readRepeatPurity[i];
                                 }
                                 // Copy already-normalized left flank depth for this haplotype
                                 if (i < metrics.leftFlankNormalizedDepth.size())

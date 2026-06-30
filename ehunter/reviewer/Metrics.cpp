@@ -58,6 +58,8 @@ struct VariantHaplotypeAccumulators
     int numReadsOverlappingRepeat = 0;
     int totalInsertedBases = 0;
     int totalDeletedBases = 0;
+    long repeatNodeMatchedBases = 0; // for ReadRepeatPurity: read bases matching the motif
+    long repeatNodeTotalBases = 0;   // for ReadRepeatPurity: read bases overlapping the repeat node
     int highQualUnambiguousCount = 0;
     double qualitySum = 0.0;        // For QD calculation
     int forwardStrandCount = 0;     // For strand bias
@@ -198,6 +200,52 @@ static RepeatDeletionResult countRepeatNodeDeletions(
         // Use cached count - O(1)
         int deletedInNode = static_cast<int>(nodeAlign.numDeleted());
         result.deletedBases += deletedInNode;
+    }
+
+    return result;
+}
+
+// Results for repeat purity metrics for a single alignment
+struct RepeatPurityCounts
+{
+    long matchedBases = 0; // read bases within the repeat node matching the motif (kMatch)
+    long totalBases = 0;   // read bases consumed within the repeat node (match + mismatch + insertion)
+};
+
+// Count, within the repeat node, how many read bases match the motif (numerator) and how many read
+// bases overlap the node in total (denominator). ReadRepeatPurity for the read is matched / total.
+// Deletions are reference-side (no read base) and so excluded from both; kMatch vs kMismatch against
+// the repeat node directly encode whether each base matches the catalog motif at its aligned phase.
+static RepeatPurityCounts countRepeatNodeMatchAndBases(
+    const graphtools::GraphAlignment& graphAlign,
+    NodeId repeatNodeId)
+{
+    RepeatPurityCounts result;
+
+    for (size_t nodeIndex = 0; nodeIndex < graphAlign.path().numNodes(); ++nodeIndex)
+    {
+        if (graphAlign.getNodeIdByIndex(nodeIndex) != repeatNodeId)
+        {
+            continue;
+        }
+
+        const auto& nodeAlign = graphAlign.alignments()[nodeIndex];
+        for (const auto& op : nodeAlign)
+        {
+            switch (op.type())
+            {
+            case OperationType::kMatch:
+                result.matchedBases += op.queryLength();
+                result.totalBases += op.queryLength();
+                break;
+            case OperationType::kMismatch:
+            case OperationType::kInsertionToRef:
+                result.totalBases += op.queryLength();
+                break;
+            default:
+                break;
+            }
+        }
     }
 
     return result;
@@ -522,6 +570,9 @@ static AllAccumulators accumulateAllMetrics(
                     varHapAccum.qualitySum += computeReadQuality(readAlign);
                     varHapAccum.totalInsertedBases += countRepeatNodeInsertions(readAlign, repeatNodeId).insertedBases;
                     varHapAccum.totalDeletedBases += countRepeatNodeDeletions(readAlign, repeatNodeId).deletedBases;
+                    const auto readPurity = countRepeatNodeMatchAndBases(readAlign, repeatNodeId);
+                    varHapAccum.repeatNodeMatchedBases += readPurity.matchedBases;
+                    varHapAccum.repeatNodeTotalBases += readPurity.totalBases;
                     // High-quality unambiguous count
                     if (isUnambiguous && computeGraphAlignmentMatchRate(readAlign) >= matchRateThreshold)
                     {
@@ -556,6 +607,9 @@ static AllAccumulators accumulateAllMetrics(
                     varHapAccum.qualitySum += computeReadQuality(mateAlign);
                     varHapAccum.totalInsertedBases += countRepeatNodeInsertions(mateAlign, repeatNodeId).insertedBases;
                     varHapAccum.totalDeletedBases += countRepeatNodeDeletions(mateAlign, repeatNodeId).deletedBases;
+                    const auto matePurity = countRepeatNodeMatchAndBases(mateAlign, repeatNodeId);
+                    varHapAccum.repeatNodeMatchedBases += matePurity.matchedBases;
+                    varHapAccum.repeatNodeTotalBases += matePurity.totalBases;
                     // High-quality unambiguous count
                     if (isUnambiguous && computeGraphAlignmentMatchRate(mateAlign) >= matchRateThreshold)
                     {
@@ -659,6 +713,7 @@ MetricsByVariant getMetrics(
         const auto& varHapAccums = accum.perVariantHaplotype.at(variantId);
         metrics.meanInsertedBasesWithinRepeats.resize(paths.size());
         metrics.meanDeletedBasesWithinRepeats.resize(paths.size());
+        metrics.readRepeatPurity.resize(paths.size());
         for (size_t hapIndex = 0; hapIndex < paths.size(); ++hapIndex)
         {
             const auto& varHapAccum = varHapAccums[hapIndex];
@@ -668,6 +723,10 @@ MetricsByVariant getMetrics(
             metrics.meanDeletedBasesWithinRepeats[hapIndex] = (varHapAccum.numReadsOverlappingRepeat > 0)
                 ? static_cast<double>(varHapAccum.totalDeletedBases) / varHapAccum.numReadsOverlappingRepeat
                 : 0.0;
+            // Pooled base-weighted purity across this haplotype's reads; -1.0 = no repeat-region read bases.
+            metrics.readRepeatPurity[hapIndex] = (varHapAccum.repeatNodeTotalBases > 0)
+                ? static_cast<double>(varHapAccum.repeatNodeMatchedBases) / varHapAccum.repeatNodeTotalBases
+                : -1.0;
         }
 
         // Strand bias (only from reads overlapping the repeat)

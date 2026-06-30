@@ -19,6 +19,11 @@ small variants (insertions, deletions, and swaps).
 Repeat records contain the following fields.
 * `VariantId` Unique variant identifier
 * `RepeatUnit` Repeat unit in the reference orientation
+* `ReferenceRepeatPurity` Fraction of the reference repeat-region bases that match a perfect repeat sequence (eg. CAG.CAG.CAG.CAG)
+  of `RepeatUnit`, in `[0, 1]` (`1.0` = a perfectly pure reference repeat). Computed once per repeat
+  variant from the reference sequence; absent for non-repeat variants. Compare with the per-allele,
+  read-derived `ReadRepeatPurity` in
+  [AlleleQualityMetrics](07_AlleleQualityMetrics.md#readrepeatpurity).
 * `VariantType` Always set to "Repeat"
 * `VariantSubtype` Either "Repeat" or "RareRepeat"
 * `Genotype` Repeat genotype given by the size of each repeat allele

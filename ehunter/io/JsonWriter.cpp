@@ -155,6 +155,13 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
     const auto& repeatUnit = locusSpec_.regionGraph().nodeSeq(repeatNodeId);
     record_["RepeatUnit"] = repeatUnit;
 
+    // Fraction of the reference repeat-region bases matching a perfect tiling of the motif.
+    // Omitted when not computed (sentinel -1.0).
+    if (variantSpec_.referenceRepeatPurity() >= 0.0)
+    {
+        record_["ReferenceRepeatPurity"] = round3(variantSpec_.referenceRepeatPurity());
+    }
+
     record_["CountsOfSpanningReads"] = streamToString(repeatFindings.countsOfSpanningReads());
     record_["CountsOfFlankingReads"] = streamToString(repeatFindings.countsOfFlankingReads());
     record_["CountsOfInrepeatReads"] = streamToString(repeatFindings.countsOfInrepeatReads());
@@ -221,6 +228,11 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             }
             alleleRecord["MeanInsertedBasesWithinRepeats"] = round3(allele.meanInsertedBasesWithinRepeats);
             alleleRecord["MeanDeletedBasesWithinRepeats"] = round3(allele.meanDeletedBasesWithinRepeats);
+            // Fraction of repeat-region read bases matching the motif; omitted when not computed (-1.0).
+            if (allele.readRepeatPurity >= 0.0)
+            {
+                alleleRecord["ReadRepeatPurity"] = round3(allele.readRepeatPurity);
+            }
             alleleRecord["StrandBiasBinomialPhred"] = round3(allele.strandBiasBinomialPhred);
             if (!repeatFindings.quickGenotype())
             {

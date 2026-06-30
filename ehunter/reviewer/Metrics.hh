@@ -63,6 +63,9 @@ struct Metrics
     // Mean deleted bases in the repeat node per read, per haplotype
     // If no reads overlap the repeat node, meanDeletedBasesWithinRepeats is 0.0
     std::vector<double> meanDeletedBasesWithinRepeats;
+    // ReadRepeatPurity: pooled base-weighted fraction of repeat-region read bases that match the motif,
+    // per haplotype. -1.0 when no repeat-region read bases (so the JSON writer omits it).
+    std::vector<double> readRepeatPurity;
     // Strand bias: Binomial test p-value (phred-scaled) testing whether the forward/reverse
     // strand distribution deviates significantly from 50/50. Value = -10 * log10(p).
     // Higher values indicate greater strand bias. Returns 0.0 if no reads.

@@ -130,3 +130,32 @@ TEST(ProcessRead, InsertionJustBeyondPaddingIsNotCounted)
     EXPECT_EQ(30, result.repeat_sequence_size_in_base_pairs);
     EXPECT_FALSE(result.soft_clipped_bases_contain_repetitive_sequence);
 }
+
+// ReadRepeatPurity: a spanning read whose in-repeat tract is a perfect "CAG" tiling.
+// Read [90,120) with 30M; locus [100, 106) (6 bp). The 6 in-repeat read bases (indices
+// 10..15) are "CAGCAG" -> all 6 match the motif, so matched == total == 6.
+TEST(ProcessRead, PureSpanningReadRepeatPurityIsOne)
+{
+    const std::string sequence = std::string(10, 'T') + "CAGCAG" + std::string(14, 'T');
+    FullRead read = makeRead(sequence, /*pos=*/90, {cigarOp(30, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/106, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(6, result.repeat_read_bases);
+    EXPECT_EQ(6, result.matched_bases_within_repeat);
+}
+
+// ReadRepeatPurity: same layout but the in-repeat tract "CAGCTG" carries one substitution
+// (position 4 is T instead of A), so 5 of 6 bases match the motif tiling.
+TEST(ProcessRead, ImpureSpanningReadRepeatPurityCountsMismatch)
+{
+    const std::string sequence = std::string(10, 'T') + "CAGCTG" + std::string(14, 'T');
+    FullRead read = makeRead(sequence, /*pos=*/90, {cigarOp(30, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/106, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(6, result.repeat_read_bases);
+    EXPECT_EQ(5, result.matched_bases_within_repeat);
+}

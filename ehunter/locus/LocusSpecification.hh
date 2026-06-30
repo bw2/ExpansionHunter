@@ -104,7 +104,8 @@ public:
 
     void addVariantSpecification(
         std::string id, VariantClassification classification, GenomicRegion referenceLocus,
-        std::vector<graphtools::NodeId> nodes, boost::optional<graphtools::NodeId> optionalRefNode);
+        std::vector<graphtools::NodeId> nodes, boost::optional<graphtools::NodeId> optionalRefNode,
+        double referenceRepeatPurity = -1.0);
 
     const VariantSpecification& getVariantSpecById(const std::string& variantSpecId) const;
 

@@ -76,12 +76,14 @@ class VariantSpecification
 public:
     VariantSpecification(
         std::string id, VariantClassification classification, GenomicRegion referenceLocus,
-        std::vector<graphtools::NodeId> nodes, boost::optional<graphtools::NodeId> optionalRefNode)
+        std::vector<graphtools::NodeId> nodes, boost::optional<graphtools::NodeId> optionalRefNode,
+        double referenceRepeatPurity = -1.0)
         : id_(std::move(id))
         , classification_(classification)
         , referenceLocus_(std::move(referenceLocus))
         , nodes_(std::move(nodes))
         , optionalRefNode_(optionalRefNode)
+        , referenceRepeatPurity_(referenceRepeatPurity)
     {
         assertConsistency();
     }
@@ -91,6 +93,10 @@ public:
     const GenomicRegion& referenceLocus() const { return referenceLocus_; }
     const std::vector<graphtools::NodeId>& nodes() const { return nodes_; }
     const boost::optional<graphtools::NodeId>& optionalRefNode() const { return optionalRefNode_; }
+
+    // Fraction of the reference repeat-region bases that match a perfect tiling of the catalog
+    // motif. -1.0 means not computed (e.g. non-repeat variant); the JSON writer omits it then.
+    double referenceRepeatPurity() const { return referenceRepeatPurity_; }
 
     bool operator==(const VariantSpecification& other) const
     {
@@ -105,6 +111,7 @@ private:
     GenomicRegion referenceLocus_;
     std::vector<graphtools::NodeId> nodes_;
     boost::optional<graphtools::NodeId> optionalRefNode_;
+    double referenceRepeatPurity_;
 };
 
 std::ostream& operator<<(std::ostream& out, VariantType type);

@@ -16,6 +16,7 @@
 #include "core/HtsHelpers.hh"
 #include "core/LocusStats.hh"
 #include "core/Read.hh"
+#include "core/RepeatPurity.hh"
 #include "genotyping/RepeatGenotype.hh"
 #include "io/LocusSpecDecoding.hh"
 #include "io/ParameterLoading.hh"
@@ -377,6 +378,21 @@ FastReadAnalysisResult processRead(
     const std::string& readSequence = read.r.sequence();
     const int read_sequence_length = readSequence.length();
 
+    // ReadRepeatPurity (fast path): compare the read's in-repeat tract (read-sequence coordinates
+    // [locus_start, locus_end)) against a perfect motif tiling anchored at the repeat-region start.
+    // Only spanning reads feed the metric downstream, but the counts are filled whenever both bounds
+    // are known so the function stays self-contained and testable.
+    if (read_seq_position_0based_locus_start >= 0
+        && read_seq_position_0based_locus_end >= read_seq_position_0based_locus_start
+        && read_seq_position_0based_locus_end <= read_sequence_length) {
+        const std::string repeat_tract = readSequence.substr(
+            read_seq_position_0based_locus_start,
+            read_seq_position_0based_locus_end - read_seq_position_0based_locus_start);
+        const MotifPurity purity = motifTilingPurity(repeat_tract, locus_motif);
+        result.matched_bases_within_repeat = static_cast<int>(purity.matchedBases);
+        result.repeat_read_bases = static_cast<int>(purity.totalBases);
+    }
+
     std::string left_flank_bases = (read_seq_position_0based_locus_start > 0) ?
         readSequence.substr(length_of_left_soft_clips, read_seq_position_0based_locus_start - length_of_left_soft_clips)
         : "";
@@ -481,6 +497,8 @@ bool processLocusFast(
         int reverseReads = 0;
         long insertedBases = 0;
         long deletedBases = 0;
+        long matchedRepeatReadBases = 0; // ReadRepeatPurity numerator (bases matching the motif)
+        long totalRepeatReadBases = 0;   // ReadRepeatPurity denominator (repeat-region read bases)
     };
     std::map<int, SpanningReadStats> allele_size_spanning_read_stats;
     for (const auto& readPair : readPairs) {
@@ -524,6 +542,8 @@ bool processLocusFast(
                 }
                 stats.insertedBases += readAnalysisResult.inserted_bases_within_repeat;
                 stats.deletedBases += readAnalysisResult.deleted_bases_within_repeat;
+                stats.matchedRepeatReadBases += readAnalysisResult.matched_bases_within_repeat;
+                stats.totalRepeatReadBases += readAnalysisResult.repeat_read_bases;
             }
             if (readAnalysisResult.soft_clipped_bases_contain_repetitive_sequence) {
                 soft_clipped_read_repeat_sequence_sizes.push_back(readAnalysisResult.repeat_sequence_size_in_base_pairs);
@@ -738,6 +758,8 @@ bool processLocusFast(
 			allele.alleleSize = alleleUnits;
 			int depth = 0;
 			long matchedRepeatBases = 0;
+			long purityMatchedBases = 0;  // ReadRepeatPurity numerator (repeat-region read bases matching the motif)
+			long purityTotalBases = 0;    // ReadRepeatPurity denominator (repeat-region read bases)
 			int forwardReads = 0;
 			int reverseReads = 0;
 			long insertedBases = 0;
@@ -761,6 +783,8 @@ bool processLocusFast(
 					reverseReads += statsIt->second.reverseReads;
 					insertedBases += statsIt->second.insertedBases;
 					deletedBases += statsIt->second.deletedBases;
+					purityMatchedBases += statsIt->second.matchedRepeatReadBases;
+					purityTotalBases += statsIt->second.totalRepeatReadBases;
 				}
 			}
 			// DP is a base-level coverage estimate (matched repeat bases / allele length in bp), matching
@@ -782,7 +806,11 @@ bool processLocusFast(
 			// alleleUnits==0, and matches the calibrator's ci_over_eh = ci_width/(eh+1).
 			allele.confidenceIntervalDividedByAlleleSize =
 				static_cast<double>(ci.end() - ci.start()) / (alleleUnits + 1);
-			qualityMetrics.alleles.push_back(allele);
+			// ReadRepeatPurity from this allele's spanning reads; -1 when no repeat-region read bases.
+			allele.readRepeatPurity = (purityTotalBases > 0)
+				? static_cast<double>(purityMatchedBases) / purityTotalBases
+				: -1.0;
+				qualityMetrics.alleles.push_back(allele);
 		};
 		if (isHet) {
 			buildAlleleMetrics(1, shortAlleleUnits, repeatGenotype->shortAlleleSizeInUnitsCi(), 0);

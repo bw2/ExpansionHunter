@@ -36,6 +36,7 @@ or hemizygous calls, there is one entry.
             "QD": 0.92,
             "MeanInsertedBasesWithinRepeats": 0.0,
             "MeanDeletedBasesWithinRepeats": 0.0,
+            "ReadRepeatPurity": 1.0,
             "StrandBiasBinomialPhred": 0.0,
             "LeftFlankNormalizedDepth": 1.2,
             "RightFlankNormalizedDepth": 1.1,
@@ -106,6 +107,21 @@ Average number of deleted bases within the repeat node per read.
 **Formula:** `MeanDeletedBasesWithinRepeats = totalDeletedBasesInRepeat / numReadsOverlappingRepeat`
 
 Similar interpretation to `MeanInsertedBasesWithinRepeats`.
+
+### ReadRepeatPurity
+
+Fraction of the repeat-region read bases (the read bases falling within the repeat region, among the
+reads supporting this allele) that match a perfect repeat sequence (eg. CAG.CAG.CAG.CAG) of the
+catalog motif — a measure of how clean the observed repeat is, in `[0, 1]` (`1.0` = perfectly pure).
+
+**Formula:** `ReadRepeatPurity = matchedRepeatRegionReadBases / totalRepeatRegionReadBases`
+
+Each read contributes only the portion that overlaps the repeat region. This is derived from the
+read-to-graph alignment (match vs mismatch/insertion against the repeat node), except in
+optimized-streaming mode when `QuickGenotype` is true, where it is computed from spanning reads only.
+Low values flag interrupted or compound repeats. The field is omitted when no repeat-region read bases
+were observed for the allele. See also the per-locus `ReferenceRepeatPurity` (the same measure applied to
+the reference repeat region), described in [Output JSON Files](05_OutputJsonFiles.md).
 
 ### StrandBiasBinomialPhred
 
