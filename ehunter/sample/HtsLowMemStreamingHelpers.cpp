@@ -379,7 +379,8 @@ FastReadAnalysisResult processRead(
     const int read_sequence_length = readSequence.length();
 
     // ReadRepeatPurity (fast path): compare the read's in-repeat tract (read-sequence coordinates
-    // [locus_start, locus_end)) against a perfect motif tiling anchored at the repeat-region start.
+    // [locus_start, locus_end)) against a perfect consecutive repeat sequence of the motif anchored
+    // at the repeat-region start.
     // Only spanning reads feed the metric downstream, but the counts are filled whenever both bounds
     // are known so the function stays self-contained and testable.
     if (read_seq_position_0based_locus_start >= 0
@@ -388,7 +389,7 @@ FastReadAnalysisResult processRead(
         const std::string repeat_tract = readSequence.substr(
             read_seq_position_0based_locus_start,
             read_seq_position_0based_locus_end - read_seq_position_0based_locus_start);
-        const MotifPurity purity = motifTilingPurity(repeat_tract, locus_motif);
+        const RepeatSequencePurity purity = computeRepeatSequencePurity(repeat_tract, locus_motif);
         result.matched_bases_within_repeat = static_cast<int>(purity.matchedBases);
         result.repeat_read_bases = static_cast<int>(purity.totalBases);
     }

@@ -29,6 +29,7 @@ AlleleMetrics makeAqm()
     aqm.qd = 4.0;
     aqm.meanInsertedBasesWithinRepeats = 0.3;
     aqm.meanDeletedBasesWithinRepeats = 0.1;
+    aqm.readRepeatPurity = 0.97;
     aqm.strandBiasBinomialPhred = 1.2;
     aqm.leftFlankNormalizedDepth = 0.9;
     aqm.rightFlankNormalizedDepth = 1.1;
@@ -53,12 +54,12 @@ TEST(GenotypeQualityFeatures, FullGenotypingRegimeVectorMatchesFeaturesPyOrder)
     const CountTable spanning(std::map<int32_t, int32_t>{{20, 8}, {22, 1}});
     const CountTable flanking(std::map<int32_t, int32_t>{{18, 1}, {25, 2}});
     const CountTable hq(std::map<int32_t, int32_t>{{20, 5}});
-    const LocusFeatureContext ctx{3, 30, spanning, flanking, hq};
+    const LocusFeatureContext ctx{3, 30, spanning, flanking, hq, /*referenceRepeatPurity=*/0.92};
 
     const std::vector<double> f = assembleFeatures(ctx, /*rank=*/0, /*eh=*/20, /*ciStart=*/18,
                                                    /*ciEnd=*/24, makeAqm(), GenotypingRegime::FullSpanning);
 
-    ASSERT_EQ(f.size(), 22u);
+    ASSERT_EQ(f.size(), 24u);
     EXPECT_DOUBLE_EQ(f[0], 3.0);             // motif_size
     EXPECT_DOUBLE_EQ(f[1], 10.0);            // num_repeats_in_reference = 30/3
     EXPECT_DOUBLE_EQ(f[2], 30.0);            // ref_size_bp
@@ -79,8 +80,10 @@ TEST(GenotypeQualityFeatures, FullGenotypingRegimeVectorMatchesFeaturesPyOrder)
     EXPECT_DOUBLE_EQ(f[17], 1.2);            // strand_bias_phred
     EXPECT_DOUBLE_EQ(f[18], 0.3);            // mean_inserted_bases
     EXPECT_DOUBLE_EQ(f[19], 0.1);            // mean_deleted_bases
-    EXPECT_DOUBLE_EQ(f[20], 0.9);            // left_flank_norm_depth
-    EXPECT_DOUBLE_EQ(f[21], 1.1);            // right_flank_norm_depth
+    EXPECT_DOUBLE_EQ(f[20], 0.92);           // reference_repeat_purity
+    EXPECT_DOUBLE_EQ(f[21], 0.97);           // read_repeat_purity
+    EXPECT_DOUBLE_EQ(f[22], 0.9);            // left_flank_norm_depth
+    EXPECT_DOUBLE_EQ(f[23], 1.1);            // right_flank_norm_depth
 }
 
 TEST(GenotypeQualityFeatures, QuickGenotypingRegimeOmitsFlankDepths)
@@ -91,7 +94,23 @@ TEST(GenotypeQualityFeatures, QuickGenotypingRegimeOmitsFlankDepths)
     const LocusFeatureContext ctx{3, 30, spanning, flanking, hq};
 
     const std::vector<double> f = assembleFeatures(ctx, 0, 20, 18, 24, makeAqm(), GenotypingRegime::Quick);
-    EXPECT_EQ(f.size(), 20u); // QUICK_FEATURES has no flank-normalized depths
+    EXPECT_EQ(f.size(), 22u); // QUICK_FEATURES has no flank-normalized depths
+}
+
+TEST(GenotypeQualityFeatures, RepeatPuritySentinelMapsToNaN)
+{
+    const CountTable spanning(std::map<int32_t, int32_t>{{20, 8}});
+    const CountTable flanking;
+    const CountTable hq(std::map<int32_t, int32_t>{{20, 5}});
+    // Default ctx.referenceRepeatPurity (-1.0, not computed) and an aqm with the default
+    // (unset) readRepeatPurity (-1.0) should both map to NaN, not the raw sentinel.
+    const LocusFeatureContext ctx{3, 30, spanning, flanking, hq};
+    AlleleMetrics aqm = makeAqm();
+    aqm.readRepeatPurity = -1.0;
+
+    const std::vector<double> f = assembleFeatures(ctx, 0, 20, 18, 24, aqm, GenotypingRegime::Quick);
+    EXPECT_TRUE(std::isnan(f[20])); // reference_repeat_purity
+    EXPECT_TRUE(std::isnan(f[21])); // read_repeat_purity
 }
 
 TEST(GenotypeQualityFeatures, SupportFracIsNaNWhenNoSpanningReads)
@@ -111,13 +130,15 @@ TEST(GenotypeQualityFeatures, CanonicalNamesMatchAssemblerOrder)
 {
     const std::vector<std::string>& quick = featureNamesForGenotypingRegime(GenotypingRegime::Quick);
     const std::vector<std::string>& full = featureNamesForGenotypingRegime(GenotypingRegime::FullSpanning);
-    ASSERT_EQ(quick.size(), 20u);
-    ASSERT_EQ(full.size(), 22u);
-    EXPECT_EQ(quick.front(), "motif_size");          // value index 0 in the asserts above
-    EXPECT_EQ(quick[15], "depth");                   // value index 15
-    EXPECT_EQ(quick.back(), "mean_deleted_bases");   // value index 19
-    EXPECT_EQ(full[20], "left_flank_norm_depth");   // full-only, value index 20
-    EXPECT_EQ(full[21], "right_flank_norm_depth");  // full-only, value index 21
+    ASSERT_EQ(quick.size(), 22u);
+    ASSERT_EQ(full.size(), 24u);
+    EXPECT_EQ(quick.front(), "motif_size");           // value index 0 in the asserts above
+    EXPECT_EQ(quick[15], "depth");                    // value index 15
+    EXPECT_EQ(quick[19], "mean_deleted_bases");       // value index 19
+    EXPECT_EQ(quick[20], "reference_repeat_purity");  // value index 20
+    EXPECT_EQ(quick.back(), "read_repeat_purity");    // value index 21
+    EXPECT_EQ(full[22], "left_flank_norm_depth");    // full-only, value index 22
+    EXPECT_EQ(full[23], "right_flank_norm_depth");   // full-only, value index 23
     EXPECT_TRUE(std::equal(quick.begin(), quick.end(), full.begin())); // full is quick + 2
     EXPECT_EQ(featureNamesForGenotypingRegime(GenotypingRegime::FullNonspanning), full); // both full genotyping_regimes share the list
 }

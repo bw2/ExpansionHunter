@@ -21,7 +21,8 @@ struct FastReadAnalysisResult {
     bool soft_clipped_bases_contain_repetitive_sequence = false;
     int inserted_bases_within_repeat = 0;  // CIGAR insertions whose position falls within the locus
     int deleted_bases_within_repeat = 0;   // CIGAR deletions overlapping the locus
-    int matched_bases_within_repeat = 0;   // repeat-region read bases matching a perfect motif tiling (ReadRepeatPurity)
+    // repeat-region read bases matching a perfect consecutive repeat sequence of the motif (ReadRepeatPurity)
+    int matched_bases_within_repeat = 0;
     int repeat_read_bases = 0;             // total repeat-region read bases (ReadRepeatPurity denominator)
 };
 

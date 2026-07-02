@@ -25,9 +25,9 @@
 namespace ehunter
 {
 
-MotifPurity motifTilingPurity(const std::string& sequence, const std::string& motif)
+RepeatSequencePurity computeRepeatSequencePurity(const std::string& sequence, const std::string& motif)
 {
-    MotifPurity result;
+    RepeatSequencePurity result;
     const std::size_t motifLength = motif.length();
     if (motifLength == 0)
     {

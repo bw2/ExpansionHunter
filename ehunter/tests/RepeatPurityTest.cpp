@@ -23,62 +23,62 @@
 
 using namespace ehunter;
 
-TEST(MotifTilingPurity, PerfectRepeat_AllBasesMatch)
+TEST(ComputeRepeatSequencePurity, PerfectRepeat_AllBasesMatch)
 {
-    const auto purity = motifTilingPurity("CAGCAGCAGCAG", "CAG");
+    const auto purity = computeRepeatSequencePurity("CAGCAGCAGCAG", "CAG");
     EXPECT_EQ(purity.matchedBases, 12);
     EXPECT_EQ(purity.totalBases, 12);
 }
 
-TEST(MotifTilingPurity, PartialTrailingMotif_CountedAgainstPhase)
+TEST(ComputeRepeatSequencePurity, PartialTrailingMotif_CountedAgainstPhase)
 {
     // "CAGCA" = perfect "CAG" plus the first two bases of the next motif copy; all 5 match.
-    const auto purity = motifTilingPurity("CAGCA", "CAG");
+    const auto purity = computeRepeatSequencePurity("CAGCA", "CAG");
     EXPECT_EQ(purity.matchedBases, 5);
     EXPECT_EQ(purity.totalBases, 5);
 }
 
-TEST(MotifTilingPurity, SingleSubstitution_OneMismatch)
+TEST(ComputeRepeatSequencePurity, SingleSubstitution_OneMismatch)
 {
     // Position 4 (second copy, offset 1) is T instead of A.
-    const auto purity = motifTilingPurity("CAGCTGCAG", "CAG");
+    const auto purity = computeRepeatSequencePurity("CAGCTGCAG", "CAG");
     EXPECT_EQ(purity.matchedBases, 8);
     EXPECT_EQ(purity.totalBases, 9);
 }
 
-TEST(MotifTilingPurity, IndelShiftsDownstreamPhase)
+TEST(ComputeRepeatSequencePurity, IndelShiftsDownstreamPhase)
 {
     // A single inserted base ("CAGXCAGCAG") throws off the phase for everything after it, so the
-    // flat tiling comparison undercounts matches past the insertion. Documents the heuristic's limit.
-    const auto purity = motifTilingPurity("CAGTCAGCAG", "CAG");
+    // flat, gap-free comparison undercounts matches past the insertion. Documents the heuristic's limit.
+    const auto purity = computeRepeatSequencePurity("CAGTCAGCAG", "CAG");
     EXPECT_EQ(purity.totalBases, 10);
     EXPECT_LT(purity.matchedBases, 9);
 }
 
-TEST(MotifTilingPurity, LowercaseSoftMaskedReference_Matches)
+TEST(ComputeRepeatSequencePurity, LowercaseSoftMaskedReference_Matches)
 {
-    const auto purity = motifTilingPurity("cagCAGcag", "CAG");
+    const auto purity = computeRepeatSequencePurity("cagCAGcag", "CAG");
     EXPECT_EQ(purity.matchedBases, 9);
     EXPECT_EQ(purity.totalBases, 9);
 }
 
-TEST(MotifTilingPurity, NBaseCountsAsMismatch)
+TEST(ComputeRepeatSequencePurity, NBaseCountsAsMismatch)
 {
-    const auto purity = motifTilingPurity("CANCAG", "CAG");
+    const auto purity = computeRepeatSequencePurity("CANCAG", "CAG");
     EXPECT_EQ(purity.matchedBases, 5);
     EXPECT_EQ(purity.totalBases, 6);
 }
 
-TEST(MotifTilingPurity, EmptyMotif_ReturnsZeroTotal)
+TEST(ComputeRepeatSequencePurity, EmptyMotif_ReturnsZeroTotal)
 {
-    const auto purity = motifTilingPurity("CAGCAG", "");
+    const auto purity = computeRepeatSequencePurity("CAGCAG", "");
     EXPECT_EQ(purity.matchedBases, 0);
     EXPECT_EQ(purity.totalBases, 0);
 }
 
-TEST(MotifTilingPurity, EmptySequence_ReturnsZeroTotal)
+TEST(ComputeRepeatSequencePurity, EmptySequence_ReturnsZeroTotal)
 {
-    const auto purity = motifTilingPurity("", "CAG");
+    const auto purity = computeRepeatSequencePurity("", "CAG");
     EXPECT_EQ(purity.matchedBases, 0);
     EXPECT_EQ(purity.totalBases, 0);
 }

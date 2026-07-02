@@ -315,7 +315,7 @@ LocusSpecification decodeLocusSpecification(
                 VariantClassification classification(variantType, variantSubtype);
 
                 // For repeat variants, measure how well the reference repeat region matches a perfect
-                // tiling of the catalog motif (purity in [0,1]); -1.0 for non-repeat variants.
+                // consecutive repeat sequence of the catalog motif (purity in [0,1]); -1.0 for non-repeat variants.
                 double referenceRepeatPurity = -1.0;
                 if (feature.type == GraphBlueprintFeatureType::kSkippableRepeat
                     || feature.type == GraphBlueprintFeatureType::kUnskippableRepeat)
@@ -323,7 +323,8 @@ LocusSpecification decodeLocusSpecification(
                     const auto& contigName = reference.contigInfo().getContigName(referenceRegion.contigIndex());
                     const string refRepeatSequence
                         = reference.getSequence(contigName, referenceRegion.start(), referenceRegion.end());
-                    const MotifPurity purity = motifTilingPurity(refRepeatSequence, feature.sequences.front());
+                    const RepeatSequencePurity purity
+                        = computeRepeatSequencePurity(refRepeatSequence, feature.sequences.front());
                     if (purity.totalBases > 0)
                     {
                         referenceRepeatPurity = static_cast<double>(purity.matchedBases) / purity.totalBases;

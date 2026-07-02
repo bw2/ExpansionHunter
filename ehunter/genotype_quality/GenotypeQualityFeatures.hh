@@ -39,6 +39,9 @@ struct LocusFeatureContext
     const CountTable& spanningReads;
     const CountTable& flankingReads;
     const CountTable& hqUnambiguousReads;
+    // The fraction of bases in the reference repeat sequence that matches a perfect repeat sequence. 
+    // -1.0 = not computed, mapped to NaN in the feature vector (the model was trained on NaN for missing).
+    double referenceRepeatPurity = -1.0;
 };
 
 // Returns the genotypingRegime for an allele (mirrors features.genotyping_regime_of): the quick
@@ -53,7 +56,7 @@ GenotypingRegime genotypingRegimeOf(bool quickGenotype, int spanningAtCalled);
 const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime genotypingRegime);
 
 // Builds the model feature vector for one allele, in features.py order
-// (QUICK_FEATURES = 20 entries for Quick, FULL_FEATURES = 22 for the full genotyping_regimes).
+// (QUICK_FEATURES = 22 entries for Quick, FULL_FEATURES = 24 for the full genotyping_regimes).
 // `eh` is the called allele size in repeat units; `ciStart`/`ciEnd` its confidence
 // interval; `aqm` the matching per-allele quality metrics.
 std::vector<double> assembleFeatures(

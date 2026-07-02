@@ -162,7 +162,7 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
     const auto& repeatUnit = locusSpec_.regionGraph().nodeSeq(repeatNodeId);
     record_["RepeatUnit"] = repeatUnit;
 
-    // Fraction of the reference repeat-region bases matching a perfect tiling of the motif.
+    // Fraction of the reference repeat-region bases matching a perfect consecutive repeat sequence of the motif.
     // Omitted when not computed (sentinel -1.0).
     if (variantSpec_.referenceRepeatPurity() >= 0.0)
     {
@@ -261,7 +261,8 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                     static_cast<int>(variantSpec_.referenceLocus().length()),
                     repeatFindings.countsOfSpanningReads(),
                     repeatFindings.countsOfFlankingReads(),
-                    repeatFindings.countsOfHighQualityUnambiguousReads()};
+                    repeatFindings.countsOfHighQualityUnambiguousReads(),
+                    variantSpec_.referenceRepeatPurity()};
                 const gq::AllelePrediction pred = gq::predictAllele(
                     *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
                     ci.end(), allele);

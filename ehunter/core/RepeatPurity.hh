@@ -24,14 +24,14 @@
 namespace ehunter
 {
 
-// Result of comparing a sequence against a perfect tiling of a motif.
-struct MotifPurity
+// Result of comparing a sequence against a perfect consecutive repeat sequence of a motif.
+struct RepeatSequencePurity
 {
     long matchedBases = 0; // bases of `sequence` equal to the motif base at the same (mod-length) phase
     long totalBases = 0;   // length of `sequence`
 };
 
-// Count how many bases of `sequence` match a perfect tiling of `motif` anchored at sequence[0]
+// Count how many bases of `sequence` match a perfect consecutive repeat sequence of `motif` anchored at sequence[0]
 // (i.e. sequence[i] is compared to motif[i % motif.length()]). Both sides are upper-cased, so
 // soft-masked (lowercase) reference still matches; an 'N' counts as a mismatch. Returns {0, 0}
 // when `motif` is empty. The caller's purity is matchedBases / totalBases.
@@ -40,6 +40,6 @@ struct MotifPurity
 // all downstream bases, so it is a purity heuristic, not a true alignment. Used for the reference
 // repeat region and for fast-path spanning reads; the full genotyper instead derives matched vs
 // total bases from the graph alignment's match/mismatch operations.
-MotifPurity motifTilingPurity(const std::string& sequence, const std::string& motif);
+RepeatSequencePurity computeRepeatSequencePurity(const std::string& sequence, const std::string& motif);
 
 }

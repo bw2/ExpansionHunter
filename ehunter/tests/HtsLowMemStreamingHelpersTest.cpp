@@ -131,7 +131,7 @@ TEST(ProcessRead, InsertionJustBeyondPaddingIsNotCounted)
     EXPECT_FALSE(result.soft_clipped_bases_contain_repetitive_sequence);
 }
 
-// ReadRepeatPurity: a spanning read whose in-repeat tract is a perfect "CAG" tiling.
+// ReadRepeatPurity: a spanning read whose in-repeat tract is a perfect consecutive "CAG" repeat.
 // Read [90,120) with 30M; locus [100, 106) (6 bp). The 6 in-repeat read bases (indices
 // 10..15) are "CAGCAG" -> all 6 match the motif, so matched == total == 6.
 TEST(ProcessRead, PureSpanningReadRepeatPurityIsOne)
@@ -147,7 +147,7 @@ TEST(ProcessRead, PureSpanningReadRepeatPurityIsOne)
 }
 
 // ReadRepeatPurity: same layout but the in-repeat tract "CAGCTG" carries one substitution
-// (position 4 is T instead of A), so 5 of 6 bases match the motif tiling.
+// (position 4 is T instead of A), so 5 of 6 bases match the motif.
 TEST(ProcessRead, ImpureSpanningReadRepeatPurityCountsMismatch)
 {
     const std::string sequence = std::string(10, 'T') + "CAGCTG" + std::string(14, 'T');

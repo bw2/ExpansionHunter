@@ -22,7 +22,8 @@ const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime
         "allele_rank", "ci_width", "ci_asymmetry", "ci_over_eh", "spanning_total",
         "hq_unamb_total", "spanning_at_called", "spanning_above_called", "flanking_above_called",
         "support_frac", "depth", "hq_unambiguous_reads", "strand_bias_phred",
-        "mean_inserted_bases", "mean_deleted_bases"};
+        "mean_inserted_bases", "mean_deleted_bases",
+        "reference_repeat_purity", "read_repeat_purity"};
     // features.FULL_FEATURES = QUICK_FEATURES + the two flank-normalized depths.
     static const std::vector<std::string> full = [] {
         std::vector<std::string> names = quick;
@@ -94,6 +95,15 @@ std::vector<double> assembleFeatures(
         ? (static_cast<double>(spanningAtCalled) / spanningTotal)
         : std::numeric_limits<double>::quiet_NaN();
 
+    // -1.0 = not computed (JsonWriter's emit-omission sentinel); the model was trained on NaN
+    // for missing values (eh_json.py's variant.get(...) -> None -> NaN), so map here.
+    const double referenceRepeatPurity = (ctx.referenceRepeatPurity >= 0.0)
+        ? ctx.referenceRepeatPurity
+        : std::numeric_limits<double>::quiet_NaN();
+    const double readRepeatPurity = (aqm.readRepeatPurity >= 0.0)
+        ? aqm.readRepeatPurity
+        : std::numeric_limits<double>::quiet_NaN();
+
     // features.FAST_FEATURES order.
     std::vector<double> features = {
         motifSize,
@@ -116,6 +126,8 @@ std::vector<double> assembleFeatures(
         aqm.strandBiasBinomialPhred,
         aqm.meanInsertedBasesWithinRepeats,
         aqm.meanDeletedBasesWithinRepeats,
+        referenceRepeatPurity,
+        readRepeatPurity,
     };
 
     // The full genotyping_regimes append the two flank-normalized depths (FULL_FEATURES).

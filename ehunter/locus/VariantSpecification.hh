@@ -94,8 +94,8 @@ public:
     const std::vector<graphtools::NodeId>& nodes() const { return nodes_; }
     const boost::optional<graphtools::NodeId>& optionalRefNode() const { return optionalRefNode_; }
 
-    // Fraction of the reference repeat-region bases that match a perfect tiling of the catalog
-    // motif. -1.0 means not computed (e.g. non-repeat variant); the JSON writer omits it then.
+    // Fraction of the reference repeat-region bases that match a perfect consecutive repeat sequence
+    // of the catalog motif. -1.0 means not computed (e.g. non-repeat variant); the JSON writer omits it then.
     double referenceRepeatPurity() const { return referenceRepeatPurity_; }
 
     bool operator==(const VariantSpecification& other) const
