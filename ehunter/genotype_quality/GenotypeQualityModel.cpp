@@ -12,10 +12,31 @@
 
 #include <zlib.h>
 
+// Basename of the embedded model file, injected by CMake (see ehunter/CMakeLists.txt). Fallback keeps
+// the file compilable in builds that don't define it.
+#ifndef GQ_MODEL_NAME
+#define GQ_MODEL_NAME "unknown"
+#endif
+
 namespace ehunter
 {
 namespace gq
 {
+
+// Model identity string from a file path: strip the directory and a trailing .json or .json.gz.
+static std::string modelVersionFromPath(const std::string& path)
+{
+    std::string name = path.substr(path.find_last_of("/\\") + 1);
+    if (name.size() > 3 && name.compare(name.size() - 3, 3, ".gz") == 0)
+    {
+        name.erase(name.size() - 3);
+    }
+    if (name.size() > 5 && name.compare(name.size() - 5, 5, ".json") == 0)
+    {
+        name.erase(name.size() - 5);
+    }
+    return name;
+}
 
 double Tree::eval(const std::vector<double>& x) const
 {
@@ -370,7 +391,9 @@ GenotypeQualityModel loadGenotypeQualityModel(const std::string& path)
     {
         throw std::runtime_error("genotype-quality model: JSON parse error in " + path + ": " + e.what());
     }
-    return GenotypeQualityModel::fromJson(j);
+    GenotypeQualityModel model = GenotypeQualityModel::fromJson(j);
+    model.version = modelVersionFromPath(path);
+    return model;
 }
 
 namespace
@@ -432,7 +455,9 @@ std::shared_ptr<const GenotypeQualityModel> loadEmbeddedGenotypeQualityModel()
         throw std::runtime_error(
             std::string("genotype-quality model: JSON parse error in embedded model: ") + e.what());
     }
-    return std::make_shared<const GenotypeQualityModel>(GenotypeQualityModel::fromJson(j));
+    GenotypeQualityModel model = GenotypeQualityModel::fromJson(j);
+    model.version = GQ_MODEL_NAME;
+    return std::make_shared<const GenotypeQualityModel>(std::move(model));
 }
 
 } // namespace gq

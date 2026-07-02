@@ -118,6 +118,9 @@ struct AllelePrediction
 struct GenotypeQualityModel
 {
     int formatVersion = 0;
+    // Model identity (the model file's basename without extension), reported in the output JSON as
+    // GenotypeQualityModelVersion. Set by the loader from the file name; not part of the model JSON.
+    std::string version;
     std::vector<std::string> featureNamesQuick;
     std::vector<std::string> featureNamesFull;
     GenotypingRegimeModel quick;

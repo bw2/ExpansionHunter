@@ -30,8 +30,10 @@
 #include <boost/algorithm/string/join.hpp>
 #include <boost/optional.hpp>
 
+#include "app/Version.hh"
 #include "core/Common.hh"
 #include "core/ReadSupportCalculator.hh"
+#include "genotype_quality/GenotypeQualityModel.hh"
 
 namespace ehunter
 {
@@ -68,6 +70,12 @@ IterativeJsonWriter::IterativeJsonWriter(
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams.sex());
+    sampleParametersRecord["Source"] = kSourceUrl;
+    sampleParametersRecord["Version"] = kCommitSha;
+    if (qualityModel)
+    {
+        sampleParametersRecord["GenotypeQualityModelVersion"] = qualityModel->version;
+    }
 
 	std::string jsonString = std::regex_replace(sampleParametersRecord.dump(2), std::regex("\n"), "\n  ");
     outStream_ << "{\n";

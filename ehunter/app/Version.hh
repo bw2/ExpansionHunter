@@ -30,4 +30,8 @@ namespace ehunter
 
 const std::string kProgramVersion = "ExpansionHunter-bw2 v" GIT_COMMIT_DATE;
 
+// Source repository and short git commit SHA, reported in the output JSON ("Source"/"Version").
+const std::string kSourceUrl = "github.com/bw2/ExpansionHunter";
+const std::string kCommitSha = GIT_COMMIT_SHA;
+
 }

@@ -28,6 +28,7 @@
 #include <boost/algorithm/string/join.hpp>
 #include <boost/optional.hpp>
 
+#include "app/Version.hh"
 #include "core/Common.hh"
 #include "core/ReadSupportCalculator.hh"
 #include "genotype_quality/GenotypeQualityAnnotator.hh"
@@ -71,6 +72,12 @@ void JsonWriter::write(std::ostream& out)
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams_.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams_.sex());
+    sampleParametersRecord["Source"] = kSourceUrl;
+    sampleParametersRecord["Version"] = kCommitSha;
+    if (qualityModel_)
+    {
+        sampleParametersRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
+    }
 
     Json resultsRecord;
     const unsigned locusCount(sampleFindings_.size());
