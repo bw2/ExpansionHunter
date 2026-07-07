@@ -1360,6 +1360,7 @@ void htsLowMemStreamingSampleAnalysis(
     runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
     runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
     runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
+    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
     runInfoRecord["CommandLine"] = commandLine;
     if (programParams.genotypeQualityModel())
     {

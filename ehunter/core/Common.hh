@@ -132,4 +132,8 @@ std::string formatLocalTimestamp(std::time_t epochSeconds);
 // zero and not followed by a nonzero larger unit (e.g. "35s", "5m 35s", "3h 5m 35s").
 std::string formatRuntime(std::time_t durationSeconds);
 
+// Peak resident set size (whole process, all threads) in MB, rounded to 1 decimal place. Backed by
+// getrusage(RUSAGE_SELF, ...); zero new dependencies, works on both Linux and macOS.
+double peakRssMemoryMB();
+
 }

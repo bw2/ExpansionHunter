@@ -180,6 +180,7 @@ void IterativeJsonWriter::close()
         runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
         runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch_);
     }
+    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
     runInfoRecord["CommandLine"] = commandLine_;
     if (qualityModel_)
     {

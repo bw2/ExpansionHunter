@@ -25,8 +25,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <regex>
+
+#include <sys/resource.h>
 
 using std::string;
 
@@ -142,6 +145,21 @@ std::string formatRuntime(std::time_t durationSeconds)
     }
     out << seconds << "s";
     return out.str();
+}
+
+double peakRssMemoryMB()
+{
+    struct rusage usage
+    {
+    };
+    getrusage(RUSAGE_SELF, &usage);
+    // ru_maxrss is in KB on Linux but bytes on macOS/BSD.
+#ifdef __APPLE__
+    const double bytes = static_cast<double>(usage.ru_maxrss);
+#else
+    const double bytes = static_cast<double>(usage.ru_maxrss) * 1024.0;
+#endif
+    return std::round(bytes / (1024.0 * 1024.0) * 10.0) / 10.0;
 }
 
 }
