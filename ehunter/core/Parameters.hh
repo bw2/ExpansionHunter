@@ -50,6 +50,11 @@ enum class AnalysisMode
     kOptimizedStreaming
 };
 
+// Encodes an AnalysisMode the same way --analysis-mode spells it on the command line
+// ("seeking" / "streaming" / "low-mem-streaming" / "optimized-streaming"). Used for both
+// logging and the "AnalysisMode" field in the output JSON's RunInfo record.
+std::string analysisModeToString(AnalysisMode mode);
+
 enum class LogLevel
 {
     kTrace,

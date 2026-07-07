@@ -32,6 +32,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <exception>
 #include <fstream>
 #include <memory>
+#include <regex>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -42,9 +43,11 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <boost/optional.hpp>
 #include <boost/timer/progress_display.hpp>
 
+#include "app/Version.hh"
 #include "core/HtsHelpers.hh"
 #include "core/Parameters.hh"
 #include "core/Reference.hh"
+#include "genotype_quality/GenotypeQualityModel.hh"
 #include "io/BamletWriter.hh"
 #include "io/CatalogLoading.hh"
 #include "io/LocusSpecDecoding.hh"
@@ -1130,7 +1133,9 @@ void htsLowMemStreamingSampleAnalysis(
     LocusDescriptionCatalog& locusDescriptionCatalog,
     const ProgramParameters& programParams,
     Reference& reference,
-    BamletWriterPtr bamletWriter)
+    BamletWriterPtr bamletWriter,
+    std::time_t startedEpoch,
+    const std::string& commandLine)
 {
     //initialize the genomeQuery object
     GenomeQueryCollection genomeQuery(locusDescriptionCatalog);
@@ -1171,7 +1176,7 @@ void htsLowMemStreamingSampleAnalysis(
                      typicalReadLength, {});
         spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
 
-        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get());
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(), commandLine);
         IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
         GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
         doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
@@ -1312,7 +1317,8 @@ void htsLowMemStreamingSampleAnalysis(
                     htshelpers::MateExtractor workerMateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(),
                         inputPaths.reference(), true, frozenCache, farAwayMateDistanceThreshold);
                     IterativeJsonWriter jsonWriter(programParams.sample(), workerReference.contigInfo(),
-                        jsonPaths[i], programParams.copyCatalogFields(), programParams.genotypeQualityModel().get());
+                        jsonPaths[i], programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(),
+                        startedEpoch, threadCount, programParams.analysisMode(), commandLine);
                     IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
                     const std::vector<GenomicRegion> streamerRegions{ slice.region };
                     doTheAnalysis(programParams, workerReference, subsetCatalog, subsetGenomeQuery,
@@ -1341,7 +1347,27 @@ void htsLowMemStreamingSampleAnalysis(
     }
 
     spdlog::info("Merging {} per-contig output files into final JSON and VCF", slices.size());
-    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths);
+
+    // The authoritative RunInfo for the merged output: unlike any single worker's own copy, "Completed"
+    // here is captured only once every chromosome-stride worker has joined, so it reflects the true
+    // run-wide finish time rather than one worker's local finish time.
+    const std::time_t completedEpoch = currentEpochSeconds();
+    Json runInfoRecord;
+    runInfoRecord["Source"] = kSourceUrl;
+    runInfoRecord["Version"] = kCommitSha;
+    runInfoRecord["AnalysisMode"] = analysisModeToString(programParams.analysisMode());
+    runInfoRecord["Threads"] = threadCount;
+    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
+    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
+    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
+    runInfoRecord["CommandLine"] = commandLine;
+    if (programParams.genotypeQualityModel())
+    {
+        runInfoRecord["GenotypeQualityModelVersion"] = programParams.genotypeQualityModel()->version;
+    }
+    const std::string runInfoJson = std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
+
+    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths, runInfoJson);
     mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
 
     // One run-wide summary (each per-contig worker call stayed silent; sum their tallies here).

@@ -42,7 +42,9 @@ class IterativeJsonWriter
 public:
 	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
 		const std::string& outputFilePath, bool copyCatalogFields = false,
-		const gq::GenotypeQualityModel* qualityModel = nullptr);
+		const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0,
+		int threadCount = 1, AnalysisMode analysisMode = AnalysisMode::kSeeking,
+		const std::string& commandLine = "");
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
@@ -58,6 +60,10 @@ private:
     bool firstRecord_;
     bool copyCatalogFields_;
     const gq::GenotypeQualityModel* qualityModel_;
+    std::time_t startedEpoch_;
+    int threadCount_;
+    AnalysisMode analysisMode_;
+    std::string commandLine_;
     bool closed_ = false;
 };
 

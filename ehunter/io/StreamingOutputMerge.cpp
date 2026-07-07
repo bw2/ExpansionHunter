@@ -95,16 +95,19 @@ void mergeRegionVcfFiles(const std::string& finalPath, const std::vector<std::st
     }
 }
 
-void mergeRegionJsonFiles(const std::string& finalPath, const std::vector<std::string>& regionTempPaths)
+void mergeRegionJsonFiles(
+    const std::string& finalPath, const std::vector<std::string>& regionTempPaths, const std::string& runInfoJson)
 {
     // This merge depends on IterativeJsonWriter's exact wrapper format (single source of truth:
     // io/IterativeJsonWriter.cpp). Each region file is:
-    //     "{\n  \"SampleParameters\": <json>,\n  \"LocusResults\": {" + <body> + "\n  }\n}\n"
+    //     "{\n  \"SampleParameters\": <json>,\n  \"LocusResults\": {" + <body> + "\n  },\n  \"RunInfo\": <json>\n}\n"
     // where <body> is the raw record text (records separated by ", "; empty for a region with no
     // records). We keep region 0's prefix (SampleParameters is identical across regions), join the
-    // non-empty bodies with ", ", and append the wrapper suffix.
+    // non-empty bodies with ", ", discard every region's own RunInfo (each reflects only that region
+    // worker's local start/finish time, not the true run-wide completion), and append the caller-supplied
+    // runInfoJson instead.
     static const std::string kBodyStartMarker = "\"LocusResults\": {";
-    static const std::string kBodyEndMarker = "\n  }\n}";
+    static const std::string kBodyEndMarker = "\n  },\n  \"RunInfo\"";
 
     std::ofstream outFile;
     boost::iostreams::filtering_ostream outStream;
@@ -146,7 +149,7 @@ void mergeRegionJsonFiles(const std::string& finalPath, const std::vector<std::s
         }
     }
 
-    outStream << "\n  }\n}\n";
+    outStream << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
 }
 
 }

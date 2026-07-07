@@ -35,7 +35,10 @@ void mergeRegionVcfFiles(const std::string& finalPath, const std::vector<std::st
 
 // Merge per-region temp JSON files (written by separate region workers) into one final JSON in
 // genomic region order. The final output is gzip-compressed iff finalPath ends in "gz"; region temp
-// files are read as plain (uncompressed) text.
-void mergeRegionJsonFiles(const std::string& finalPath, const std::vector<std::string>& regionTempPaths);
+// files are read as plain (uncompressed) text. Each region file's own "RunInfo" record (each worker's
+// local start/finish time) is discarded; runInfoJson (an already-formatted, 2-space-indented JSON
+// object, run-wide and supplied by the caller) is appended instead.
+void mergeRegionJsonFiles(
+    const std::string& finalPath, const std::vector<std::string>& regionTempPaths, const std::string& runInfoJson);
 
 }

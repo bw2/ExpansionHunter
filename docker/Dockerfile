@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM python:3.9-slim-bullseye
 
 RUN apt update && apt-get install --no-install-recommends -y \
@@ -87,7 +88,15 @@ RUN wget -q https://github.com/microsoft/mimalloc/archive/refs/tags/v${MIMALLOC_
 COPY ehunter ehunter
 COPY CMakeLists.txt CMakeLists.txt
 
-RUN mkdir build \
+# Bind-mount the host .git (read-only, BuildKit-only, never baked into an image layer) so cmake's
+# `git rev-parse`/`git log` calls (ehunter/CMakeLists.txt) can embed the real commit SHA/date into the
+# "Version" field of the output JSON, instead of falling back to "unknown". Requires BuildKit (the
+# default builder since Docker 23+). The bind-mounted .git keeps the host user's UID while this RUN
+# executes as root, which trips git's "dubious ownership" check (CVE-2022-24765) unless it's told to
+# trust it, so add safe.directory before running cmake.
+RUN --mount=type=bind,source=.git,target=/.git,ro \
+    git config --global --add safe.directory '*' \
+    && mkdir build \
     && cd build \
     && cmake .. \
     && make \

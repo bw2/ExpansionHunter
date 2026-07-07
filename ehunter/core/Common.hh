@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <ctime>
 #include <map>
 #include <ostream>
 #include <sstream>
@@ -120,5 +121,15 @@ std::ostream& operator<<(std::ostream& out, NumericInterval numericInterval);
 /// This does not test if the URL is well formed
 ///
 bool isURL(const std::string& path);
+
+// Current wall-clock time as epoch seconds.
+std::time_t currentEpochSeconds();
+
+// Formats epoch seconds as local "YYYY-MM-DDTHH:MM:SS", matching spdlog's log-line timestamp format.
+std::string formatLocalTimestamp(std::time_t epochSeconds);
+
+// Formats a duration in seconds as "<H>h <M>m <S>s", dropping the hours/minutes components that are
+// zero and not followed by a nonzero larger unit (e.g. "35s", "5m 35s", "3h 5m 35s").
+std::string formatRuntime(std::time_t durationSeconds);
 
 }

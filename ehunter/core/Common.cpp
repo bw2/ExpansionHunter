@@ -23,6 +23,9 @@
 
 #include "core/Common.hh"
 
+#include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <regex>
 
 using std::string;
@@ -103,6 +106,42 @@ bool isURL(const std::string& path)
 {
     static const std::regex url_regex(".*?://.*");
     return std::regex_match(path, url_regex);
+}
+
+std::time_t currentEpochSeconds()
+{
+    return std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+}
+
+std::string formatLocalTimestamp(std::time_t epochSeconds)
+{
+    std::tm localTime{};
+    localtime_r(&epochSeconds, &localTime);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", &localTime);
+    return std::string(buffer);
+}
+
+std::string formatRuntime(std::time_t durationSeconds)
+{
+    // A backward wall-clock step (NTP/manual adjustment) during a long run can make this negative;
+    // clamp to 0 rather than print a misleading truncated value (e.g. "-1s" for a ~-1h duration).
+    const long long total = std::max<long long>(0, static_cast<long long>(durationSeconds));
+    const long long hours = total / 3600;
+    const long long minutes = (total % 3600) / 60;
+    const long long seconds = total % 60;
+
+    std::ostringstream out;
+    if (hours > 0)
+    {
+        out << hours << "h ";
+    }
+    if (hours > 0 || minutes > 0)
+    {
+        out << minutes << "m ";
+    }
+    out << seconds << "s";
+    return out.str();
 }
 
 }

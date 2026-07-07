@@ -20,3 +20,24 @@
 //
 
 #include "core/Parameters.hh"
+
+namespace ehunter
+{
+
+std::string analysisModeToString(AnalysisMode mode)
+{
+    switch (mode)
+    {
+    case AnalysisMode::kSeeking:
+        return "seeking";
+    case AnalysisMode::kStreaming:
+        return "streaming";
+    case AnalysisMode::kLowMemStreaming:
+        return "low-mem-streaming";
+    case AnalysisMode::kOptimizedStreaming:
+        return "optimized-streaming";
+    }
+    throw std::logic_error("Invalid AnalysisMode");
+}
+
+}

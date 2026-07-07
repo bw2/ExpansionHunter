@@ -57,13 +57,18 @@ std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter)
 
 JsonWriter::JsonWriter(
     const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
-    const SampleFindings& sampleFindings, bool copyCatalogFields, const gq::GenotypeQualityModel* qualityModel)
+    const SampleFindings& sampleFindings, bool copyCatalogFields, const gq::GenotypeQualityModel* qualityModel,
+    std::time_t startedEpoch, int threadCount, AnalysisMode analysisMode, const std::string& commandLine)
     : sampleParams_(sampleParams)
     , contigInfo_(contigInfo)
     , regionCatalog_(regionCatalog)
     , sampleFindings_(sampleFindings)
     , copyCatalogFields_(copyCatalogFields)
     , qualityModel_(qualityModel)
+    , startedEpoch_(startedEpoch)
+    , threadCount_(threadCount)
+    , analysisMode_(analysisMode)
+    , commandLine_(commandLine)
 {
 }
 
@@ -72,11 +77,20 @@ void JsonWriter::write(std::ostream& out)
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams_.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams_.sex());
-    sampleParametersRecord["Source"] = kSourceUrl;
-    sampleParametersRecord["Version"] = kCommitSha;
+
+    const std::time_t completedEpoch = currentEpochSeconds();
+    Json runInfoRecord;
+    runInfoRecord["Source"] = kSourceUrl;
+    runInfoRecord["Version"] = kCommitSha;
+    runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode_);
+    runInfoRecord["Threads"] = threadCount_;
+    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch_);
+    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
+    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch_);
+    runInfoRecord["CommandLine"] = commandLine_;
     if (qualityModel_)
     {
-        sampleParametersRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
+        runInfoRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
     }
 
     Json resultsRecord;
@@ -130,6 +144,7 @@ void JsonWriter::write(std::ostream& out)
         sampleRecords["LocusResults"] = resultsRecord;
     }
     sampleRecords["SampleParameters"] = sampleParametersRecord;
+    sampleRecords["RunInfo"] = runInfoRecord;
 
     out << std::setw(2) << sampleRecords << std::endl;
 }

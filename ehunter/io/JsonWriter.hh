@@ -70,7 +70,8 @@ public:
     JsonWriter(
         const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
         const SampleFindings& sampleFindings, bool copyCatalogFields = false,
-        const gq::GenotypeQualityModel* qualityModel = nullptr);
+        const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0, int threadCount = 1,
+        AnalysisMode analysisMode = AnalysisMode::kSeeking, const std::string& commandLine = "");
 
     void write(std::ostream& out);
 
@@ -81,6 +82,10 @@ private:
     const SampleFindings& sampleFindings_;
     bool copyCatalogFields_;
     const gq::GenotypeQualityModel* qualityModel_;
+    std::time_t startedEpoch_;
+    int threadCount_;
+    AnalysisMode analysisMode_;
+    std::string commandLine_;
 };
 
 std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter);

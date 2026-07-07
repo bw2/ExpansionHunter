@@ -21,6 +21,7 @@
 
 #include "io/IterativeJsonWriter.hh"
 
+#include <exception>
 #include <iomanip>
 #include <iostream>
 #include <regex>
@@ -50,8 +51,19 @@ IterativeJsonWriter::IterativeJsonWriter(
     const ReferenceContigInfo& contigInfo,
     const std::string& outputFilePath,
     bool copyCatalogFields,
-    const gq::GenotypeQualityModel* qualityModel)
-    : contigInfo_(contigInfo), firstRecord_(true), copyCatalogFields_(copyCatalogFields), qualityModel_(qualityModel)
+    const gq::GenotypeQualityModel* qualityModel,
+    std::time_t startedEpoch,
+    int threadCount,
+    AnalysisMode analysisMode,
+    const std::string& commandLine)
+    : contigInfo_(contigInfo)
+    , firstRecord_(true)
+    , copyCatalogFields_(copyCatalogFields)
+    , qualityModel_(qualityModel)
+    , startedEpoch_(startedEpoch)
+    , threadCount_(threadCount)
+    , analysisMode_(analysisMode)
+    , commandLine_(commandLine)
 {
 	outFile_.open(outputFilePath, std::ios::out | std::ios::binary);
 	if (!outFile_)
@@ -70,12 +82,6 @@ IterativeJsonWriter::IterativeJsonWriter(
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams.sex());
-    sampleParametersRecord["Source"] = kSourceUrl;
-    sampleParametersRecord["Version"] = kCommitSha;
-    if (qualityModel)
-    {
-        sampleParametersRecord["GenotypeQualityModelVersion"] = qualityModel->version;
-    }
 
 	std::string jsonString = std::regex_replace(sampleParametersRecord.dump(2), std::regex("\n"), "\n  ");
     outStream_ << "{\n";
@@ -151,7 +157,38 @@ void IterativeJsonWriter::close()
         return;
     }
     closed_ = true;
-    outStream_ << "\n  }\n}\n"; //close the "LocusRecords" and outer scope JSON objects.
+
+    // RunInfo is written here, after all records, because "Completed" is only known once
+    // genotyping has actually finished (the SampleParameters header above is written up front,
+    // before any genotyping happens).
+    //
+    // close() also runs from the destructor so an exception unwinding past this writer still leaves
+    // a well-formed, parseable JSON file (see the destructor comment) -- but that means this can run
+    // mid-crash. std::uncaught_exceptions() tells us which case we're in: only report "Completed"/
+    // "Runtime" when they reflect a real, successful finish, so a crashed run doesn't look complete.
+    const bool completedNormally = std::uncaught_exceptions() == 0;
+
+    Json runInfoRecord;
+    runInfoRecord["Source"] = kSourceUrl;
+    runInfoRecord["Version"] = kCommitSha;
+    runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode_);
+    runInfoRecord["Threads"] = threadCount_;
+    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch_);
+    if (completedNormally)
+    {
+        const std::time_t completedEpoch = currentEpochSeconds();
+        runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
+        runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch_);
+    }
+    runInfoRecord["CommandLine"] = commandLine_;
+    if (qualityModel_)
+    {
+        runInfoRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
+    }
+    std::string runInfoJson = std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
+
+    // Close the "LocusResults" object, then append RunInfo and close the outer scope JSON object.
+    outStream_ << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
     outStream_.flush();
     outStream_.reset();
     if (outFile_.is_open())

@@ -43,6 +43,7 @@
 // clang-format on
 
 #include "app/Version.hh"
+#include "core/Common.hh"
 #include "core/Parameters.hh"
 #include "io/BamletWriter.hh"
 #include "io/CatalogLoading.hh"
@@ -202,9 +203,27 @@ void setLogLevel(LogLevel logLevel)
     }
 }
 
+// Reconstructs the invoking command line (argv joined with spaces, unquoted) for the "CommandLine"
+// RunInfo field, so the output JSON records how a run was invoked.
+static std::string joinCommandLine(int argc, char** argv)
+{
+    std::string commandLine;
+    for (int i = 0; i < argc; ++i)
+    {
+        if (i > 0)
+        {
+            commandLine += " ";
+        }
+        commandLine += argv[i];
+    }
+    return commandLine;
+}
+
 int main(int argc, char** argv)
 {
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S,[%v]");
+    const std::time_t startedEpoch = currentEpochSeconds();
+    const std::string commandLine = joinCommandLine(argc, argv);
 
     try
     {
@@ -254,13 +273,11 @@ int main(int argc, char** argv)
         if (params.analysisMode() == AnalysisMode::kLowMemStreaming
             || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
         {
-            const char* modeName = params.analysisMode() == AnalysisMode::kOptimizedStreaming ? "optimized-streaming"
-                                                                                              : "low-mem-streaming";
-            spdlog::info("Running sample analysis in {} mode", modeName);
+            spdlog::info("Running sample analysis in {} mode", analysisModeToString(params.analysisMode()));
             BamletWriterPtr bamletWriter = params.enableBamletOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
                 : std::make_shared<BamletWriter>();
-            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter);
+            htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter, startedEpoch, commandLine);
             bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
             return 0;
         }
@@ -317,7 +334,7 @@ int main(int argc, char** argv)
         VcfWriter vcfWriter(sampleParams.id(), reference, regionCatalog, sampleFindings);
         writeToFile(outputPaths.vcf(), vcfWriter);
 
-        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings, params.copyCatalogFields(), params.genotypeQualityModel().get());
+        JsonWriter jsonWriter(sampleParams, reference.contigInfo(), regionCatalog, sampleFindings, params.copyCatalogFields(), params.genotypeQualityModel().get(), startedEpoch, params.threadCount, params.analysisMode(), commandLine);
         writeToFile(outputPaths.json(), jsonWriter);
     }
     catch (const std::exception& e)
