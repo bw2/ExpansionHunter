@@ -1,4 +1,4 @@
-IMAGE_NAME = eh-bw2:latest
+IMAGE_NAME = ExpansionHunter:latest
 PREFIX1 = docker.io/weisburd
 PREFIX2 = gcr.io/bw2-rare-disease
 

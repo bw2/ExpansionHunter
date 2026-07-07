@@ -1,13 +1,16 @@
 name: Docker Build
 
-# Builds docker/Dockerfile (the image most people actually run ExpansionHunter from) on every push/PR
-# to master. This is separate from the "Build" workflow, which only compiles the binary directly on
-# the runner and never exercises the Dockerfile.
+# Builds docker/Dockerfile on every push/PR to master. On push (not PRs), also pushes the image to
+# Docker Hub as weisburd/ExpansionHunter:latest (the same image + tag as `make -C docker all`) and
+# commits the resulting digest to docker/sha256.txt.
 on:
   push:
     branches: [master]
   pull_request:
     branches: [master]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -20,21 +23,41 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Build image
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: docker/Dockerfile
-        push: false
-        load: true
-        tags: expansion-hunter:ci
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      env:
+        DOCKER_BUILDKIT: "1"
+      run: make -C docker build
 
     - name: Verify the embedded version is not "unknown"
       run: |
-        VERSION_OUTPUT=$(docker run --rm expansion-hunter:ci ExpansionHunter --version 2>&1 || true)
+        VERSION_OUTPUT=$(docker run --rm weisburd/ExpansionHunter:latest ExpansionHunter --version 2>&1 || true)
         echo "$VERSION_OUTPUT"
         if echo "$VERSION_OUTPUT" | grep -qi "unknown"; then
           echo "::error::ExpansionHunter --version reports an unknown build date -- the git bind-mount in docker/Dockerfile isn't picking up the real commit."
           exit 1
         fi
+
+    - name: Log in to Docker Hub
+      if: github.event_name == 'push'
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Push to Docker Hub and record digest
+      if: github.event_name == 'push'
+      run: |
+        docker push weisburd/ExpansionHunter:latest
+        make -C docker update_sha
+
+    - name: Commit updated digest
+      if: github.event_name == 'push'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add docker/sha256.txt
+        if git diff --cached --quiet; then
+          echo "No digest change to commit"
+          exit 0
+        fi
+        git commit -m "Update docker image sha256 digest [skip ci]"
+        git push
