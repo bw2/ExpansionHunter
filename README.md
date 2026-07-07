@@ -1,4 +1,5 @@
 [![Build](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml/badge.svg)](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml)
+[![Docker Build](https://github.com/bw2/ExpansionHunter/actions/workflows/docker.yml/badge.svg)](https://github.com/bw2/ExpansionHunter/actions/workflows/docker.yml)
 
 ### ExpansionHunter fork - under active development
 

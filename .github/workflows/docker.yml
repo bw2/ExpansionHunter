@@ -1,7 +1,7 @@
 name: Docker Build
 
 # Builds docker/Dockerfile on every push/PR to master. On push (not PRs), also pushes the image to
-# Docker Hub as weisburd/ExpansionHunter:latest (the same image + tag as `make -C docker all`) and
+# Docker Hub as weisburd/expansion-hunter:latest (the same image + tag as `make -C docker all`) and
 # commits the resulting digest to docker/sha256.txt.
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
 
     - name: Verify the embedded version is not "unknown"
       run: |
-        VERSION_OUTPUT=$(docker run --rm weisburd/ExpansionHunter:latest ExpansionHunter --version 2>&1 || true)
+        VERSION_OUTPUT=$(docker run --rm weisburd/expansion-hunter:latest ExpansionHunter --version 2>&1 || true)
         echo "$VERSION_OUTPUT"
         if echo "$VERSION_OUTPUT" | grep -qi "unknown"; then
           echo "::error::ExpansionHunter --version reports an unknown build date -- the git bind-mount in docker/Dockerfile isn't picking up the real commit."
@@ -46,7 +46,7 @@ jobs:
     - name: Push to Docker Hub and record digest
       if: github.event_name == 'push'
       run: |
-        docker push weisburd/ExpansionHunter:latest
+        docker push weisburd/expansion-hunter:latest
         make -C docker update_sha
 
     - name: Commit updated digest
