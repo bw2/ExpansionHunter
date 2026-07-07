@@ -6,8 +6,10 @@ name: Docker Build
 on:
   push:
     branches: [master]
+    paths: [ehunter/**, CMakeLists.txt, docker/**, .github/workflows/docker.yml]
   pull_request:
     branches: [master]
+    paths: [ehunter/**, CMakeLists.txt, docker/**, .github/workflows/docker.yml]
 
 permissions:
   contents: write
