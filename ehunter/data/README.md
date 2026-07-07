@@ -1,6 +1,6 @@
 # Genotype quality model data
 
-`genotype_quality_model_from_HG002_and_CHM1_CHM13.20260702.json.gz` specifies a pretrained gradient-boosted decision tree model 
+`genotype_quality_model_from_HG002_and_CHM1_CHM13.20260707.json.gz` specifies a pretrained gradient-boosted decision tree model 
 that ExpansionHunter uses to generate the `PredictedLengthCorrectionFactor`,
 `pOk`, `pTooShort`, and `pTooLong` fields within the output JSON `AlleleQualityMetrics`  section.
 
