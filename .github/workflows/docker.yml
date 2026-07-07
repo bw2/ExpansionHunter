@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,10 +35,15 @@ jobs:
 
     - name: Verify the embedded version is not "unknown"
       run: |
-        VERSION_OUTPUT=$(docker run --rm weisburd/expansion-hunter:latest ExpansionHunter --version 2>&1 || true)
+        # The image's ENTRYPOINT is /bin/bash, so it must be overridden here -- otherwise
+        # "ExpansionHunter --version" is passed to bash as a script argument instead of exec'd.
+        set +e
+        VERSION_OUTPUT=$(docker run --rm --entrypoint ExpansionHunter weisburd/expansion-hunter:latest --version 2>&1)
+        STATUS=$?
+        set -e
         echo "$VERSION_OUTPUT"
-        if echo "$VERSION_OUTPUT" | grep -qi "unknown"; then
-          echo "::error::ExpansionHunter --version reports an unknown build date -- the git bind-mount in docker/Dockerfile isn't picking up the real commit."
+        if [ "$STATUS" -ne 0 ] || echo "$VERSION_OUTPUT" | grep -qi "unknown"; then
+          echo "::error::ExpansionHunter --version failed (exit $STATUS) or reports an unknown build date -- the git bind-mount in docker/Dockerfile isn't picking up the real commit."
           exit 1
         fi
 
@@ -62,4 +71,14 @@ jobs:
           exit 0
         fi
         git commit -m "Update docker image sha256 digest [skip ci]"
-        git push
+        # A concurrent push to master (rare, since concurrency.group above should serialize runs on
+        # the same ref) can make this a non-fast-forward; rebase onto the latest master and retry.
+        for attempt in 1 2 3; do
+          git push && exit 0
+          echo "Push attempt ${attempt} failed; rebasing onto latest master and retrying."
+          git fetch origin master
+          git rebase origin/master
+          sleep 5
+        done
+        echo "Failed to push the digest update after multiple attempts."
+        exit 1
