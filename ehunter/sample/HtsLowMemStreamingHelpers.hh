@@ -24,6 +24,16 @@ struct FastReadAnalysisResult {
     // repeat-region read bases matching a perfect consecutive repeat sequence of the motif (ReadRepeatPurity)
     int matched_bases_within_repeat = 0;
     int repeat_read_bases = 0;             // total repeat-region read bases (ReadRepeatPurity denominator)
+    // The read's repeat tract in read-sequence coordinates: the read bases lying between the two locus
+    // edges. Used to build per-allele consensus sequences. Set when both edges can be placed in read
+    // coordinates and the tract is non-empty and within the read sequence -- an edge is placed by an
+    // aligned match operation, by a whole-motif insertion abutting the edge, or by a deletion containing
+    // the edge. repeat_tract_length < 0 means "not usable". For a read that does not span the locus that
+    // is simply an edge the read never reaches; for a spanning read -- the only kind the consensus uses
+    // -- both edges are always placed, so the one residual case is a zero-length tract, i.e. an alignment
+    // that deletes the whole locus. See processRead() for the reasoning behind each case.
+    int repeat_tract_start = -1;
+    int repeat_tract_length = -1;
 };
 
 

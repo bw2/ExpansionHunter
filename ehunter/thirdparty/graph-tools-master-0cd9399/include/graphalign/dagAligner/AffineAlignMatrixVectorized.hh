@@ -257,9 +257,24 @@ namespace dagAligner
         void computeAlignPenalties(int q, typename PenaltyMatrix::TargetChar tc, Score penalties[step])
         {
             const typename PenaltyMatrix::QueryChar* query = &query_[q];
-            for (int i = 0; i < step; ++i)
+            // Only the lanes that correspond to real query bases may be read. init() over-allocates
+            // query_ to a whole number of lanes but leaves its SIZE at the true query length, so when
+            // the query length is not a multiple of `step` the final block's trailing lanes lie past
+            // the vector's size: allocated, but not constructed. Reading them is undefined behaviour
+            // (indeterminate values) and trips AddressSanitizer's container-overflow check, which makes
+            // the whole graph-realignment path unrunnable under ASan.
+            const int lanesInQuery = std::min(step, static_cast<int>(query_.size()) - q);
+            for (int i = 0; i < lanesInQuery; ++i)
             {
                 penalties[i] = penaltyMatrix_(query[i], tc);
+            }
+            // The remaining lanes are padding columns of the padded matrix. fill() writes them, but
+            // nothing ever propagates them back into a real column (padding sits above the last real
+            // query offset, and both the insertion and deletion recurrences only ever move away from
+            // it), so any defined value works and the alignment result is unchanged.
+            for (int i = lanesInQuery; i < step; ++i)
+            {
+                penalties[i] = 0;
             }
         }
 

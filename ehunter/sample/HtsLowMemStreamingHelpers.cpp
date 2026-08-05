@@ -21,6 +21,7 @@
 #include "io/LocusSpecDecoding.hh"
 #include "io/ParameterLoading.hh"
 #include "locus/AlleleQualityMetrics.hh"
+#include "reviewer/ConsensusSequence.hh"
 #include "reviewer/Metrics.hh"
 #include "reviewer/ReviewerWorkflow.hh"
 #include "sample/MateExtractor.hh"
@@ -271,6 +272,28 @@ FastReadAnalysisResult processRead(
     int read_seq_position_0based_locus_start = -1; //None
     int read_seq_position_0based_locus_end = -1;  //None
 
+    // Read-sequence offsets of the two locus edges, tracked independently of the anchors above for the
+    // consensus tract (repeat_tract_*). Three kinds of CIGAR operation can place an edge, each handled
+    // in its own branch of the loop below:
+    //   - an aligned match (M/=/X), which puts a real read base at the reference position;
+    //   - a whole-motif insertion abutting the edge, whose bases the genotype vote already counts;
+    //   - a deletion containing the edge, where the read simply has no base at those positions and the
+    //     current read position is already the first base past (or last base before) the deletion.
+    // A soft clip never places an edge -- it is not aligned, so it carries no reference position. Both
+    // offsets stay -1 when nothing places the corresponding edge, which excludes the read. For a spanning
+    // read that cannot actually happen: M/=/X and D ops tile the aligned reference span with no gaps, so
+    // each edge always falls in one of them. The residual exclusion is a zero-length tract, i.e. an
+    // alignment that deletes the whole locus.
+    // The start edge uses half-open containment (locus_start < op_ref_end, not <=), so an operation that
+    // merely ENDS at the locus start does not claim it -- the next operation, the one actually covering
+    // the first repeat base, does. The end edge keeps the inclusive bound for matches, since the tract is
+    // half-open on the right and so ends exactly at an operation's end.
+    // Claiming is first-wins via the == -1 guards, with one deliberate exception: the whole-motif
+    // insertion branch EXTENDS an end edge the preceding match already placed (it is guarded by
+    // tract_end == read_seq_position instead, so it can only ever extend the edge it directly abuts).
+    int read_seq_position_0based_tract_start = -1;
+    int read_seq_position_0based_tract_end = -1;
+
     for (const auto& cigar_op : read.s.cigar) {
         int op = cigar_op & BAM_CIGAR_MASK;  // Extract operation type
         int op_length = cigar_op >> BAM_CIGAR_SHIFT;  // Extract length
@@ -303,6 +326,55 @@ FastReadAnalysisResult processRead(
 
         if (read_seq_position_0based_locus_end == -1 && op_ref_start_0based <= locus_end_0based && op_ref_end_0based >= locus_end_0based) {
             read_seq_position_0based_locus_end = read_seq_position_0based + locus_end_0based - op_ref_start_0based;
+        }
+
+        // Consensus-tract edges. One branch per operation that can place an edge -- match, whole-motif
+        // insertion abutting the edge, deletion containing the edge; see the declarations above for the
+        // reasoning behind each and for why the start bound is strict.
+        if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
+            if (read_seq_position_0based_tract_start == -1 && op_ref_start_0based <= locus_start_0based
+                && locus_start_0based < op_ref_end_0based) {
+                read_seq_position_0based_tract_start
+                    = read_seq_position_0based + locus_start_0based - op_ref_start_0based;
+            }
+
+            if (read_seq_position_0based_tract_end == -1 && op_ref_start_0based <= locus_end_0based
+                && locus_end_0based <= op_ref_end_0based) {
+                read_seq_position_0based_tract_end
+                    = read_seq_position_0based + locus_end_0based - op_ref_start_0based;
+            }
+        } else if (op == BAM_CINS && op_length % locus_motif_size == 0) {
+            // A whole-motif insertion sitting exactly on a locus edge is how an aligner represents an
+            // expansion whose extra copies it pushed just outside the repeat region. The genotype vote
+            // already counts those bases (the BAM_CINS branch below), so the tract has to take them too:
+            // otherwise this read reports the REFERENCE-length sequence for an expanded allele, and its
+            // tract stops matching the allele it voted for. Insertions further out are separated from
+            // the tract by flank bases and cannot be spliced in, so only the abutting ones qualify.
+            if (read_seq_position_0based_tract_start == -1 && op_ref_start_0based == locus_start_0based) {
+                read_seq_position_0based_tract_start = read_seq_position_0based;
+            }
+
+            if (op_ref_start_0based == locus_end_0based
+                && read_seq_position_0based_tract_end == read_seq_position_0based) {
+                read_seq_position_0based_tract_end += op_length;
+            }
+        } else if (op == BAM_CDEL) {
+            // A locus edge landing inside a deletion still has a well-defined tract boundary: the read
+            // carries no base at those reference positions, and a deletion consumes no read bases, so the
+            // read position here already IS the first base after (or the last base before) the deleted
+            // stretch. The genotype vote treats deletions the same way -- a D adds nothing to
+            // repeat_sequence_size_in_base_pairs -- so the tract and the vote stay in agreement.
+            // This case is common rather than exotic: aligners left-align an STR deletion onto the locus
+            // boundary, so refusing these reads drops the shorter allele of many heterozygous calls.
+            if (read_seq_position_0based_tract_start == -1 && op_ref_start_0based <= locus_start_0based
+                && locus_start_0based < op_ref_end_0based) {
+                read_seq_position_0based_tract_start = read_seq_position_0based;
+            }
+
+            if (read_seq_position_0based_tract_end == -1 && op_ref_start_0based <= locus_end_0based
+                && locus_end_0based < op_ref_end_0based) {
+                read_seq_position_0based_tract_end = read_seq_position_0based;
+            }
         }
 
         if (op == BAM_CMATCH || op == BAM_CEQUAL || op == BAM_CDIFF) {
@@ -394,6 +466,17 @@ FastReadAnalysisResult processRead(
         result.repeat_read_bases = static_cast<int>(purity.totalBases);
     }
 
+    // The read's repeat tract, exported for per-allele consensus building: the read bases between the
+    // two locus edges. Deliberately computed from its own anchors rather than from the purity tract
+    // above, so ReadRepeatPurity is unchanged by this.
+    if (read_seq_position_0based_tract_start >= 0
+        && read_seq_position_0based_tract_end > read_seq_position_0based_tract_start
+        && read_seq_position_0based_tract_end <= read_sequence_length) {
+        result.repeat_tract_start = read_seq_position_0based_tract_start;
+        result.repeat_tract_length
+            = read_seq_position_0based_tract_end - read_seq_position_0based_tract_start;
+    }
+
     std::string left_flank_bases = (read_seq_position_0based_locus_start > 0) ?
         readSequence.substr(length_of_left_soft_clips, read_seq_position_0based_locus_start - length_of_left_soft_clips)
         : "";
@@ -467,6 +550,7 @@ bool processLocusFast(
     const auto& locusReferenceRegion = locusDescription.referenceRegions().front();
     const auto repeatNodeId = locusSpec.variantSpecs().front().nodes().front();
     const string& locusMotif = locusSpec.regionGraph().nodeSeq(repeatNodeId);
+    const int locusMotifSize = locusMotif.size();
 
     LocusStatsCalculatorFromReadAlignments locusStatsCalculator(locusDescription.chromType(), locusReferenceRegion);
 
@@ -502,6 +586,30 @@ bool processLocusFast(
         long totalRepeatReadBases = 0;   // ReadRepeatPurity denominator (repeat-region read bases)
     };
     std::map<int, SpanningReadStats> allele_size_spanning_read_stats;
+
+    // Per-allele consensus sequences (on unless --dont-output-consensus-sequences). Spanning-read repeat
+    // tracts are collected in two nested levels, because the two quantities involved are NOT
+    // interchangeable and each level needs a different one:
+    //   - the OUTER key is the allele size in whole motif units the read voted for
+    //     (repeat_sequence_size_in_base_pairs / motif size, exactly how num_repeats below derives the
+    //     called allele). Keying on this guarantees every read ends up under the allele it actually
+    //     supported, so a called allele can never come up empty while reads voted for it;
+    //   - the INNER key is the TRACT LENGTH -- the number of read bases between the two locus edges.
+    //     Grouping by it makes every tract in a group the same length, which is what lets the consensus
+    //     be a plain column-wise majority with no realignment.
+    // The two diverge when the locus reference length is not a whole multiple of the motif, and per-read
+    // when the aligner places an indel at or near a locus boundary (a whole-motif insertion just outside
+    // the locus counts toward the vote via the padding in the BAM_CINS branch of processRead, but
+    // contributes no tract bases). Keying the outer level on the vote is what keeps those reads with
+    // their own allele; only the tract length they contribute differs, which the inner level absorbs.
+    const bool buildConsensus = params.enableConsensusSequences();
+    // `bases` points into each read's own sequence buffer rather than copying: the locus cache owning the
+    // reads outlives this call, so the bases stay valid for the whole function. Kept as one flat vector
+    // so the read loop pays a single push_back per read; the grouping by allele and tract length happens
+    // once afterwards, off the hot path (and, for --output-genotype-timing, outside the genotyping clock).
+    struct RepeatTract { const char* bases; int length; int alleleUnits; };
+    std::vector<RepeatTract> spanning_read_tracts;
+
     for (const auto& readPair : readPairs) {
 
         // secondMate is empty for a single-ended entry (mate unmapped/unavailable); skip it below.
@@ -545,6 +653,12 @@ bool processLocusFast(
                 stats.deletedBases += readAnalysisResult.deleted_bases_within_repeat;
                 stats.matchedRepeatReadBases += readAnalysisResult.matched_bases_within_repeat;
                 stats.totalRepeatReadBases += readAnalysisResult.repeat_read_bases;
+                if (buildConsensus && readAnalysisResult.repeat_tract_length > 0) {
+                    spanning_read_tracts.push_back(
+                        RepeatTract{ read->r.sequence().data() + readAnalysisResult.repeat_tract_start,
+                                     readAnalysisResult.repeat_tract_length,
+                                     spanningSizeBp / locusMotifSize });
+                }
             }
             if (readAnalysisResult.soft_clipped_bases_contain_repetitive_sequence) {
                 soft_clipped_read_repeat_sequence_sizes.push_back(readAnalysisResult.repeat_sequence_size_in_base_pairs);
@@ -619,8 +733,6 @@ bool processLocusFast(
     if (top_genotypes_count > 0) {
         top_genotypes.assign(allele_size_votes_list.begin(), allele_size_votes_list.begin() + top_genotypes_count);
     }
-
-    const int locusMotifSize = locusMotif.size();
 
     // STR stutter correction: PCR/sequencing slippage produces reads 1-2 repeat units off a homozygous
     // allele, which the naive top-2-by-votes can mis-call as a spurious heterozygous second allele. When
@@ -828,6 +940,18 @@ bool processLocusFast(
 		locusStats.alleleCount(), repeatGenotype, GenotypeFilter());
 	repeatFindingsPtr->setQuickGenotype(true);  // genotyped via the fast path
 	repeatFindingsPtr->setReservoirSampling(reservoirSampled);  // read set capped by --max-depth
+
+	// Stop the genotyping clock at the same point it stopped before consensus output existed, and keep
+	// the consensus build below outside it: that build is output annotation, not genotyping, and is on
+	// by default, so timing it would silently redefine the field.
+	// Two caveats on GenotypingTimeMillis, both small but worth stating rather than implying otherwise:
+	//   - processRead's tract-edge branches and its tract export are NOT gated on consensus output, so
+	//     they run for every read in every configuration and sit inside this interval. The field is
+	//     therefore slightly higher than in releases predating this feature, with or without
+	//     --dont-output-consensus-sequences. Gating them would mean threading the flag through
+	//     processRead to save a handful of integer comparisons per CIGAR operation.
+	//   - the one flag-gated part inside the interval is the per-read push_back into
+	//     spanning_read_tracts, so the number does also shift a little with the flag.
 	if (recordGenotypingTime) {
 		timespec genotypingEnd{};
 		clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingEnd);
@@ -838,6 +962,77 @@ bool processLocusFast(
 	if (qualityMetrics.hasMetrics) {
 		repeatFindingsPtr->setAlleleQualityMetrics(qualityMetrics);
 		repeatFindingsPtr->setCountsOfHighQualityUnambiguousReads(countsOfHighQualityUnambiguousReads);
+	}
+
+	// Per-allele consensus sequences: a column-wise majority vote over the spanning reads that voted for
+	// this allele. Reuses the full genotyper's PositionVotes / AlleleConsensus so both paths emit
+	// identically formatted strings ('N' for uncovered positions, the same read-support digit string).
+	// The CONTENT will not match the full path, which votes with graph-aligned anchor fragments (flanking
+	// reads included) rather than exactly-spanning reads only -- the same approximation already noted for
+	// the allele quality metrics above.
+	std::vector<std::string> consensusSequences;
+	std::vector<std::string> consensusReadSupport;
+	if (buildConsensus && repeatGenotype && repeatGenotype->longAlleleSizeInUnits() > 0) {
+		// The full genotyper hardcodes this same weight for every base, so with a constant weight both
+		// paths reduce to an unweighted majority vote.
+		constexpr double kConsensusQualityWeight = 0.99;
+		auto buildAlleleConsensus = [&](int alleleIndex, int alleleUnits) {
+			// This allele's reads are exactly those that voted for its unit count. Among them only
+			// equal-length tracts can be stacked column-wise, so take the best-supported tract length;
+			// std::map iterates in ascending key order and the comparison is strict, so ties resolve to
+			// the shortest tract and the choice is deterministic.
+			std::map<int, int> readsPerTractLength;
+			for (const auto& tract : spanning_read_tracts) {
+				if (tract.alleleUnits == alleleUnits) {
+					readsPerTractLength[tract.length]++;
+				}
+			}
+			int bestTractLength = 0;
+			int bestTractReads = 0;
+			for (const auto& lengthAndCount : readsPerTractLength) {
+				if (lengthAndCount.second > bestTractReads) {
+					bestTractReads = lengthAndCount.second;
+					bestTractLength = lengthAndCount.first;
+				}
+			}
+
+			reviewer::AlleleConsensus consensus;
+			consensus.alleleIndex = alleleIndex;
+			// The number of bases these reads actually carry between the locus edges. Equals
+			// alleleUnits * locusMotifSize on a clean locus, but differs when the locus length is not a
+			// whole number of motifs or the aligner put an indel at an edge. With no supporting tract,
+			// fall back to the called allele length so the all-'N' string still has a meaningful size.
+			consensus.repeatLength = (bestTractReads > 0) ? bestTractLength : alleleUnits * locusMotifSize;
+			consensus.positions.resize(consensus.repeatLength);
+			consensus.anchorReadCount = bestTractReads;
+			for (const auto& tract : spanning_read_tracts) {
+				// bestTractLength stays 0 when this allele has no tract at all, and a stored tract is
+				// never zero-length, so this correctly votes nothing and leaves an all-'N' consensus.
+				if (tract.alleleUnits != alleleUnits || tract.length != bestTractLength) {
+					continue;
+				}
+				for (int position = 0; position < tract.length; ++position) {
+					if (!consensus.positions[position]) {
+						consensus.positions[position] = reviewer::PositionVotes();
+					}
+					consensus.positions[position]->addVote(tract.bases[position], kConsensusQualityWeight);
+				}
+			}
+			consensusSequences.push_back(consensus.toString());
+			consensusReadSupport.push_back(consensus.toReadSupportString());
+		};
+		const int shortAlleleUnits = repeatGenotype->shortAlleleSizeInUnits();
+		const int longAlleleUnits = repeatGenotype->longAlleleSizeInUnits();
+		buildAlleleConsensus(0, shortAlleleUnits);
+		// Homozygous calls get a single consensus, matching the full genotyper.
+		if (repeatGenotype->numAlleles() == 2 && shortAlleleUnits != longAlleleUnits) {
+			buildAlleleConsensus(1, longAlleleUnits);
+		}
+	}
+
+	if (!consensusSequences.empty()) {
+		repeatFindingsPtr->setConsensusSequences(consensusSequences);
+		repeatFindingsPtr->setConsensusReadSupport(consensusReadSupport);
 	}
 	locusFindings.findingsForEachVariant.emplace(variantId, std::move(repeatFindingsPtr));
 

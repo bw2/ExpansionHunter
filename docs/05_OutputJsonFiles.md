@@ -156,6 +156,64 @@ Consensus sequence computation can be disabled with the `--dont-output-consensus
 flag, which omits the `ConsensusSequences` and `ConsensusSequencesReadSupport` fields from the
 JSON output.
 
+### Consensus sequences in fast genotyping mode
+
+Loci genotyped via the fast path in `--analysis-mode optimized-streaming` (marked with
+`"QuickGenotype": true`) also report these two fields, in the same format. The fast path performs
+no read-to-graph realignment, so it derives the consensus differently and the sequences will not
+always match what full genotyping would produce for the same locus:
+
+* Only reads that span the whole repeat contribute. Flanking reads, which the full genotyper
+  places on a haplotype path and uses to cover part of a long allele, contribute nothing here.
+  (The fast path never calls an allele longer than a read: every candidate allele size comes
+  from some spanning read's own observed repeat length.)
+* Each read contributes to the allele it voted for during genotyping. Within that allele, reads are
+  then grouped by the number of read bases lying between the two locus edges, and the consensus is a
+  plain column-wise majority over one such group -- only equal-length groups can be stacked position
+  by position without realigning.
+* A consensus sequence can be longer than `AlleleSize` x `RepeatUnit` length, for two reasons. First,
+  a locus whose reference region is not a whole number of motifs (for example an 11 bp region with a
+  2 bp motif) reports the full 11 observed bases, while the genotype reports the truncated 5 units.
+  Second, the tract is a contiguous slice of the read, so an insertion lying between the two locus
+  edges is always included -- including one whose length is not a whole number of motifs, which the
+  genotype vote deliberately does not count (it is reported separately as
+  `MeanInsertedBasesWithinRepeats`). A read with, say, a 4 bp insertion inside a 3 bp-motif repeat
+  contributes 4 bases the called allele size does not account for.
+  The full genotyper reports exactly `AlleleSize` motifs, except that it caps a haplotype path at the
+  mean fragment length, so an allele larger than that reports the capped length.
+* An insertion the aligner placed exactly on a locus edge is treated as part of the repeat, matching
+  how the genotype vote already counts it, so an expansion written that way reports the expanded
+  sequence rather than the reference one. (This is specific to the fast path -- the note above about
+  the full genotyper not incorporating read insertions still describes the full genotyper.)
+* A locus edge landing inside a deletion is handled rather than skipped: the read carries no base at
+  the deleted reference positions, so the tract simply starts after (or ends before) the deleted
+  stretch, exactly as the genotype vote treats it. This matters because aligners left-align an STR
+  deletion onto the locus boundary routinely.
+* With the match, edge-insertion and deletion cases all handled, a spanning read's tract is
+  essentially always sliceable: aligned-match and deletion operations tile the read's reference span
+  with no gaps, so each locus edge always lands in one of them. The one remaining exclusion is a
+  zero-length tract -- an alignment that deletes the whole locus. An allele left with no usable read
+  is reported as all 'N'; measured on a genome-wide catalog this is 0.02% of allele entries. Use
+  `--analysis-mode seeking` (or any mode that full-genotypes the locus) for those.
+* A consensus can also be a whole number of motifs SHORTER than `AlleleSize` x `RepeatUnit` length.
+  The genotype vote counts a whole-motif insertion anywhere within one motif length of the repeat
+  region, but of the insertions lying OUTSIDE that region only one sitting exactly on an edge can be
+  spliced into the tract -- one placed a base or two further out is separated from the tract by
+  flanking bases. Reads in that layout raise the called allele size without contributing tract bases.
+  Always read `AlleleSize` in `AlleleQualityMetrics`, not the consensus length, when you need the
+  called allele size.
+* A fast-path call whose alleles are all zero repeat units omits both fields entirely, where the
+  full genotyper emits a single empty string in each.
+* When several observed tract lengths map to the same called allele (for instance one group of
+  reads carrying a 1 bp deletion inside the repeat and another not), only the best-supported
+  group votes -- ties resolve to the shortest -- and reads in the other groups do not contribute.
+  `ConsensusSequencesReadSupport` can therefore be lower than `CountsOfSpanningReads` for that
+  allele. This does not apply to the full genotyper, which realigns reads onto the haplotype and
+  so has no such grouping.
+
+The genotype, confidence intervals, and read counts are unaffected by any of this -- the
+consensus is derived from the same reads after the call is made, and never changes it.
+
 ## Catalog field passthrough
 
 When `--copy-catalog-fields` is used, any extra fields from the input variant

@@ -159,3 +159,162 @@ TEST(ProcessRead, ImpureSpanningReadRepeatPurityCountsMismatch)
     EXPECT_EQ(6, result.repeat_read_bases);
     EXPECT_EQ(5, result.matched_bases_within_repeat);
 }
+
+// Consensus tract: a clean spanning read with a single M op. Read [90, 140) with 50M; locus
+// [100, 130). Both locus edges fall inside the M op, so the tract is read-seq [10, 40) -- the
+// 30 bases the read carries between the locus edges -- and it equals the vote size.
+TEST(ProcessRead, SpanningReadExportsRepeatTract)
+{
+    const std::string sequence = std::string(10, 'T') + std::string(10, 'C') + std::string(30, 'T');
+    FullRead read = makeRead(sequence, /*pos=*/90, {cigarOp(50, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(30, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(10, result.repeat_tract_start);
+    EXPECT_EQ(30, result.repeat_tract_length);
+    EXPECT_EQ(sequence.substr(10, 30), sequence.substr(result.repeat_tract_start, result.repeat_tract_length));
+}
+
+// A whole-motif insertion sitting exactly on the RIGHT locus edge is an expansion the aligner pushed
+// just outside the repeat, so the tract must swallow it -- otherwise an expanded allele would report
+// the reference-length sequence. Same read as InsertionAtLocusBoundaryIsCounted (40M6I10M at ref 90,
+// locus [100, 130), 3 bp motif): the vote counts the 6 bp insertion via the padding rule, and the
+// tract must agree at 36 bp rather than stopping at the 30 aligned bases.
+TEST(ProcessRead, RepeatTractSwallowsAWholeMotifInsertionAtTheRightLocusEdge)
+{
+    const std::string sequence(56, 'T');
+    FullRead read = makeRead(
+        sequence, /*pos=*/90, {cigarOp(40, BAM_CMATCH), cigarOp(6, BAM_CINS), cigarOp(10, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(36, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(10, result.repeat_tract_start);
+    EXPECT_EQ(36, result.repeat_tract_length);
+}
+
+// Mirror of the above for the LEFT locus edge: 10M6I40M at ref 90 with locus [100, 130) puts a 6 bp
+// whole-motif insertion at ref 100. The vote counts it (30 aligned bases + 6 inserted = 36), so the
+// tract must start at the first inserted base rather than after it.
+TEST(ProcessRead, RepeatTractSwallowsAWholeMotifInsertionAtTheLeftLocusEdge)
+{
+    const std::string sequence(56, 'T');
+    FullRead read = makeRead(
+        sequence, /*pos=*/90, {cigarOp(10, BAM_CMATCH), cigarOp(6, BAM_CINS), cigarOp(40, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(36, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(10, result.repeat_tract_start);
+    EXPECT_EQ(36, result.repeat_tract_length);
+}
+
+// A non-whole-motif insertion at a locus edge stays OUT of the tract, because the vote does not count
+// it either (the BAM_CINS branch requires a whole number of motifs). 40M1I10M at ref 90 with locus
+// [100, 130) and a 3 bp motif: vote 30, tract 30.
+TEST(ProcessRead, RepeatTractIgnoresANonWholeMotifInsertionAtTheLocusEdge)
+{
+    const std::string sequence(51, 'T');
+    FullRead read = makeRead(
+        sequence, /*pos=*/90, {cigarOp(40, BAM_CMATCH), cigarOp(1, BAM_CINS), cigarOp(10, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(30, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(30, result.repeat_tract_length);
+}
+
+// A locus edge landing inside a deletion still yields a usable tract: the read has no base at the
+// deleted reference positions, and a deletion consumes no read bases, so the read position at the D
+// op is already the first base past the deletion. CIGAR 8M6D42M at ref 90 puts the 6 bp deletion over
+// ref [98, 104), straddling the locus start (ref 100). The tract runs from read index 8 to the locus
+// end, 26 bases -- exactly the vote size, since the vote also credits a deletion with nothing.
+TEST(ProcessRead, RepeatTractSurvivesADeletionStraddlingTheLocusStart)
+{
+    const std::string sequence(50, 'T');
+    FullRead read = makeRead(
+        sequence, /*pos=*/90, {cigarOp(8, BAM_CMATCH), cigarOp(6, BAM_CDEL), cigarOp(42, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(26, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(8, result.repeat_tract_start);
+    EXPECT_EQ(26, result.repeat_tract_length);
+}
+
+// Mirror of the above for the locus END. CIGAR 38M6D12M at ref 90 puts the deletion over ref
+// [128, 134), straddling the locus end (ref 130). The tract stops at the last read base before the
+// deletion (read index 38), so it spans read [10, 38) = 28 bases, matching the vote.
+TEST(ProcessRead, RepeatTractSurvivesADeletionStraddlingTheLocusEnd)
+{
+    const std::string sequence(50, 'T');
+    FullRead read = makeRead(
+        sequence, /*pos=*/90, {cigarOp(38, BAM_CMATCH), cigarOp(6, BAM_CDEL), cigarOp(12, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(28, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(10, result.repeat_tract_start);
+    EXPECT_EQ(28, result.repeat_tract_length);
+}
+
+// Regression: a deletion that ENDS exactly at the locus start must not steal the tract's start edge.
+// CIGAR 93M1D55M at ref 11347586 with locus [11347680, 11347687) (motif "C"): the 1 bp deletion covers
+// ref [11347679, 11347680), i.e. entirely before the half-open locus, and the following 55M is what
+// actually carries the repeat. Modelled on read HISEQ1:18:H8VC6ADXX:1:2101:2771:5050 in
+// profile/cache_test/test.bam. A closed-interval start test would let the deletion claim the edge and
+// drop this read from the consensus even though it votes for the genotype.
+TEST(ProcessRead, DeletionEndingAtLocusStartDoesNotSuppressTheTract)
+{
+    const std::string sequence = std::string(93, 'A') + "CCCCCCC" + std::string(48, 'A');
+    FullRead read = makeRead(
+        sequence, /*pos=*/11347586,
+        {cigarOp(93, BAM_CMATCH), cigarOp(1, BAM_CDEL), cigarOp(55, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/11347680, /*locus_end=*/11347687, "C");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(93, result.repeat_tract_start);
+    EXPECT_EQ(7, result.repeat_tract_length);
+    EXPECT_EQ("CCCCCCC", sequence.substr(result.repeat_tract_start, result.repeat_tract_length));
+}
+
+// Regression: a locus whose reference length is not a whole multiple of the motif still yields a tract,
+// and that tract is the full locus length (11 bp), NOT the truncated whole-motif length (10 bp). The
+// consensus lookup must therefore match buckets to alleles by unit count -- 11 / 2 == 5 units -- rather
+// than by alleleUnits * motifSize, which would look for a 10 bp bucket that can never exist here.
+// Modelled on catalog locus 1-479076-479087-CA (chr1:479076-479087, 11 bp, motif "CA").
+TEST(ProcessRead, RepeatTractKeepsTheRemainderWhenLocusIsNotAWholeNumberOfMotifs)
+{
+    const std::string sequence = std::string(10, 'T') + "CACACACACAC" + std::string(9, 'T');
+    FullRead read = makeRead(sequence, /*pos=*/90, {cigarOp(30, BAM_CMATCH)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/111, "CA");
+
+    EXPECT_TRUE(result.is_spanning_read);
+    EXPECT_EQ(11, result.repeat_sequence_size_in_base_pairs);
+    EXPECT_EQ(10, result.repeat_tract_start);
+    EXPECT_EQ(11, result.repeat_tract_length);
+    // 11 / 2 == 5 units, so a bucket lookup on 5 * 2 == 10 bp would miss this read entirely.
+    EXPECT_NE(result.repeat_tract_length, (result.repeat_sequence_size_in_base_pairs / 2) * 2);
+}
+
+// A non-spanning read that never reaches the right locus edge has no end anchor, so no tract.
+// CIGAR 20M9S at ref 90 with locus [100, 130): the aligned portion ends at ref 110.
+TEST(ProcessRead, RepeatTractIsUnusableWhenLocusEndIsNotReached)
+{
+    const std::string sequence = std::string(20, 'T') + "CAGCAGCAG";
+    FullRead read = makeRead(sequence, /*pos=*/90, {cigarOp(20, BAM_CMATCH), cigarOp(9, BAM_CSOFT_CLIP)});
+
+    FastReadAnalysisResult result = processRead(read, /*locus_start=*/100, /*locus_end=*/130, "CAG");
+
+    EXPECT_FALSE(result.is_spanning_read);
+    EXPECT_EQ(-1, result.repeat_tract_length);
+}
