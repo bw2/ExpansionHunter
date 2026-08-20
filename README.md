@@ -20,14 +20,14 @@ This modified version of ExpansionHunter introduces the following new features:
   - `--dont-output-quality-metrics` disables quality metrics computation if not needed
 - **Misc. new convenience features and options**:
   - supports gzip-compressed input catalogs, and provides a `-z` option to compress the output files
-  - **Converts N chars error to a warning**: changes the `Flanks can contain at most 5 characters N but found x Ns` error to a warning, allowing ExpansionHunter to run to completion without terminating on these errors
+  - **Converts N chars error to a warning**: changes `Flanks can contain at most 5 characters N but found x Ns` from an error to a warning. ExpansionHunter now just prints this warning and skips the offending locus instead of exiting.
   - `--start-with`, `--n-loci`, and `--sort-catalog-by` options allow processing a fixed number of loci from the input catalog
   - `--locus` for filtering the input catalog to specific LocusId(s)
   - `--reads-index` explicitly specifies the BAM/CRAM index file path or URL, useful when the index is in a different location than the reads file or when auto-detection doesn't work with cloud URLs
-  - `--region` for filtering the input catalog to a specific genomic region
-  - `--skip-hom-ref` skips output of loci where all variants are homozygous reference, reducing output file size
-  - `--skip-missing-genotypes` skips output of loci with missing genotypes (eg. due to low coverage)
-  - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON
+  - `--region` for filtering the input catalog to a specific genomic interval
+  - `--skip-hom-ref` doesn't output results for loci where the genotype is homozygous reference, reducing output file size
+  - `--skip-missing-genotypes` doesn't output results for loci with a missing genotype (eg. due to low coverage)
+  - `--copy-catalog-fields` copies extra annotation fields (e.g., Gene, Diseases) from the input catalog to the output JSON. By default, ExpansionHunter simply ignores custom fields in the input catalog. 
   - `--enable-bamlet-output` writes a "bamlet" BAM file containing the realigned reads for each locus
   - `--quick-heuristic-genotyping-only` modifies `optimized-streaming` mode so that it only genotypes loci that can be confidently genotyped using spanning reads, while skipping full genotyping completely. Provided mainly for benchmarking or debugging purposes.
   - `--cache-mates` enables a cross-locus read cache in `seeking` analysis mode to make it run faster on catalogs where many loci have the same motif (eg. if you have a catalog of only/mostly `CGG` and `CCG` repeats). Since in-repeat reads from all these loci will typically mismap to the same few places in the genome, caching the reads in-memory can subsantially reduce disk access latency. For large catalogs (> 10k loci), it is still better to use `low-mem-streaming` or `optimized-streaming`. 
