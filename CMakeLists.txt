@@ -63,7 +63,7 @@ endif()
 
 ExternalProject_Add(Boost
 	BUILD_IN_SOURCE YES
-	URL https://downloads.sourceforge.net/project/boost/boost/1.87.0/boost_1_87_0.tar.gz
+	URL https://archives.boost.io/release/1.87.0/source/boost_1_87_0.tar.gz
 	DOWNLOAD_EXTRACT_TIMESTAMP OLD
 	PATCH_COMMAND ${BOOST_PATCH_COMMAND}
 	CONFIGURE_COMMAND ./bootstrap.sh --prefix=${installDir}
