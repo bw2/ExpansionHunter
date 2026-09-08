@@ -70,6 +70,10 @@ IterativeVcfWriter::IterativeVcfWriter(
     addCommonFieldDescriptions(catalog);
     addRepeatFieldDescriptions(catalog);
     addSmallVariantFieldDescriptions(catalog);
+    // The header is written before any record is seen, so every FORMAT key a record body can emit has to
+    // be declared here. buildSmallVariantVcfRecordElements emits DST/RPL for SMN variants; without this
+    // an SMN locus would produce records whose FORMAT keys are missing from the header.
+    addSmnFieldDescriptions(catalog);
     for (const auto& fieldIdAndDescription : catalog)
     {
         outStream_ << fieldIdAndDescription.second << "\n";

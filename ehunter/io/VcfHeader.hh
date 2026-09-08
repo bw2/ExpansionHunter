@@ -59,6 +59,9 @@ using FieldDescriptionCatalog = std::map<FieldDescriptionIdentifier, FieldDescri
 void addCommonFieldDescriptions(FieldDescriptionCatalog& catalog);
 void addRepeatFieldDescriptions(FieldDescriptionCatalog& catalog);
 void addSmallVariantFieldDescriptions(FieldDescriptionCatalog& catalog);
+// DST/RPL, emitted by buildSmallVariantVcfRecordElements for SMN variants only. The streaming writer
+// registers these up front because it builds its header before seeing any record.
+void addSmnFieldDescriptions(FieldDescriptionCatalog& catalog);
 
 // Generates VCF field descriptions required for a given variant call
 class FieldDescriptionWriter : public VariantFindingsVisitor
