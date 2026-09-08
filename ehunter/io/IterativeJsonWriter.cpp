@@ -124,7 +124,9 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
     }
 
     locusRecord["LocusId"] = locusId;
-    locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
+    // See JsonWriter::write -- the emitted field and the model's `coverage` feature share one value.
+    const double locusCoverage = std::round(locusFindings.stats.depth() * 100) / 100.0;
+    locusRecord["Coverage"] = locusCoverage;
     locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
     locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
     locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
@@ -135,7 +137,7 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
         const string& variantId = variantIdAndFindings.first;
         const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
+        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_, locusCoverage);
         variantIdAndFindings.second->accept(&variantWriter);
         variantRecords[variantId] = variantWriter.record();
     }
