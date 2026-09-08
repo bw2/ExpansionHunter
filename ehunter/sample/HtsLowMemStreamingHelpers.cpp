@@ -552,7 +552,13 @@ bool processLocusFast(
     const string& locusMotif = locusSpec.regionGraph().nodeSeq(repeatNodeId);
     const int locusMotifSize = locusMotif.size();
 
-    LocusStatsCalculatorFromReadAlignments locusStatsCalculator(locusDescription.chromType(), locusReferenceRegion);
+    // Coverage/ReadLength/FragmentLength are measured over the reference flanks, the same way the full
+    // genotyper measures them from graph alignments, so the emitted fields mean the same thing in both
+    // modes. The flanks are regionExtensionLength bases on either side of the repeat -- exactly the
+    // window this locus's reads were collected over, so every read the estimate needs is already cached.
+    LocusStatsCalculatorFromReadAlignments locusStatsCalculator(
+        locusDescription.chromType(), locusReferenceRegion, params.heuristics().regionExtensionLength(),
+        reference.contigInfo().getContigSize(locusReferenceRegion.contigIndex()));
 
     int mappedReadCount = 0;
     float averageMapQAtLocus = 0.0;

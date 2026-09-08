@@ -10,6 +10,8 @@
 #include <cmath>
 #include <map>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "gmock/gmock.h"
 
@@ -135,4 +137,137 @@ TEST(GenotypeQualityAnnotator, RejectsModelFeatureTheAssemblerDoesNotProduce)
     const CountTable hq;
     const LocusFeatureContext ctx{3, 30, spanning, flanking, hq};
     EXPECT_THROW(predictAllele(bad, /*quick=*/true, ctx, 0, 20, 18, 24, makeAqm()), std::runtime_error);
+}
+
+// -- Readiness for a model retrained on the full assembled feature set -------------------------------
+//
+// The shipped model declares a SUBSET of what the assembler produces (it names 22 of the 27 quick
+// features), so nothing above exercises the five that are assembled but currently unconsumed:
+// n_alleles, n_distinct_alleles, flanking_total, flanking_frac and coverage. A retrain that adds them
+// must not be the first thing to discover whether the binary can serve them. These tests declare the
+// FULL canonical list and route a tree on each of the five, so a name-resolution or value-plumbing
+// break shows up here rather than after a multi-hour retrain.
+
+namespace
+{
+
+// A model declaring every canonical feature name, with one quick q_median tree that routes on
+// `featureIndex` at `threshold`: <= goes to leaf +0.2, > goes to leaf -0.3. Names are taken from the
+// assembler itself, so this cannot drift out of sync with it.
+GenotypeQualityModel modelSplittingOn(int featureIndex, double threshold)
+{
+    nlohmann::json j;
+    j["format_version"] = 2;
+    j["feature_names"]["quick"] = featureNamesForGenotypingRegime(GenotypingRegime::Quick);
+    j["feature_names"]["full"] = featureNamesForGenotypingRegime(GenotypingRegime::FullSpanning);
+
+    // Built element by element rather than with brace initializer lists: nlohmann cannot tell an
+    // object literal from an array of pairs, and silently picks the wrong one for these shapes.
+    nlohmann::json calibrators = nlohmann::json::array();
+    for (int i = 0; i < 3; ++i)
+    {
+        nlohmann::json calibrator = nlohmann::json::object();
+        calibrator["x"] = nlohmann::json::array();
+        calibrator["y"] = nlohmann::json::array();
+        calibrators.push_back(calibrator);
+    }
+    nlohmann::json emptyDirection = nlohmann::json::object();
+    emptyDirection["classes"] = std::vector<std::string>{ "OK", "TOO_LONG", "TOO_SHORT" };
+    emptyDirection["baseline"] = std::vector<double>{ 0.0, 0.0, 0.0 };
+    emptyDirection["trees"] = nlohmann::json::array();
+    emptyDirection["calibrators"] = calibrators;
+
+    nlohmann::json split = nlohmann::json::object();
+    split["feature"] = featureIndex;
+    split["threshold"] = threshold;
+    split["missing_left"] = true;
+    split["left"] = 1;
+    split["right"] = 2;
+    nlohmann::json leftLeaf = nlohmann::json::object();
+    leftLeaf["leaf"] = true;
+    leftLeaf["value"] = 0.2;
+    nlohmann::json rightLeaf = nlohmann::json::object();
+    rightLeaf["leaf"] = true;
+    rightLeaf["value"] = -0.3;
+    nlohmann::json nodes = nlohmann::json::array();
+    nodes.push_back(split);
+    nodes.push_back(leftLeaf);
+    nodes.push_back(rightLeaf);
+    nlohmann::json tree = nlohmann::json::object();
+    tree["nodes"] = nodes;
+
+    j["genotyping_regimes"]["quick"]["q_median"]["baseline"] = 0.0;
+    j["genotyping_regimes"]["quick"]["q_median"]["trees"] = nlohmann::json::array({ tree });
+    j["genotyping_regimes"]["quick"]["direction"] = emptyDirection;
+    for (const char* regime : { "full_spanning", "full_nonspanning" })
+    {
+        j["genotyping_regimes"][regime]["q_median"]["baseline"] = 0.0;
+        j["genotyping_regimes"][regime]["q_median"]["trees"] = nlohmann::json::array();
+        j["genotyping_regimes"][regime]["direction"] = emptyDirection;
+    }
+    return GenotypeQualityModel::fromJson(j);
+}
+
+int canonicalIndexOf(const std::string& name)
+{
+    const std::vector<std::string>& names = featureNamesForGenotypingRegime(GenotypingRegime::Quick);
+    for (std::size_t i = 0; i < names.size(); ++i)
+    {
+        if (names[i] == name)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+TEST(GenotypeQualityAnnotator, ModelMayDeclareEveryAssembledFeature)
+{
+    // Declaring the full list must load and evaluate; nothing may be assembled-but-unresolvable.
+    const GenotypeQualityModel full = modelSplittingOn(0, 5.0);
+    EXPECT_EQ(full.featureNamesQuick.size(), 27u);
+    EXPECT_EQ(full.featureNamesFull.size(), 29u);
+
+    CountTable spanning;
+    spanning.setCountOf(20, 4);
+    CountTable flanking;
+    flanking.setCountOf(22, 6);
+    const CountTable hq;
+    const LocusFeatureContext ctx{ 3, 30, spanning, flanking, hq, -1.0, 47.47, 2, 2 };
+    EXPECT_NO_THROW(predictAllele(full, /*quick=*/true, ctx, 0, /*eh=*/20, 18, 24, makeAqm()));
+}
+
+TEST(GenotypeQualityAnnotator, CurrentlyUnconsumedFeaturesReachTheModelWithTheRightValue)
+{
+    CountTable spanning;
+    spanning.setCountOf(20, 4); // spanning_total = 4
+    CountTable flanking;
+    flanking.setCountOf(22, 6); // flanking_total = 6, so flanking_frac = 6/10 = 0.6
+    const CountTable hq;
+    const LocusFeatureContext ctx{ 3, 30, spanning, flanking, hq, -1.0, /*coverage=*/47.47,
+        /*numAlleles=*/2, /*numDistinctAlleles=*/2 };
+
+    // For each of the five, a threshold just below the expected value must route right (leaf -0.3) and
+    // one just above must route left (leaf +0.2). That pins the value, not merely the name lookup.
+    const std::map<std::string, double> expectedValue{ { "n_alleles", 2.0 }, { "n_distinct_alleles", 2.0 },
+        { "flanking_total", 6.0 }, { "flanking_frac", 0.6 }, { "coverage", 47.47 } };
+
+    for (const auto& nameAndValue : expectedValue)
+    {
+        const int index = canonicalIndexOf(nameAndValue.first);
+        ASSERT_NE(index, -1) << nameAndValue.first << " is not an assembled feature";
+        const double value = nameAndValue.second;
+
+        const AllelePrediction below
+            = predictAllele(modelSplittingOn(index, value - 0.5), true, ctx, 0, 20, 18, 24, makeAqm());
+        EXPECT_NEAR(below.lengthCorrectionFactor, std::exp(-0.3), 1e-12)
+            << nameAndValue.first << " did not route right of " << (value - 0.5);
+
+        const AllelePrediction above
+            = predictAllele(modelSplittingOn(index, value + 0.5), true, ctx, 0, 20, 18, 24, makeAqm());
+        EXPECT_NEAR(above.lengthCorrectionFactor, std::exp(0.2), 1e-12)
+            << nameAndValue.first << " did not route left of " << (value + 0.5);
+    }
 }

@@ -116,7 +116,10 @@ void JsonWriter::write(std::ostream& out)
         }
 
         locusRecord["LocusId"] = locusId;
-        locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
+        // One value for both the emitted field and the model's `coverage` feature, so the number
+        // the model sees at inference is exactly the one the training parquets were built from.
+        const double locusCoverage = std::round(locusFindings.stats.depth() * 100) / 100.0;
+        locusRecord["Coverage"] = locusCoverage;
         locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
         locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
         locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
@@ -127,7 +130,7 @@ void JsonWriter::write(std::ostream& out)
             const string& variantId = variantIdAndFindings.first;
             const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
+            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_, locusCoverage);
             variantIdAndFindings.second->accept(&variantWriter);
             variantRecords[variantId] = variantWriter.record();
         }
@@ -272,13 +275,21 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                 const int alleleRank = allele.alleleNumber - 1;
                 const NumericInterval ci = (alleleRank <= 0) ? genotype.shortAlleleSizeInUnitsCi()
                                                              : genotype.longAlleleSizeInUnitsCi();
+                const int numDistinctAlleles
+                    = gq::numDistinctAllelesOf(genotype.isHomozygous(), genotype.numAlleles());
+                // Designated initializers: the trailing members are two adjacent doubles followed by
+                // two adjacent ints, so a positional list would let a swapped pair compile silently
+                // and feed the model the wrong feature.
                 const gq::LocusFeatureContext ctx{
-                    static_cast<int>(repeatUnit.length()),
-                    static_cast<int>(variantSpec_.referenceLocus().length()),
-                    repeatFindings.countsOfSpanningReads(),
-                    repeatFindings.countsOfFlankingReads(),
-                    repeatFindings.countsOfHighQualityUnambiguousReads(),
-                    variantSpec_.referenceRepeatPurity()};
+                    .motifSize = static_cast<int>(repeatUnit.length()),
+                    .refSizeBp = static_cast<int>(variantSpec_.referenceLocus().length()),
+                    .spanningReads = repeatFindings.countsOfSpanningReads(),
+                    .flankingReads = repeatFindings.countsOfFlankingReads(),
+                    .hqUnambiguousReads = repeatFindings.countsOfHighQualityUnambiguousReads(),
+                    .referenceRepeatPurity = variantSpec_.referenceRepeatPurity(),
+                    .coverage = locusCoverage_,
+                    .numAlleles = genotype.numAlleles(),
+                    .numDistinctAlleles = numDistinctAlleles};
                 const gq::AllelePrediction pred = gq::predictAllele(
                     *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
                     ci.end(), allele);
