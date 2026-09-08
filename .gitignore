@@ -5,3 +5,11 @@ build
 # Ignore all hidden files and directories except .gitignore itself
 .*
 !.gitignore
+
+# Outputs of ehunter/tests/data/parallel_processing_fixtures/make_fixture.py that no test reads.
+# The generator is deterministic (fixed seed), so these are reproducible artifacts. reads.bam,
+# reads.bam.bai and reference.fa from the same script ARE tracked, because MateExtractorMergeTest
+# opens them at clone time.
+/ehunter/tests/data/parallel_processing_fixtures/variant_catalog.json
+/ehunter/tests/data/parallel_processing_fixtures/reads.cram
+/ehunter/tests/data/parallel_processing_fixtures/reads.cram.crai
