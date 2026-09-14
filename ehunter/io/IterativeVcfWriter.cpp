@@ -26,7 +26,6 @@
 #include "io/VcfWriterHelpers.hh"
 
 #include <algorithm>
-#include <cmath>
 #include <vector>
 
 namespace ehunter
@@ -86,7 +85,7 @@ void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpec
         return;
     }
 
-    const double locusDepth = std::round(locusFindings.stats.depth() * 100) / 100.0;
+    const double locusDepth = locusFindings.stats.depth();
     IterativeVariantVcfWriter recordWriter(reference_, locusSpec, locusDepth, variantSpec);
     findingsPtr->accept(&recordWriter);
 
