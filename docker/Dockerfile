@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.9-slim-bullseye
+FROM python:3.9-slim-bookworm
 
 RUN apt update && apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -57,18 +57,6 @@ ENV PATH=/google-cloud-sdk/bin:$PATH
 
 RUN apt update && apt-get install --no-install-recommends -y libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev libgmock-dev
 RUN apt update && apt-get install --no-install-recommends -y libgtest-dev libspdlog-dev
-
-# install REViewer
-RUN wget -q https://github.com/bw2/REViewer/archive/refs/heads/master.zip \
-    && unzip master.zip \
-    && cd REViewer-master \
-	&& mkdir build \
-	&& cd build \
-	&& cmake .. \
-	&& make \
-	&& cp install/bin/REViewer /usr/local/bin/ \
-	&& cd / \
-	&& rm -r REViewer-master master.zip
 
 # install mimalloc (faster allocator; ~30% faster genotyping with lower peak RSS, byte-identical output).
 # Built from source so its CMake config is installed and ExpansionHunter's find_package(mimalloc) links it.
