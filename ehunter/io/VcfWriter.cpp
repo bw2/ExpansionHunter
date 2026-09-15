@@ -101,7 +101,7 @@ void VcfWriter::writeBody(ostream& out)
         const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
         const auto& variantFindings = locusFindings.findingsForEachVariant.at(variantId);
 
-        const double locusDepth = std::round(locusFindings.stats.depth() * 100) / 100.0;
+        const double locusDepth = locusFindings.stats.depth();
         VariantVcfWriter variantWriter(reference_, locusSpec, locusDepth, variantSpec, out);
         variantFindings->accept(&variantWriter);
     }
