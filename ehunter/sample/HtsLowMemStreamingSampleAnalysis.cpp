@@ -54,6 +54,7 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "io/IterativeJsonWriter.hh"
 #include "io/IterativeVcfWriter.hh"
 #include "io/ParameterLoading.hh"
+#include "io/ResumeCheckpoint.hh"
 #include "io/StreamingOutputMerge.hh"
 #include "io/SampleStats.hh"
 #include "io/StringUtils.hh"
@@ -621,7 +622,8 @@ void doTheAnalysis(
     const GenomeQueryCollection& genomeQuery, htshelpers::MateExtractor& mateExtractor,
     BamletWriterPtr bamletWriter, const int farAwayMateDistanceThreshold, const int typicalReadLength,
     IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter,
-    const std::vector<GenomicRegion>& streamerRegions, GenotypingCounts& counts)
+    const std::vector<GenomicRegion>& streamerRegions, GenotypingCounts& counts,
+    ResumeCheckpointWriter* checkpoint)
 {
     if (locusDescriptionCatalog.empty()) {
         return;
@@ -698,15 +700,25 @@ void doTheAnalysis(
     // Write one finished locus result, inline as each locus is genotyped, in catalog order. Counter
     // semantics: a locus reaching full genotyping is counted as full-genotyped even if it produces no record
     // because of --skip-hom-ref / --skip-missing-genotypes or an error.
+    // --resume: hand each finished locus's record text to the checkpoint. A locus that emitted no record at
+    // all is still checkpointed, so a resumed run does not genotype it again. Null when --resume is off.
+    auto checkpointLocus = [&](const std::string& locusId, CapturedLocusOutput& captured) {
+        if (checkpoint) {
+            checkpoint->recordLocus(locusId, std::move(captured.json), std::move(captured.vcf));
+        }
+    };
+
     auto writeOutput = [&](LocusOutput& out) {
+        CapturedLocusOutput captured;
+        CapturedLocusOutput* capturePtr = checkpoint ? &captured : nullptr;
         switch (out.kind) {
             case LocusOutput::Kind::kNoCoverage:
                 zeroCoverageCount++;
-                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], jsonWriter, vcfWriter);
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], jsonWriter, vcfWriter, capturePtr);
                 break;
             case LocusOutput::Kind::kHeuristicOnlySkip:
                 skippedCount++;
-                jsonWriter.addSkippedRecord(out.locusId, "heuristic_only_mode");
+                jsonWriter.addSkippedRecord(out.locusId, "heuristic_only_mode", capturePtr ? &capturePtr->json : nullptr);
                 break;
             case LocusOutput::Kind::kError:
                 fullGenotypedCount++;
@@ -717,10 +729,11 @@ void doTheAnalysis(
                 break;
             case LocusOutput::Kind::kGenotyped:
                 fullGenotypedCount++;
-                jsonWriter.addRecord(out.analyzer->locusSpec(), out.findings);
-                vcfWriter.addRecords(out.analyzer->locusSpec(), out.findings);
+                jsonWriter.addRecord(out.analyzer->locusSpec(), out.findings, capturePtr ? &capturePtr->json : nullptr);
+                vcfWriter.addRecords(out.analyzer->locusSpec(), out.findings, capturePtr ? &capturePtr->vcf : nullptr);
                 break;
         }
+        checkpointLocus(out.locusId, captured);
     };
 
     // Analyze every locus index in locusIndicesReadyForAnalysis, then clear the queue.
@@ -735,7 +748,10 @@ void doTheAnalysis(
                 // Locus has zero coverage; emit a no-call record identical to seeking/streaming mode (see
                 // writeZeroCoverageRecord) so the output is consistent across analysis modes.
                 zeroCoverageCount++;
-                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter);
+                CapturedLocusOutput captured;
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter,
+                    checkpoint ? &captured : nullptr);
+                checkpointLocus(locusDescriptionCatalog[locusIndex].locusId(), captured);
                 continue;
             }
             const shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
@@ -749,21 +765,26 @@ void doTheAnalysis(
 
             // TODO check if # of reads >= minLocusCoverage and skip locus if not
             bool needToProcessSlowly = true;
+            CapturedLocusOutput captured;
+            CapturedLocusOutput* capturePtr = checkpoint ? &captured : nullptr;
             if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
                 const bool doneGenotyping = processLocusFast(params, reference,
                     locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
-                    jsonWriter, vcfWriter);
+                    jsonWriter, vcfWriter, capturePtr);
 
                 needToProcessSlowly = !doneGenotyping;
                 if (doneGenotyping) {
                     fastGenotypedCount++;
+                    checkpointLocus(locusDescriptionCatalog[locusIndex].locusId(), captured);
                 }
             }
 
             if (needToProcessSlowly) {
                 if (params.heuristicGenotypingOnly()) {
                     skippedCount++;
-                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
+                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode",
+                        capturePtr ? &capturePtr->json : nullptr);
+                    checkpointLocus(locusDescriptionCatalog[locusIndex].locusId(), captured);
                 } else {
                     LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
                         locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
@@ -1129,6 +1150,30 @@ void doTheAnalysis(
 
 
 
+// The run-wide RunInfo record appended to the merged JSON output. Unlike the copy each per-slice writer
+// puts in its own temp file, "Completed" here is captured only once all genotyping has finished, so it
+// reflects the true end of the run rather than one worker's local finish time.
+std::string buildRunInfoJson(
+    const ProgramParameters& programParams, std::time_t startedEpoch, int threadCount, const std::string& commandLine)
+{
+    const std::time_t completedEpoch = currentEpochSeconds();
+    Json runInfoRecord;
+    runInfoRecord["Source"] = kSourceUrl;
+    runInfoRecord["Version"] = kCommitSha;
+    runInfoRecord["AnalysisMode"] = analysisModeToString(programParams.analysisMode());
+    runInfoRecord["Threads"] = threadCount;
+    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
+    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
+    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
+    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
+    runInfoRecord["CommandLine"] = commandLine;
+    if (programParams.genotypeQualityModel())
+    {
+        runInfoRecord["GenotypeQualityModelVersion"] = programParams.genotypeQualityModel()->version;
+    }
+    return std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
+}
+
 void htsLowMemStreamingSampleAnalysis(
     LocusDescriptionCatalog& locusDescriptionCatalog,
     const ProgramParameters& programParams,
@@ -1137,6 +1182,87 @@ void htsLowMemStreamingSampleAnalysis(
     std::time_t startedEpoch,
     const std::string& commandLine)
 {
+    const int threadCount = std::max(1, programParams.threadCount);
+
+    // --resume: pick up where an interrupted run left off. This runs before anything else, because it
+    // filters the catalog down to the loci that still need genotyping and rebuilds the per-slice temp
+    // files the end-of-run merge consumes. See io/ResumeCheckpoint.hh for the file layout.
+    //
+    // At --threads > 1 a slice is one contig, matching the per-contig temp files the workers already use.
+    // At --threads 1 a single writer covers every contig in genomic order, so there is one slice.
+    const ResumeCheckpointPaths checkpointPaths = resumeCheckpointPaths(programParams.outputPaths());
+    const std::string runSignature = buildRunSignature(programParams);
+    const bool demultiplexPerContig = threadCount > 1;
+    std::map<int32_t, RebuiltSlice> rebuiltSlices;
+    bool resumedFromCheckpoint = false;
+    bool checkpointHasJsonRecords = false;
+
+    if (programParams.resume())
+    {
+        assertCatalogIsResumable(locusDescriptionCatalog);
+
+        // The two record files' names carry the output's .gz suffix, so flipping -z between runs looks
+        // like "no checkpoint here" and would quietly start over, overwriting the shared processed-loci
+        // list and stranding the other set of files. Say so instead.
+        const ResumeCheckpointPaths otherModePaths
+            = resumeCheckpointPaths(otherCompressionOutputPaths(programParams.outputPaths()));
+        if (!resumeCheckpointExists(checkpointPaths) && resumeCheckpointExists(otherModePaths))
+        {
+            throw std::runtime_error(
+                "--resume: the checkpoint files next to this output prefix were written by a run with a "
+                "different --compress-output-files setting (" + otherModePaths.json
+                + "). Use the same setting as the interrupted run, or delete those files to start over.");
+        }
+    }
+
+    if (programParams.resume() && resumeCheckpointExists(checkpointPaths))
+    {
+        try
+        {
+            const std::string mismatch
+                = describeSignatureMismatch(runSignature, readCheckpointRunSignature(checkpointPaths));
+            if (!mismatch.empty())
+            {
+                // Deliberately fatal rather than a silent restart: quietly discarding the checkpoint would
+                // throw away a whole interrupted run because of, say, a mistyped catalog path.
+                throw std::runtime_error(
+                    "--resume: the existing checkpoint files were written by a different run (" + mismatch
+                    + "). Delete " + checkpointPaths.json + ", " + checkpointPaths.vcf + " and "
+                    + checkpointPaths.processedLoci + " to start over, or use a different --output-prefix.");
+            }
+
+            const std::size_t catalogSizeBeforeResume = locusDescriptionCatalog.size();
+            ResumeLoadResult loaded = loadResumeCheckpoint(checkpointPaths, programParams.sample(),
+                locusDescriptionCatalog, programParams.outputPaths().outputPrefix(), demultiplexPerContig);
+            removeCompletedLoci(locusDescriptionCatalog, loaded.doneLocusIds);
+            rebuiltSlices = std::move(loaded.rebuiltSlices);
+            checkpointHasJsonRecords = loaded.hasExistingJsonRecords;
+            resumedFromCheckpoint = true;
+
+            spdlog::info("Resuming: {} of {} loci were already genotyped, {} remaining",
+                add_commas_at_thousands(catalogSizeBeforeResume - locusDescriptionCatalog.size()),
+                add_commas_at_thousands(catalogSizeBeforeResume),
+                add_commas_at_thousands(locusDescriptionCatalog.size()));
+        }
+        catch (const ResumeCheckpointCorruptError& e)
+        {
+            // Unparseable, as opposed to belonging to a different run: there is nothing to preserve, so
+            // start over. The checkpoint writer below truncates the files.
+            spdlog::warn("Ignoring the existing checkpoint files and starting from the beginning: {}", e.what());
+        }
+    }
+
+    std::unique_ptr<ResumeCheckpointWriter> checkpointWriter;
+    if (programParams.resume())
+    {
+        checkpointWriter = std::make_unique<ResumeCheckpointWriter>(checkpointPaths, programParams.sample(),
+            runSignature, resumedFromCheckpoint, checkpointHasJsonRecords, programParams.abortAfterLoci());
+    }
+
+    // Every locus may already be done, in which case there is nothing left to genotype and the run goes
+    // straight to merging the rebuilt temp files into the final output.
+    const bool nothingLeftToGenotype = locusDescriptionCatalog.empty();
+
     //initialize the genomeQuery object
     GenomeQueryCollection genomeQuery(locusDescriptionCatalog);
 
@@ -1158,7 +1284,6 @@ void htsLowMemStreamingSampleAnalysis(
 
     const int farAwayMateDistanceThreshold = 1000;  // base pairs
     const InputPaths& inputPaths = programParams.inputPaths();
-    const int threadCount = std::max(1, programParams.threadCount);
 
     // Phase 0: seed a single genome-wide typicalReadLength and build the far-away-mate admission predicate
     // from the FULL catalog (so the prepass predicate is a superset of every per-contig genotyping predicate).
@@ -1169,18 +1294,68 @@ void htsLowMemStreamingSampleAnalysis(
     // This IS the golden serial baseline that every higher thread count must reproduce byte-for-byte.
     if (threadCount == 1)
     {
-        htshelpers::MateExtractor mateExtractor(
-            inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
-        spdlog::info("Caching read pairs with distant mates");
-        prepareCache(programParams, reference, genomeQuery, mateExtractor, farAwayMateDistanceThreshold,
-                     typicalReadLength, {});
-        spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
+        // Without --resume the writers target the final output files directly, exactly as before. With
+        // --resume they target a plain-text temp instead, which the merge below turns into the final
+        // output; the temp already holds whatever the interrupted run had finished.
+        const std::string outputPrefix = programParams.outputPaths().outputPrefix();
+        const bool resume = programParams.resume();
+        const std::string jsonPath
+            = resume ? singleSliceTempJsonPath(outputPrefix) : programParams.outputPaths().json();
+        const std::string vcfPath
+            = resume ? singleSliceTempVcfPath(outputPrefix) : programParams.outputPaths().vcf();
+        const auto rebuiltSlice = rebuiltSlices.find(kSingleSliceKey);
+        const bool appendToRebuiltSlice = rebuiltSlice != rebuiltSlices.end();
 
-        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(), commandLine);
-        IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, programParams.outputPaths().vcf());
+        // The prepass runs before the output writers are opened: opening them first would mean a prepass
+        // failure still leaves a complete-looking (but empty) output behind, since the writers close
+        // themselves while unwinding.
+        std::unique_ptr<htshelpers::MateExtractor> mateExtractor;
+        if (!nothingLeftToGenotype)
+        {
+            mateExtractor = std::make_unique<htshelpers::MateExtractor>(inputPaths.htsFile(),
+                inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold);
+            spdlog::info("Caching read pairs with distant mates");
+            prepareCache(programParams, reference, genomeQuery, *mateExtractor, farAwayMateDistanceThreshold,
+                         typicalReadLength, {});
+            spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor->mateCacheSize()));
+        }
+
         GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
-        doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, mateExtractor, bamletWriter,
-                      farAwayMateDistanceThreshold, typicalReadLength, jsonWriter, vcfWriter, {}, counts);
+        {
+            IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), jsonPath,
+                programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch,
+                threadCount, programParams.analysisMode(), commandLine,
+                appendToRebuiltSlice ? JsonOutputMode::kAppendAfterHeader : JsonOutputMode::kTruncate,
+                appendToRebuiltSlice && rebuiltSlice->second.hasJsonRecords);
+            IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, vcfPath,
+                appendToRebuiltSlice ? VcfOutputMode::kAppendAfterHeader : VcfOutputMode::kTruncate);
+
+            if (mateExtractor)
+            {
+                doTheAnalysis(programParams, reference, locusDescriptionCatalog, genomeQuery, *mateExtractor,
+                    bamletWriter, farAwayMateDistanceThreshold, typicalReadLength, jsonWriter, vcfWriter, {},
+                    counts, checkpointWriter.get());
+            }
+        }  // the writers are closed here, so the temp files are complete documents before the merge below
+
+        // Surface a checkpoint write failure before the output is declared finished.
+        if (checkpointWriter)
+        {
+            checkpointWriter->close();
+        }
+
+        if (resume)
+        {
+            spdlog::info("Writing final JSON and VCF output files");
+            mergeRegionJsonFiles(programParams.outputPaths().json(), { jsonPath },
+                buildRunInfoJson(programParams, startedEpoch, threadCount, commandLine));
+            mergeRegionVcfFiles(programParams.outputPaths().vcf(), { vcfPath });
+            // Sweeps both slice layouts, not just this run's: an interrupted --threads > 1 run leaves
+            // per-contig temps behind that this run rebuilt into a single slice.
+            removeResumeTempFiles(outputPrefix);
+            removeCheckpointFiles(checkpointPaths);
+        }
+
         logGenotypingSummary(programParams, counts);
         return;
     }
@@ -1194,7 +1369,9 @@ void htsLowMemStreamingSampleAnalysis(
     // no shared writes, no locks. The shards are key-disjoint (each read's single primary alignment is
     // streamed by exactly one worker), so after every worker joins they are spliced into one immutable cache
     // on the main thread by mergeAndFreeze (which throws on the never-expected duplicate key).
-    const int prepassWorkerCount = std::min(threadCount, numContigs);
+    // A resumed run with nothing left to genotype skips the prepass: there are no loci for it to find
+    // mates for, and its whole-file scan is the most expensive part of an otherwise empty run.
+    const int prepassWorkerCount = nothingLeftToGenotype ? 0 : std::min(threadCount, numContigs);
     std::vector<std::unique_ptr<htshelpers::MateExtractor>> prepassShards;
     prepassShards.reserve(prepassWorkerCount);
     for (int w = 0; w < prepassWorkerCount; ++w)
@@ -1202,8 +1379,9 @@ void htsLowMemStreamingSampleAnalysis(
         prepassShards.push_back(std::make_unique<htshelpers::MateExtractor>(
             inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), true, farAwayMateDistanceThreshold));
     }
-    spdlog::info("Caching read pairs with distant mates");
+    if (prepassWorkerCount > 0)
     {
+        spdlog::info("Caching read pairs with distant mates");
         std::vector<std::exception_ptr> prepassExceptions(prepassWorkerCount);
         std::vector<std::thread> prepassWorkers;
         prepassWorkers.reserve(prepassWorkerCount);
@@ -1256,15 +1434,45 @@ void htsLowMemStreamingSampleAnalysis(
     const std::vector<ContigGenotypingSlice> slices =
         perContigGenotypingSlices(locusDescriptionCatalog, contigInfo, farAwayMateDistanceThreshold);
 
-    std::vector<std::string> jsonPaths;
-    std::vector<std::string> vcfPaths;
-    jsonPaths.reserve(slices.size());
-    vcfPaths.reserve(slices.size());
+    // Contigs to merge: those with loci left to genotype, plus those whose temp files a --resume rebuilt
+    // from the checkpoint (their loci are all finished, so they have no slice, but their records still
+    // belong in the output). Ascending order keeps the merge in coordinate order.
+    const std::string outputPrefix = programParams.outputPaths().outputPrefix();
+    std::vector<int32_t> mergeContigIndices;
+    mergeContigIndices.reserve(slices.size() + rebuiltSlices.size());
     for (const ContigGenotypingSlice& slice : slices)
     {
-        const std::string contigSuffix = ".contig" + std::to_string(slice.contigIndex);
-        jsonPaths.push_back(programParams.outputPaths().outputPrefix() + contigSuffix + ".json");
-        vcfPaths.push_back(programParams.outputPaths().outputPrefix() + contigSuffix + ".vcf");
+        mergeContigIndices.push_back(slice.contigIndex);
+    }
+    for (const auto& contigIndexAndSlice : rebuiltSlices)
+    {
+        mergeContigIndices.push_back(contigIndexAndSlice.first);
+    }
+    std::sort(mergeContigIndices.begin(), mergeContigIndices.end());
+    mergeContigIndices.erase(
+        std::unique(mergeContigIndices.begin(), mergeContigIndices.end()), mergeContigIndices.end());
+
+    // A resumed run whose every locus was already finished and filtered out of the output leaves nothing
+    // to merge, and the merge needs at least one file to take the document header from.
+    if (mergeContigIndices.empty())
+    {
+        IterativeJsonWriter emptyJsonWriter(programParams.sample(), reference.contigInfo(),
+            contigTempJsonPath(outputPrefix, 0), programParams.copyCatalogFields(),
+            programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(),
+            commandLine);
+        IterativeVcfWriter emptyVcfWriter(
+            programParams.sample().id(), reference, contigTempVcfPath(outputPrefix, 0));
+        mergeContigIndices.push_back(0);
+    }
+
+    std::vector<std::string> jsonPaths;
+    std::vector<std::string> vcfPaths;
+    jsonPaths.reserve(mergeContigIndices.size());
+    vcfPaths.reserve(mergeContigIndices.size());
+    for (int32_t contigIndex : mergeContigIndices)
+    {
+        jsonPaths.push_back(contigTempJsonPath(outputPrefix, contigIndex));
+        vcfPaths.push_back(contigTempVcfPath(outputPrefix, contigIndex));
     }
 
     // Remove the per-contig temp files on any exit path (success or exception). Ignores ENOENT.
@@ -1303,9 +1511,8 @@ void htsLowMemStreamingSampleAnalysis(
         workers.emplace_back([&, w]() {
             try
             {
-                for (std::size_t i = 0; i < slices.size(); ++i)
+                for (const ContigGenotypingSlice& slice : slices)
                 {
-                    const ContigGenotypingSlice& slice = slices[i];
                     if (slice.contigIndex % threadCount != w)
                     {
                         continue;  // owned by another stride worker
@@ -1316,14 +1523,22 @@ void htsLowMemStreamingSampleAnalysis(
                     FastaReference workerReference(inputPaths.reference(), contigInfo);
                     htshelpers::MateExtractor workerMateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(),
                         inputPaths.reference(), true, frozenCache, farAwayMateDistanceThreshold);
+                    // rebuiltSlices is const from here on, so this concurrent read needs no synchronization.
+                    const auto rebuiltSlice = rebuiltSlices.find(slice.contigIndex);
+                    const bool appendToRebuiltSlice = rebuiltSlice != rebuiltSlices.end();
                     IterativeJsonWriter jsonWriter(programParams.sample(), workerReference.contigInfo(),
-                        jsonPaths[i], programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(),
-                        startedEpoch, threadCount, programParams.analysisMode(), commandLine);
-                    IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfPaths[i]);
+                        contigTempJsonPath(outputPrefix, slice.contigIndex), programParams.copyCatalogFields(),
+                        programParams.genotypeQualityModel().get(), startedEpoch, threadCount,
+                        programParams.analysisMode(), commandLine,
+                        appendToRebuiltSlice ? JsonOutputMode::kAppendAfterHeader : JsonOutputMode::kTruncate,
+                        appendToRebuiltSlice && rebuiltSlice->second.hasJsonRecords);
+                    IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference,
+                        contigTempVcfPath(outputPrefix, slice.contigIndex),
+                        appendToRebuiltSlice ? VcfOutputMode::kAppendAfterHeader : VcfOutputMode::kTruncate);
                     const std::vector<GenomicRegion> streamerRegions{ slice.region };
                     doTheAnalysis(programParams, workerReference, subsetCatalog, subsetGenomeQuery,
                         workerMateExtractor, bamletWriter, farAwayMateDistanceThreshold, typicalReadLength,
-                        jsonWriter, vcfWriter, streamerRegions, workerCounts[w]);
+                        jsonWriter, vcfWriter, streamerRegions, workerCounts[w], checkpointWriter.get());
                 }
             }
             catch (...)
@@ -1346,30 +1561,43 @@ void htsLowMemStreamingSampleAnalysis(
         }
     }
 
-    spdlog::info("Merging {} per-contig output files into final JSON and VCF", slices.size());
-
-    // The authoritative RunInfo for the merged output: unlike any single worker's own copy, "Completed"
-    // here is captured only once every chromosome-stride worker has joined, so it reflects the true
-    // run-wide finish time rather than one worker's local finish time.
-    const std::time_t completedEpoch = currentEpochSeconds();
-    Json runInfoRecord;
-    runInfoRecord["Source"] = kSourceUrl;
-    runInfoRecord["Version"] = kCommitSha;
-    runInfoRecord["AnalysisMode"] = analysisModeToString(programParams.analysisMode());
-    runInfoRecord["Threads"] = threadCount;
-    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
-    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
-    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
-    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
-    runInfoRecord["CommandLine"] = commandLine;
-    if (programParams.genotypeQualityModel())
+    // A contig whose loci were all finished before the interruption has a temp file rebuilt from the
+    // checkpoint but no genotyping slice, so no worker opened and closed it. Close it here (appending the
+    // RunInfo footer the writers normally add) so the merge sees a complete document.
+    for (const auto& contigIndexAndSlice : rebuiltSlices)
     {
-        runInfoRecord["GenotypeQualityModelVersion"] = programParams.genotypeQualityModel()->version;
+        const int32_t contigIndex = contigIndexAndSlice.first;
+        const bool hasSlice = std::any_of(slices.begin(), slices.end(),
+            [contigIndex](const ContigGenotypingSlice& slice) { return slice.contigIndex == contigIndex; });
+        if (hasSlice)
+        {
+            continue;
+        }
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(),
+            contigTempJsonPath(outputPrefix, contigIndex), programParams.copyCatalogFields(),
+            programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(),
+            commandLine, JsonOutputMode::kAppendAfterHeader, contigIndexAndSlice.second.hasJsonRecords);
+        IterativeVcfWriter vcfWriter(programParams.sample().id(), reference,
+            contigTempVcfPath(outputPrefix, contigIndex), VcfOutputMode::kAppendAfterHeader);
     }
-    const std::string runInfoJson = std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
 
-    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths, runInfoJson);
+    if (checkpointWriter)
+    {
+        checkpointWriter->close();
+    }
+
+    spdlog::info("Merging {} per-contig output files into final JSON and VCF", jsonPaths.size());
+
+    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths,
+        buildRunInfoJson(programParams, startedEpoch, threadCount, commandLine));
     mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
+    if (programParams.resume())
+    {
+        // As in the --threads 1 branch: also clears the single-slice temps an interrupted --threads 1 run
+        // would have left, which TempFileRemover does not know about.
+        removeResumeTempFiles(outputPrefix);
+        removeCheckpointFiles(checkpointPaths);
+    }
 
     // One run-wide summary (each per-contig worker call stayed silent; sum their tallies here).
     GenotypingCounts aggregateCounts;

@@ -26,6 +26,7 @@
 #include "io/VcfWriterHelpers.hh"
 
 #include <algorithm>
+#include <sstream>
 #include <vector>
 
 namespace ehunter
@@ -42,11 +43,38 @@ void IterativeVariantVcfWriter::visit(const SmallVariantFindings* smallVariantFi
         reference_, locusSpec_, locusDepth_, variantSpec_, *smallVariantFindingsPtr);
 }
 
+std::string vcfDocumentHeader(const std::string& sampleId)
+{
+    // Per-genotype `##ALT=<ID=STR{n}>` lines are intentionally omitted — streaming mode does not know
+    // which STR<N> ALT symbols will be emitted in the body until all records are written, so we don't try
+    // to predeclare them. Record bodies still emit `<STR{n}>` ALT symbols; downstream consumers tolerate
+    // undeclared symbolic ALTs.
+    std::ostringstream header;
+    header << "##fileformat=VCFv4.1\n";
+    FieldDescriptionCatalog catalog;
+    addCommonFieldDescriptions(catalog);
+    addRepeatFieldDescriptions(catalog);
+    addSmallVariantFieldDescriptions(catalog);
+    // The header is written before any record is seen, so every FORMAT key a record body can emit has to
+    // be declared here. buildSmallVariantVcfRecordElements emits DST/RPL for SMN variants; without this
+    // an SMN locus would produce records whose FORMAT keys are missing from the header.
+    addSmnFieldDescriptions(catalog);
+    for (const auto& fieldIdAndDescription : catalog)
+    {
+        header << fieldIdAndDescription.second << "\n";
+    }
+    writeBodyHeader(sampleId, header);
+    return header.str();
+}
+
 IterativeVcfWriter::IterativeVcfWriter(
-    std::string sampleId, Reference& reference, const std::string& outputFile)
+    std::string sampleId, Reference& reference, const std::string& outputFile, VcfOutputMode outputMode)
     : sampleId_(std::move(sampleId)), reference_(reference)
 {
-    outFile_.open(outputFile, std::ios::out | std::ios::binary);
+    const bool append = outputMode == VcfOutputMode::kAppendAfterHeader;
+    const std::ios::openmode openMode
+        = std::ios::out | std::ios::binary | (append ? std::ios::app : std::ios::trunc);
+    outFile_.open(outputFile, openMode);
     if (!outFile_)
     {
         throw std::runtime_error("Failed to open VCF file: " + outputFile);
@@ -60,27 +88,16 @@ IterativeVcfWriter::IterativeVcfWriter(
 
     outStream_.push(outFile_);
 
-    // Write the VCF header upfront. Per-genotype `##ALT=<ID=STR{n}>` lines are intentionally omitted —
-    // streaming mode does not know which STR<N> ALT symbols will be emitted in the body until all
-    // records are written, so we don't try to predeclare them. Record bodies still emit `<STR{n}>`
-    // ALT symbols; downstream consumers tolerate undeclared symbolic ALTs.
-    outStream_ << "##fileformat=VCFv4.1\n";
-    FieldDescriptionCatalog catalog;
-    addCommonFieldDescriptions(catalog);
-    addRepeatFieldDescriptions(catalog);
-    addSmallVariantFieldDescriptions(catalog);
-    // The header is written before any record is seen, so every FORMAT key a record body can emit has to
-    // be declared here. buildSmallVariantVcfRecordElements emits DST/RPL for SMN variants; without this
-    // an SMN locus would produce records whose FORMAT keys are missing from the header.
-    addSmnFieldDescriptions(catalog);
-    for (const auto& fieldIdAndDescription : catalog)
+    // In append mode the header is whatever the interrupted run left behind, so only a fresh file
+    // writes one.
+    if (!append)
     {
-        outStream_ << fieldIdAndDescription.second << "\n";
+        outStream_ << vcfDocumentHeader(sampleId_);
     }
-    writeBodyHeader(sampleId_, outStream_);
 }
 
-void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
+void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpecification& locusSpec,
+    const LocusFindings& locusFindings, std::string* capturedText)
 {
     const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
     VariantFindings* findingsPtr = locusFindings.findingsForEachVariant.at(variantId).get();
@@ -96,11 +113,17 @@ void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpec
     const std::vector<std::string>& vcfLine = recordWriter.getVcfLine();
     if (!vcfLine.empty())
     {
-        outStream_ << boost::algorithm::join(vcfLine, "\t") << "\n";
+        const std::string line = boost::algorithm::join(vcfLine, "\t") + "\n";
+        outStream_ << line;
+        if (capturedText)
+        {
+            *capturedText += line;
+        }
     }
 }
 
-void IterativeVcfWriter::addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
+void IterativeVcfWriter::addRecords(
+    const LocusSpecification& locusSpec, const LocusFindings& locusFindings, std::string* capturedText)
 {
     std::vector<std::string> variantIds;
     variantIds.reserve(locusFindings.findingsForEachVariant.size());
@@ -123,7 +146,7 @@ void IterativeVcfWriter::addRecords(const LocusSpecification& locusSpec, const L
 
     for (const std::string& variantId : variantIds)
     {
-        addRecord(variantId, locusSpec, locusFindings);
+        addRecord(variantId, locusSpec, locusFindings, capturedText);
     }
 }
 

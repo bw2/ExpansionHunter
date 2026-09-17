@@ -66,20 +66,36 @@ private:
     std::vector<std::string> vcfLine_;
 };
 
+// The exact header bytes an IterativeVcfWriter emits before its first record. Shared with the --resume
+// checkpoint, which writes documents in this same format (see io/ResumeCheckpoint.hh).
+std::string vcfDocumentHeader(const std::string& sampleId);
+
+// How a writer should attach to its output file.
+enum class VcfOutputMode
+{
+    kTruncate,          // create/overwrite the file and write the VCF header
+    kAppendAfterHeader, // open an existing partial VCF and continue after its last record line
+};
+
 // TODO: Document the code after multi-unit repeat format is finalized (GT-598)
 class IterativeVcfWriter
 {
 public:
     IterativeVcfWriter(
-        std::string sampleId, Reference& reference, const std::string& outputFilePath);
+        std::string sampleId, Reference& reference, const std::string& outputFilePath,
+        VcfOutputMode outputMode = VcfOutputMode::kTruncate);
     // Ensure the VCF stream is flushed (and the gzip footer written if compressing) even when an
     // exception unwinds past the writer; otherwise a partially-written VCF may be left on disk.
     ~IterativeVcfWriter();
 
-    void addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
+    // capturedText, when non-null, has the record lines written by this call appended to it, so the
+    // --resume checkpoint can replay them verbatim.
+    void addRecord(const std::string& variantId, const LocusSpecification& locusSpec,
+        const LocusFindings& locusFindings, std::string* capturedText = nullptr);
     // Emit every variant record for a locus in genomic-position order. findingsForEachVariant is an
     // unordered_map, so the variants are sorted by referenceLocus before output to keep the VCF position-sorted.
-    void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
+    void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings,
+        std::string* capturedText = nullptr);
     void close();  // Close output file (idempotent)
 
 private:

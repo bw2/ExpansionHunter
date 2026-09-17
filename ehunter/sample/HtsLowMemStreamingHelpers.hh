@@ -6,6 +6,7 @@
 #include "genotyping/RepeatGenotype.hh"
 #include "io/IterativeJsonWriter.hh"
 #include "io/IterativeVcfWriter.hh"
+#include "io/ResumeCheckpoint.hh"
 #include "locus/LocusAnalyzer.hh"
 #include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
@@ -61,10 +62,12 @@ bool shouldFilterLocus(
 FastReadAnalysisResult processRead(
     const FullRead& read, int64_t locus_start_0based, int64_t locus_end_0based, const std::string& locus_motif);
 
+// `captured`, when non-null, receives the exact record text written for this locus, for the --resume
+// checkpoint (see io/ResumeCheckpoint.hh). It is left empty when the fast path declines the locus.
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter, CapturedLocusOutput* captured = nullptr);
 
 // Emit a no-call record for a locus with zero coverage, identical to what seeking/streaming mode produce,
 // without running genotyping. For single-region loci it builds a flankless stub LocusSpecification
@@ -78,5 +81,5 @@ bool processLocusFast(
 // Returns true if a no-call record was written, false if the locus was suppressed (--skip-missing-genotypes).
 bool writeZeroCoverageRecord(
     const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter, CapturedLocusOutput* captured = nullptr);
 }
