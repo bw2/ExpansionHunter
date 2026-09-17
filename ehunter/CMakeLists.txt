@@ -134,6 +134,7 @@ add_library(ExpansionHunterLib
         io/IterativeJsonWriter.hh io/IterativeJsonWriter.cpp
         io/IterativeVcfWriter.hh io/IterativeVcfWriter.cpp
         io/StreamingOutputMerge.hh io/StreamingOutputMerge.cpp
+        io/ResumeCheckpoint.hh io/ResumeCheckpoint.cpp
         io/LocusSpecDecoding.hh io/LocusSpecDecoding.cpp
         io/ParameterLoading.hh io/ParameterLoading.cpp
         io/RegionGraph.hh io/RegionGraph.cpp
@@ -242,6 +243,7 @@ add_executable(UnitTests
         tests/RegionGraphTest.cpp
         tests/RepeatAnalyzerTest.cpp
         tests/RepeatPurityTest.cpp
+        tests/ResumeTest.cpp
         tests/RepeatGenotypeTest.cpp
         tests/ReviewerAlignsTest.cpp
         tests/ReviewerFragLenFilterTest.cpp

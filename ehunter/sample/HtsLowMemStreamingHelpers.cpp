@@ -513,7 +513,7 @@ FastReadAnalysisResult processRead(
 bool processLocusFast(
     const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter) {
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter, CapturedLocusOutput* captured) {
 
     // Per-locus fast-path timing (thread-CPU clock), mirroring the full-genotyper path in
     // HtsLowMemStreamingSampleAnalysis.cpp; covers graph decode + read processing + heuristic genotyping.
@@ -1047,11 +1047,11 @@ bool processLocusFast(
 		return false;
 	}
 
-    jsonWriter.addRecord(locusSpec, locusFindings);
+    jsonWriter.addRecord(locusSpec, locusFindings, captured ? &captured->json : nullptr);
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
     {
         const string& variantId = variantIdAndFindings.first;
-        vcfWriter.addRecord(variantId, locusSpec, locusFindings);
+        vcfWriter.addRecord(variantId, locusSpec, locusFindings, captured ? &captured->vcf : nullptr);
     }
 
     return true;
@@ -1059,7 +1059,7 @@ bool processLocusFast(
 
 bool writeZeroCoverageRecord(
     const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter)
+    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter, CapturedLocusOutput* captured)
 {
     // A zero-coverage locus has all-missing genotypes, so --skip-missing-genotypes excludes it entirely
     // (no record, and no graph build).
@@ -1104,15 +1104,15 @@ bool writeZeroCoverageRecord(
             locusFindings.findingsForEachVariant.emplace(variantSpec.id(), std::move(variantFindingsPtr));
         }
 
-        jsonWriter.addRecord(locusSpec, locusFindings);
-        vcfWriter.addRecords(locusSpec, locusFindings);
+        jsonWriter.addRecord(locusSpec, locusFindings, captured ? &captured->json : nullptr);
+        vcfWriter.addRecords(locusSpec, locusFindings, captured ? &captured->vcf : nullptr);
     }
     catch (const MissingContigError& e)
     {
         // Locus sits on a contig absent from the reference FASTA (e.g. a _fix patch contig present in the
         // read file header but not in the FASTA). This is benign and expected, so warn rather than error.
         spdlog::warn("Skipping zero-coverage locus {}: {}", locusDescription.locusId(), e.what());
-        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error");
+        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error", captured ? &captured->json : nullptr);
     }
     catch (const std::exception& e)
     {
@@ -1120,7 +1120,7 @@ bool writeZeroCoverageRecord(
         // coverage, so it never reached graph construction). Preserve that fallback instead of aborting
         // the whole run.
         spdlog::error("Error emitting zero-coverage record for {}: {}", locusDescription.locusId(), e.what());
-        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error");
+        jsonWriter.addSkippedRecord(locusDescription.locusId(), "error", captured ? &captured->json : nullptr);
     }
     return true;
 }

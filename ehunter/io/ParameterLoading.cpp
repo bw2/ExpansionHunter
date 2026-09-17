@@ -87,6 +87,8 @@ struct UserParameters
     int maxDepth = 150;
     bool outputGenotypeTiming = false;
     std::string genotypeQualityModelPath;
+    bool resume = false;
+    size_t abortAfterLoci = 0;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -135,6 +137,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
         ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to low-mem-streaming and optimized-streaming modes.")
         ("genotype-quality-model", po::value<string>(&params.genotypeQualityModelPath), "Path to a genotype-quality model (.json or .json.gz) used to add per-allele PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong fields. Overrides the model compiled into the binary.")
+        ("resume", po::bool_switch(&params.resume), "Checkpoint each genotyped locus to <output-prefix>.{json,vcf}[.gz].unfinished files as the run proceeds, and, if those files are already present from an interrupted run, skip the loci they already contain and continue from there. The checkpoint files are deleted once the final output files have been written. Applies to low-mem-streaming and optimized-streaming modes.")
     ;
     // clang-format on
 
@@ -145,6 +148,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     po::options_description internalOptions("Internal options (not stable in future releases)");
     internalOptions.add_options()
     ("variant-catalog", po::value<string>(), "Alias for --catalog (deprecated)")
+    ("internal-abort-after-loci", po::value<size_t>(&params.abortAfterLoci)->default_value(0), "Test hook: abort the process (without unwinding) once this many loci have been checkpointed, to produce a deterministically interrupted --resume run")
     ;
     // clang-format on
 
@@ -264,6 +268,16 @@ void assertValidity(const UserParameters& userParameters)
     if (userParameters.plotAll && userParameters.disableAllPlots)
     {
         throw std::invalid_argument("--plot-all and --disable-all-plots are mutually exclusive");
+    }
+
+    // The bamlet is opened for writing from scratch on every run and holds no record of which loci it
+    // already covers, so a resumed run would silently replace it with one holding only the loci that run
+    // genotyped. Rejecting the combination is better than handing back a bamlet that looks complete.
+    if (userParameters.resume && userParameters.enableBamletOutput)
+    {
+        throw std::invalid_argument(
+            "--resume and --enable-bamlet-output cannot be used together: the bamlet is rewritten from "
+            "scratch on each run, so a resumed run would produce one covering only the loci it genotyped");
     }
 
     // Validate analysis Mode:
@@ -550,7 +564,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences,
-        userParams.maxDepth, userParams.outputGenotypeTiming);
+        userParams.maxDepth, userParams.outputGenotypeTiming, userParams.resume, userParams.abortAfterLoci);
     programParameters.setGenotypeQualityModel(std::move(genotypeQualityModel));
     return programParameters;
 }

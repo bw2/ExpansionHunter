@@ -37,6 +37,18 @@ namespace ehunter
 
 using Json = nlohmann::json;
 
+// The exact bytes an IterativeJsonWriter emits before its first record: the opening brace, the
+// SampleParameters object, and the start of the LocusResults object. Shared with the --resume
+// checkpoint, which writes and re-writes documents in this same format (see io/ResumeCheckpoint.hh).
+std::string jsonDocumentHeader(const SampleParameters& sampleParams);
+
+// How a writer should attach to its output file.
+enum class JsonOutputMode
+{
+    kTruncate,          // create/overwrite the file and write the document header
+    kAppendAfterHeader, // open an existing partial document and continue after its last record
+};
+
 class IterativeJsonWriter
 {
 public:
@@ -44,13 +56,18 @@ public:
 		const std::string& outputFilePath, bool copyCatalogFields = false,
 		const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0,
 		int threadCount = 1, AnalysisMode analysisMode = AnalysisMode::kSeeking,
-		const std::string& commandLine = "");
+		const std::string& commandLine = "", JsonOutputMode outputMode = JsonOutputMode::kTruncate,
+		bool hasExistingRecords = false);
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
 
-	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
-    void addSkippedRecord(const std::string& locusId, const std::string& reason);
+	// capturedText, when non-null, receives the exact record bytes written (excluding the ", " separator
+	// that precedes every record but the first), so the --resume checkpoint can replay them verbatim.
+	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings,
+		std::string* capturedText = nullptr);
+    void addSkippedRecord(const std::string& locusId, const std::string& reason,
+        std::string* capturedText = nullptr);
     void close();  // Close the output file (idempotent)
 
 private:

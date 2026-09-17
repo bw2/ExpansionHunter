@@ -62,6 +62,8 @@ optional arguments.
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to
   annotate results without a separate join step.
+* `--resume` Make an interrupted run restartable. See [Resuming an interrupted
+  run](#resuming-an-interrupted-run) below.
 
 
 Note that the full list of program options with brief explanations can be
@@ -99,6 +101,54 @@ The output stays nearly identical to `streaming` mode.
 `optimized-streaming` mode uses a fast heuristic genotyper to identify loci that can be quickly genotyped using spanning reads. It then runs the full graph-based genotyper
 only on the subset of loci that appear to have larger expansions. This significantly speeds up analysis of large
 catalogs (> ~10k loci) since the majority of loci can be genotyped using only spanning reads. Memory usage is similar to `low-mem-streaming` mode.
+
+### Resuming an interrupted run
+
+A run that is killed part way through (an out-of-memory kill, a preempted machine, Ctrl-C, a crash)
+normally has to be started over from the first locus. Adding `--resume` makes it restartable:
+
+```bash
+ExpansionHunter --reads sample.cram --reference reference.fa --catalog catalog.json \
+  --output-prefix sample --analysis-mode optimized-streaming --threads 8 --resume
+```
+
+As each locus is genotyped it is recorded in three checkpoint files next to the output:
+
+| File | Contents |
+|------|----------|
+| `<output-prefix>.json[.gz].unfinished` | each finished locus's JSON record |
+| `<output-prefix>.vcf[.gz].unfinished`  | each finished locus's VCF lines |
+| `<output-prefix>.processed_loci.unfinished` | one finished locus per line, with how many records it wrote to each file above |
+
+All three are deleted once the final `.json` and `.vcf` files have been written, so a completed run
+leaves nothing extra behind. Re-running the same command with `--resume` picks up the checkpoint
+files, skips the loci they already contain, and genotypes only the rest. The final output is
+identical to what an uninterrupted run would have produced.
+
+Things worth knowing:
+
+* `--resume` only works with `--analysis-mode low-mem-streaming` and `optimized-streaming`, which
+  write their output as they go. `seeking` and `streaming` write everything only after the last
+  locus, so there is nothing to resume from; passing `--resume` there logs a warning and changes
+  nothing.
+* The resumed run must use the same catalog, reads, sample and output-affecting options as the
+  interrupted one. If they differ, ExpansionHunter stops with an error naming the option that
+  changed, rather than silently mixing results from two different runs. Delete the `.unfinished`
+  files (or use a different `--output-prefix`) to start over.
+* `--threads` may differ between the two runs, but keeping it the same recovers the most work: a
+  `--threads > 1` run finishes contigs independently, so resuming one with `--threads 1` can only
+  reuse the loci finished in catalog order from the start of the catalog.
+* Resuming skips the genotyping work, not the read scanning: the BAM/CRAM is still read from the
+  beginning. On large catalogs genotyping dominates, so this is still a large saving.
+* Checkpointing costs one extra write of each record, and the checkpoint files take about as much
+  disk as the output itself while the run is in progress.
+* Every `LocusId` in the catalog must be unique. Resume tells loci apart by their id, so a catalog with
+  duplicates is rejected with `--resume` (it already produces a colliding JSON record without it).
+* Keep `-z` the same across the interrupted run and its resume. The checkpoint file names carry the
+  output's `.gz` suffix; changing `-z` is detected and reported rather than silently starting over.
+* `--resume` cannot be combined with `--enable-bamlet-output`. The bamlet is rewritten from scratch
+  on every run and carries no record of which loci it covers, so a resumed run would replace it with
+  one holding only the loci that run genotyped.
 
 #### Known limitations of `low-mem-streaming` and `optimized-streaming`
 
