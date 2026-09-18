@@ -187,10 +187,32 @@ class ResumeTest(unittest.TestCase):
         self.assert_matches_baseline(prefix, args)
 
     def test_resume_across_a_change_in_thread_count(self):
+        # Any thread count above 1 can resume any other, because a slice is one contig either way.
         prefix = os.path.join(self.work_dir, "mixed_threads")
         self.run_eh(prefix, ["--threads", "3", "--resume", "--internal-abort-after-loci", "2"],
                     expect_success=False)
-        self.run_eh(prefix, ["--threads", "1", "--resume"])
+        self.run_eh(prefix, ["--threads", "2", "--resume"])
+        self.assert_matches_baseline(prefix)
+
+    def test_resuming_a_parallel_checkpoint_at_one_thread_never_destroys_it(self):
+        # One coordinate sweep cannot append to contigs finished out of order, so such a resume is refused
+        # rather than trimming the checkpoint down to the reusable part and destroying the rest. Which of
+        # the two cases arises depends on the order the workers happened to finish in, so both are allowed
+        # here; what must hold either way is that the checkpoint survives and --threads > 1 still works.
+        # The refusal itself is pinned down deterministically by ResumeTest in ehunter/tests/ResumeTest.cpp.
+        prefix = os.path.join(self.work_dir, "parallel_then_serial")
+        self.run_eh(prefix, ["--threads", "3", "--resume", "--internal-abort-after-loci", "2"],
+                    expect_success=False)
+        with open(prefix + ".processed_loci.unfinished") as f:
+            before = f.read()
+
+        result = self.run_eh(prefix, ["--threads", "1", "--resume"], expect_success=False)
+        if result.returncode != 0:
+            self.assertIn("Resume with --threads > 1", result.stdout + result.stderr)
+            with open(prefix + ".processed_loci.unfinished") as f:
+                self.assertEqual(f.read(), before, "a refused run must not have altered the checkpoint")
+            # The advice in that message has to actually work.
+            self.run_eh(prefix, ["--threads", "3", "--resume"])
         self.assert_matches_baseline(prefix)
 
     def test_resume_without_a_checkpoint_runs_normally(self):

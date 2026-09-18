@@ -297,19 +297,35 @@ TEST_F(ResumeTest, SingleSliceKeepsRecordsFromAnAscendingContigSweep)
     EXPECT_EQ(loaded.rebuiltSlices.count(kSingleSliceKey), 1u);
 }
 
-TEST_F(ResumeTest, SingleSliceDropsRecordsThatSkipAnUnfinishedContig)
+TEST_F(ResumeTest, SingleSliceRefusesRecordsThatSkipAnUnfinishedContig)
 {
     // A --threads > 1 checkpoint finishes contigs independently, so it can hold contig 1's locus while
     // contig 0 is still running. One coordinate sweep never produces that, and cannot append to it either:
     // it would emit contig 0's loci after records already sitting in the temp for contig 1.
     writeCheckpoint(testPaths(), { "L3", "L1", "L2" });  // contigs 1, 0, 0
 
-    const ResumeLoadResult loaded
-        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
+    EXPECT_THROW(
+        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false), std::runtime_error);
+}
 
-    EXPECT_TRUE(loaded.doneLocusIds.empty());
-    // The dropped loci are gone from the checkpoint too, so all three files agree on the finished set.
-    EXPECT_EQ(readFile(testPaths().processedLoci).find("L3"), std::string::npos);
+TEST_F(ResumeTest, RefusingASingleSliceResumeLeavesTheCheckpointIntact)
+{
+    // The refusal exists so the operator can re-run with --threads > 1 and keep everything, which only
+    // works if nothing was rewritten on the way out.
+    writeCheckpoint(testPaths(), { "L3", "L1", "L2" });  // contig 1 finished before contig 0
+    const std::string checkpointBefore = readFile(testPaths().processedLoci);
+    const std::string recordsBefore = readFile(testPaths().json);
+
+    EXPECT_THROW(
+        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false), std::runtime_error);
+
+    EXPECT_EQ(readFile(testPaths().processedLoci), checkpointBefore);
+    EXPECT_EQ(readFile(testPaths().json), recordsBefore);
+
+    // The same checkpoint is still fully usable per contig, which is what the error tells the operator.
+    const ResumeLoadResult loaded
+        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
+    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
 }
 
 TEST_F(ResumeTest, SingleSliceKeepsASweepThatFinishesEachContigBeforeMovingOn)

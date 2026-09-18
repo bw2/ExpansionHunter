@@ -26,6 +26,8 @@
 #include "io/VcfWriterHelpers.hh"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <sstream>
 #include <vector>
 
@@ -65,7 +67,7 @@ std::string vcfDocumentHeader(const std::string& sampleId)
 
 IterativeVcfWriter::IterativeVcfWriter(
     std::string sampleId, Reference& reference, const std::string& outputFile, VcfOutputMode outputMode)
-    : sampleId_(std::move(sampleId)), reference_(reference)
+    : sampleId_(std::move(sampleId)), reference_(reference), outputFilePath_(outputFile)
 {
     const bool append = outputMode == VcfOutputMode::kAppendAfterHeader;
     const std::ios::openmode openMode
@@ -155,9 +157,16 @@ void IterativeVcfWriter::close()
     closed_ = true;
     outStream_.flush();
     outStream_.reset();  // Ensure proper flushing of data (incl. gzip trailer if compressing)
+    outFile_.flush();
+    const bool failed = !outFile_;
     if (outFile_.is_open())
     {
         outFile_.close();
+    }
+    // As in IterativeJsonWriter::close: a silently truncated VCF would be merged as if complete.
+    if (failed || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
     }
 }
 

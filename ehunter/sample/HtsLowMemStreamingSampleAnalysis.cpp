@@ -1336,7 +1336,12 @@ void htsLowMemStreamingSampleAnalysis(
                     bamletWriter, farAwayMateDistanceThreshold, typicalReadLength, jsonWriter, vcfWriter, {},
                     counts, checkpointWriter.get());
             }
-        }  // the writers are closed here, so the temp files are complete documents before the merge below
+            // Closed explicitly (both calls are idempotent, so this is a no-op after doTheAnalysis has run)
+            // rather than left to the destructors, which have to swallow a write failure: the merge below
+            // would otherwise treat a truncated temp as a complete document.
+            jsonWriter.close();
+            vcfWriter.close();
+        }
 
         // Surface a checkpoint write failure before the output is declared finished.
         if (checkpointWriter)
