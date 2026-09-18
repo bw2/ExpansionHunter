@@ -109,12 +109,20 @@ When `--resume` finds existing checkpoint files (`htsLowMemStreamingSampleAnalys
 3. **Verify** it against the record files, truncating at the first locus whose declared records are
    missing (section 2.2).
 4. **Restrict to what this run's slices can append to** (`firstUnusableProcessedLocus`). Each slice's
-   rebuilt temp is appended to by a genotyping writer, which can only add records at the end, so within
-   a slice the finished loci must be a prefix of that slice's catalog loci, *in catalog order*. At
-   `--threads > 1` a slice is one contig; at `--threads 1` one slice covers every contig. This is what
-   makes resuming with a different `--threads` than the interrupted run safe: a `--threads > 1`
-   checkpoint is in completion order, which a single slice cannot append to, so only the leading run
-   that agrees with catalog order is kept and the rest is genotyped again.
+   rebuilt temp is appended to by a genotyping writer, which can only add records at the end, so what a
+   slice needs is that the finished loci are a prefix of *the order that slice emits records in*.
+
+   That order is **not** catalog order. A locus is released for genotyping once the reads pass the end of
+   its flank window, so a locus nested inside a wider one finishes first even though it comes second in
+   the position-sorted catalog. The checkpoint records the order the interrupted run emitted in, so within
+   one slice any leading run of it is already a valid prefix and nothing is checked: at `--threads > 1`,
+   where a slice is one contig, every entry is reusable.
+
+   What does need checking is the slice layout changing between runs. At `--threads 1` one slice covers
+   every contig in a single coordinate sweep, so its rebuilt temp must be a prefix of that sweep: a contig
+   may only be left behind once every one of its loci is finished. A `--threads > 1` checkpoint generally
+   fails that (it can finish chr3 while chr1 is still running) and is cut at the first entry that breaks
+   it.
 5. Rewrite all three checkpoint files to the surviving set, via a sibling temp plus rename, so they
    agree exactly and later appends start from a clean stream.
 6. Rebuild the genotyping temps from the kept records: `<prefix>.contig<N>.{json,vcf}` at
@@ -146,7 +154,8 @@ suffix, so flipping `-z` would otherwise look like "no checkpoint here" and quie
 
 `--threads` is deliberately **not** part of the signature. Temp files are keyed by contig index rather
 than by worker, and step 4 above makes a thread-count change safe, so a `--threads 8` run can be
-resumed with `--threads 2`.
+resumed with `--threads 2`. Going the other way, from `--threads > 1` down to `--threads 1`, is safe but
+recovers little: a single sweep can only reuse the finished contigs at the very start of the catalog.
 
 ### 2.6 Finalization
 
@@ -175,8 +184,11 @@ uninterrupted run, and the tests assert it.
 - `--enable-bamlet-output` is rejected with `--resume`: the bamlet is opened with `hts_open(path,
   "wb")` on every run and carries no record of which loci it covers, so a resumed run would replace it
   with one holding only that run's loci.
-- At `--threads > 1` every record is written three times over the run (per-contig temp, checkpoint,
-  final merge), and peak disk is roughly two copies of the output plus the temps.
+- Every record is written three times over the run (per-slice temp, checkpoint, final merge). At
+  `--threads > 1` the per-slice temps are the per-contig files the merge already used; at `--threads 1`,
+  `--resume` adds one temp covering the whole output, where without it the writers went straight to the
+  final files. The temps are never compressed, so under `-z` the peak extra disk is roughly one
+  uncompressed copy of the output plus one compressed copy.
 - A run that fails after writing checkpoint files and is then re-run *without* `--resume` leaves the
   `.unfinished` and `.resume_part.*` files behind; they are only cleaned up by a completing `--resume`
   run.

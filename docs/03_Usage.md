@@ -140,8 +140,11 @@ Things worth knowing:
   reuse the loci finished in catalog order from the start of the catalog.
 * Resuming skips the genotyping work, not the read scanning: the BAM/CRAM is still read from the
   beginning. On large catalogs genotyping dominates, so this is still a large saving.
-* Checkpointing costs one extra write of each record, and the checkpoint files take about as much
-  disk as the output itself while the run is in progress.
+* Checkpointing costs one extra write of each record, and needs extra disk while the run is in
+  progress: the checkpoint files (compressed if `-z` is used), plus the per-slice temp files, which are
+  **never compressed**. At `--threads > 1` those temps are the per-contig files the merge already used
+  before `--resume` existed; at `--threads 1`, `--resume` adds one covering the whole output. So with
+  `-z` the peak extra disk is roughly one uncompressed copy of the output plus one compressed copy.
 * Every `LocusId` in the catalog must be unique. Resume tells loci apart by their id, so a catalog with
   duplicates is rejected with `--resume` (it already produces a colliding JSON record without it).
 * Keep `-z` the same across the interrupted run and its resume. The checkpoint file names carry the

@@ -30,6 +30,7 @@
 
 #include "core/Common.hh"
 #include "core/Parameters.hh"
+#include "thirdparty/json/json.hpp"
 #include "locus/LocusSpecification.hh"
 
 using namespace ehunter;
@@ -265,67 +266,61 @@ TEST_F(ResumeTest, GzippedCheckpointsRoundTripThroughSeveralAppends)
     EXPECT_NE(readFile(contigTempJsonPath(kTestPrefix, 0)).find("\"L2\""), std::string::npos);
 }
 
-TEST_F(ResumeTest, PerContigSlicesKeepOnlyEachContigsFinishedPrefix)
+TEST_F(ResumeTest, PerContigSlicesKeepRecordsThatFinishedOutOfCatalogOrder)
 {
-    // L3 is on its own contig, so it stands alone; L2 arriving before L1 on contig 0 would put that
-    // contig's rebuilt temp out of coordinate order, so L2 (and anything after it) is genotyped again.
-    writeCheckpoint(testPaths(), { "L3", "L2" });
+    // A locus is released for genotyping once the reads pass the end of its flank window, so a locus nested
+    // inside a wider one finishes first even though it comes second in the position-sorted catalog. The
+    // checkpoint records the order the run actually emitted in, and appending to a rebuilt temp only needs
+    // that order, so nothing here may be discarded.
+    writeCheckpoint(testPaths(), { "L2", "L1" });
 
     const ResumeLoadResult loaded
         = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
 
-    EXPECT_EQ(loaded.doneLocusIds.size(), 1u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L3"), 1u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(0), 0u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(1), 1u);
+    EXPECT_EQ(loaded.doneLocusIds.size(), 2u);
+    // The rebuilt temp has to preserve the emission order, not re-sort into catalog order: the genotyping
+    // writer appends after these, and an uninterrupted run would have emitted them in this same order.
+    const std::string contig0Json = readFile(contigTempJsonPath(kTestPrefix, 0));
+    EXPECT_LT(contig0Json.find("\"L2\""), contig0Json.find("\"L1\""));
 }
 
-TEST_F(ResumeTest, SingleSliceKeepsOnlyTheFinishedCatalogPrefix)
+TEST_F(ResumeTest, SingleSliceKeepsRecordsFromAnAscendingContigSweep)
 {
-    // A --threads > 1 run can finish L3 while L2 is still outstanding. One slice covering every contig has
-    // to stay in genomic order, so only the L1 prefix can be kept.
-    writeCheckpoint(testPaths(), { "L1", "L3" });
+    // One slice covers every contig in one coordinate sweep, which is what a --threads 1 checkpoint is:
+    // its contigs only ever move forwards, whatever the order within each of them.
+    writeCheckpoint(testPaths(), { "L2", "L1", "L3" });
 
     const ResumeLoadResult loaded
         = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
 
-    EXPECT_EQ(loaded.doneLocusIds.size(), 1u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L1"), 1u);
-    EXPECT_EQ(loaded.rebuiltSlices.size(), 1u);
+    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
     EXPECT_EQ(loaded.rebuiltSlices.count(kSingleSliceKey), 1u);
-
-    const std::string sliceJson = readFile(singleSliceTempJsonPath(kTestPrefix));
-    EXPECT_NE(sliceJson.find("\"L1\""), std::string::npos);
-    EXPECT_EQ(sliceJson.find("\"L3\""), std::string::npos);
-    // The dropped locus is gone from the checkpoint too, so all three files agree on the finished set.
-    EXPECT_EQ(readFile(testPaths().processedLoci).find("L3"), std::string::npos);
 }
 
-TEST_F(ResumeTest, SingleSliceRejectsFinishedLociThatAreAPrefixButOutOfOrder)
+TEST_F(ResumeTest, SingleSliceDropsRecordsThatSkipAnUnfinishedContig)
 {
-    // The finished set {L1, L2, L3} is a catalog prefix, but a --threads > 1 run can write them in any
-    // order. Appending to a single slice needs the order too, so only the leading agreeing run is kept.
-    writeCheckpoint(testPaths(), { "L3", "L1", "L2" });
+    // A --threads > 1 checkpoint finishes contigs independently, so it can hold contig 1's locus while
+    // contig 0 is still running. One coordinate sweep never produces that, and cannot append to it either:
+    // it would emit contig 0's loci after records already sitting in the temp for contig 1.
+    writeCheckpoint(testPaths(), { "L3", "L1", "L2" });  // contigs 1, 0, 0
 
     const ResumeLoadResult loaded
         = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
 
     EXPECT_TRUE(loaded.doneLocusIds.empty());
-    EXPECT_TRUE(loaded.rebuiltSlices.empty());
-    EXPECT_FALSE(loaded.hasExistingJsonRecords);
+    // The dropped loci are gone from the checkpoint too, so all three files agree on the finished set.
+    EXPECT_EQ(readFile(testPaths().processedLoci).find("L3"), std::string::npos);
 }
 
-TEST_F(ResumeTest, SingleSliceKeepsEverythingWhenTheFinishedLociAreAlreadyAPrefix)
+TEST_F(ResumeTest, SingleSliceKeepsASweepThatFinishesEachContigBeforeMovingOn)
 {
+    // L1 and L2 are all of contig 0, so the sweep may move on to contig 1's L3; every entry is reusable.
     writeCheckpoint(testPaths(), { "L1", "L2", "L3" });
 
     const ResumeLoadResult loaded
         = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
 
     EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
-    const std::string sliceJson = readFile(singleSliceTempJsonPath(kTestPrefix));
-    EXPECT_LT(sliceJson.find("\"L1\""), sliceJson.find("\"L2\""));
-    EXPECT_LT(sliceJson.find("\"L2\""), sliceJson.find("\"L3\""));
 }
 
 TEST_F(ResumeTest, ALocusMissingFromTheCatalogIsRejected)
@@ -445,6 +440,46 @@ TEST_F(ResumeTest, CorruptedGzipDataIsRejectedRatherThanPartlyTrusted)
 
     EXPECT_THROW(loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true),
         ResumeCheckpointCorruptError);
+}
+
+TEST_F(ResumeTest, AnOversizedRunSignatureIsStillReadable)
+{
+    // The signature quotes options verbatim, so a long --locus list makes it far larger than any fixed
+    // read window. Failing to read it back would discard the whole checkpoint on every resume.
+    nlohmann::json signature;
+    signature["Catalog"] = "catalog.json";
+    signature["Locus"] = std::string(200 * 1024, 'x');
+    const std::string signatureText = signature.dump(2);
+
+    {
+        ResumeCheckpointWriter writer(testPaths(), sampleParams_, signatureText, false, false, 0);
+        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
+        writer.close();
+    }
+
+    EXPECT_EQ(describeSignatureMismatch(signatureText, readCheckpointRunSignature(testPaths())), "");
+}
+
+TEST_F(ResumeTest, RewritingACheckpointLeavesItsSignatureUnchanged)
+{
+    // loadResumeCheckpoint rewrites the header using the signature it just read, so anything that is not
+    // idempotent there (re-indenting it, say) would compound on every successive resume.
+    const std::string signatureText = R"({
+  "Catalog": "catalog.json",
+  "SampleId": "sample"
+})";
+    {
+        ResumeCheckpointWriter writer(testPaths(), sampleParams_, signatureText, false, false, 0);
+        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
+        writer.close();
+    }
+
+    const std::string afterFirstWrite = readCheckpointRunSignature(testPaths());
+    for (int resumeCount = 0; resumeCount != 3; ++resumeCount)
+    {
+        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
+        EXPECT_EQ(readCheckpointRunSignature(testPaths()), afterFirstWrite);
+    }
 }
 
 TEST_F(ResumeTest, CompletedLociAreRemovedFromTheCatalog)
