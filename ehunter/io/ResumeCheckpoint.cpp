@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -634,24 +635,60 @@ std::string checkpointJsonHeader(const SampleParameters& sampleParams, const std
 // The ResumeInfo object stored in a checkpoint's header, as JSON text.
 std::string readRunSignatureFromFile(const std::string& jsonCheckpointPath, bool compressed)
 {
-    const std::size_t kHeaderReadSize = 64 * 1024;
-    TolerantInput input(jsonCheckpointPath, compressed);
-    std::vector<char> chunk(kHeaderReadSize);
-    const std::size_t bytesRead = input.read(chunk.data(), kHeaderReadSize);
-    const std::string header(chunk.data(), bytesRead);
+    // Read the header in growing chunks rather than one fixed window: the signature quotes options
+    // verbatim, and a long --locus list makes it far bigger than any window picked up front. Getting this
+    // wrong would not be subtle, since failing to read the signature discards the whole checkpoint.
+    const std::size_t kReadChunk = 64 * 1024;
+    const std::size_t kMaxHeaderSize = 64u * 1024 * 1024;
 
-    const std::size_t markerPos = header.find(kResumeInfoMarker);
-    if (markerPos == std::string::npos)
+    TolerantInput input(jsonCheckpointPath, compressed);
+    std::string header;
+    std::vector<char> chunk(kReadChunk);
+    std::size_t objectStart = std::string::npos;
+    std::size_t objectEnd = std::string::npos;
+
+    while (true)
     {
-        throw ResumeCheckpointCorruptError("no ResumeInfo record in " + jsonCheckpointPath);
+        const std::size_t bytesRead = input.read(chunk.data(), kReadChunk);
+        if (bytesRead > 0)
+        {
+            header.append(chunk.data(), bytesRead);
+        }
+
+        const std::size_t markerPos = header.find(kResumeInfoMarker);
+        if (markerPos != std::string::npos)
+        {
+            objectStart = markerPos + std::strlen(kResumeInfoMarker);
+            objectEnd = findObjectEnd(header, objectStart);
+            if (objectEnd != std::string::npos)
+            {
+                break;
+            }
+        }
+
+        if (bytesRead == 0)
+        {
+            throw ResumeCheckpointCorruptError(
+                (markerPos == std::string::npos ? "no ResumeInfo record in " : "truncated ResumeInfo record in ")
+                + jsonCheckpointPath);
+        }
+        if (header.size() >= kMaxHeaderSize)
+        {
+            throw ResumeCheckpointCorruptError("ResumeInfo record is implausibly large in " + jsonCheckpointPath);
+        }
     }
-    const std::size_t objectStart = markerPos + std::strlen(kResumeInfoMarker);
-    const std::size_t objectEnd = findObjectEnd(header, objectStart);
-    if (objectEnd == std::string::npos)
+
+    // Re-serialize rather than returning the stored text: checkpointJsonHeader indents whatever it is
+    // given, and this same text is handed back to it when the checkpoint is rewritten, so returning it
+    // as-is would add two more spaces to every line on each successive resume.
+    try
     {
-        throw ResumeCheckpointCorruptError("truncated ResumeInfo record in " + jsonCheckpointPath);
+        return Json::parse(header.substr(objectStart, objectEnd - objectStart)).dump(2);
     }
-    return header.substr(objectStart, objectEnd - objectStart);
+    catch (const std::exception&)
+    {
+        throw ResumeCheckpointCorruptError("unparseable ResumeInfo record in " + jsonCheckpointPath);
+    }
 }
 
 // One processed_loci entry: a finished locus and how many records it wrote to each file, as
@@ -717,38 +754,73 @@ std::vector<ProcessedLocus> readProcessedLoci(const std::string& path)
     return processedLoci;
 }
 
-// Index of the first processed-loci entry that cannot be reused. Each slice's rebuilt temp file is
-// appended to by the genotyping writer, which can only add records at the end, so within a slice the
-// finished loci must be a prefix of that slice's catalog loci, in catalog order. Anything from the first
-// entry that breaks that has to be genotyped again.
+// Index of the first processed-loci entry that cannot be reused, given how this run slices its output.
 //
-// The check matters when a run is resumed with a different --threads setting than the one that wrote the
-// checkpoint: --threads > 1 finishes contigs independently, so its checkpoint is in completion order, which
-// a single slice covering every contig cannot append to.
+// Each slice's rebuilt temp is appended to by a genotyping writer, which can only add records at the end,
+// so what a slice needs is that the finished loci are a *prefix of the order that slice emits records in*.
+// That is not catalog order: a locus is released for genotyping once the reads pass the end of its flank
+// window, so a locus nested inside a wider one finishes first even though it comes second in the
+// position-sorted catalog. The checkpoint records the order the interrupted run emitted in, so within one
+// slice any leading run of it is by construction a valid prefix and nothing needs checking.
+//
+// What does need checking is the slice layout changing between the two runs. At --threads > 1 a slice is
+// one contig, and a contig's entries keep their relative order no matter which run wrote them, so every
+// entry is reusable. At --threads 1 a single slice covers every contig in one coordinate sweep, so its
+// rebuilt temp has to be a prefix of that sweep: contigs may only move forwards, and a contig may only be
+// left behind once every one of its loci is finished. A --threads > 1 checkpoint generally fails that (it
+// can finish chr3 while chr1 is still running), and is cut at the first entry that breaks it.
 std::size_t firstUnusableProcessedLocus(
     const std::vector<ProcessedLocus>& processedLoci, const LocusDescriptionCatalog& catalog,
     const std::unordered_map<std::string, std::int32_t>& contigOfLocus, bool perContig)
 {
-    std::map<std::int32_t, std::vector<const std::string*>> lociForSlice;
-    for (const LocusDescription& locusDescription : catalog)
+    if (perContig)
     {
-        const std::int32_t key = perContig ? locusDescription.locusContigIndex() : kSingleSliceKey;
-        lociForSlice[key].push_back(&locusDescription.locusId());
+        return processedLoci.size();
     }
 
-    std::map<std::int32_t, std::size_t> nextIndexForSlice;
-    for (std::size_t i = 0; i != processedLoci.size(); ++i)
+    std::map<std::int32_t, std::size_t> lociPerContig;
+    for (const LocusDescription& locusDescription : catalog)
     {
-        const std::int32_t key = perContig ? contigOfLocus.at(processedLoci[i].locusId) : kSingleSliceKey;
-        const std::vector<const std::string*>& sliceLoci = lociForSlice[key];
-        std::size_t& nextIndex = nextIndexForSlice[key];
-        if (nextIndex >= sliceLoci.size() || *sliceLoci[nextIndex] != processedLoci[i].locusId)
-        {
-            return i;
-        }
-        ++nextIndex;
+        ++lociPerContig[locusDescription.locusContigIndex()];
     }
-    return processedLoci.size();
+
+    std::vector<std::int32_t> contigsWithLoci;
+    contigsWithLoci.reserve(lociPerContig.size());
+    for (const auto& contigAndCount : lociPerContig)
+    {
+        contigsWithLoci.push_back(contigAndCount.first);
+    }
+
+    std::map<std::int32_t, std::size_t> finishedPerContig;
+    // Index into contigsWithLoci of the first contig that is not yet fully finished; everything before it
+    // is complete, which is what lets the sweep move past those contigs.
+    std::size_t firstUnfinishedContig = 0;
+    auto advanceFirstUnfinishedContig = [&]() {
+        while (firstUnfinishedContig < contigsWithLoci.size()
+            && finishedPerContig[contigsWithLoci[firstUnfinishedContig]]
+                == lociPerContig[contigsWithLoci[firstUnfinishedContig]])
+        {
+            ++firstUnfinishedContig;
+        }
+    };
+    advanceFirstUnfinishedContig();
+
+    std::size_t usableCount = 0;
+    for (const ProcessedLocus& processedLocus : processedLoci)
+    {
+        const std::int32_t contigIndex = contigOfLocus.at(processedLocus.locusId);
+        const std::size_t contigPosition = static_cast<std::size_t>(std::distance(contigsWithLoci.begin(),
+            std::lower_bound(contigsWithLoci.begin(), contigsWithLoci.end(), contigIndex)));
+        // The sweep can only be working on the earliest contig that still has unfinished loci.
+        if (contigPosition != firstUnfinishedContig)
+        {
+            break;
+        }
+        ++finishedPerContig[contigIndex];
+        advanceFirstUnfinishedContig();
+        ++usableCount;
+    }
+    return usableCount;
 }
 
 void renameOver(const std::string& from, const std::string& to)
@@ -1166,15 +1238,15 @@ ResumeLoadResult loadResumeCheckpoint(
     }
 
     // Keep only what this run's slices can actually be appended to (see firstUnusableProcessedLocus). This
-    // is a no-op when the checkpoint is resumed with the same --threads setting that wrote it.
+    // is a no-op unless a --threads > 1 checkpoint is being resumed at --threads 1.
     const std::size_t usableCount
         = firstUnusableProcessedLocus(processedLoci, catalog, contigOfLocus, demultiplexPerContig);
     if (usableCount < processedLoci.size())
     {
         spdlog::warn(
-            "Resume: {} of the {} finished loci were genotyped out of catalog order for this run's --threads "
-            "setting and will be genotyped again; resuming with the same --threads as the interrupted run "
-            "would keep them",
+            "Resume: {} of the {} finished loci came from a run that genotyped contigs in parallel, which a "
+            "--threads 1 run cannot append to in one coordinate sweep, so they will be genotyped again; "
+            "resuming with --threads > 1 would keep them",
             add_commas_at_thousands(processedLoci.size() - usableCount),
             add_commas_at_thousands(processedLoci.size()));
         processedLoci.resize(usableCount);
