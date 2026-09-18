@@ -68,10 +68,13 @@ public:
 		std::string* capturedText = nullptr);
     void addSkippedRecord(const std::string& locusId, const std::string& reason,
         std::string* capturedText = nullptr);
-    void close();  // Close the output file (idempotent)
+    // Close the output file (idempotent). Throws if any of the writing failed, so a truncated output is
+    // never mistaken for a complete one; the destructor swallows that, an explicit call propagates it.
+    void close();
 
 private:
     const ReferenceContigInfo& contigInfo_;
+    std::string outputFilePath_;
     std::ofstream outFile_;
     boost::iostreams::filtering_ostream outStream_;
     bool firstRecord_;

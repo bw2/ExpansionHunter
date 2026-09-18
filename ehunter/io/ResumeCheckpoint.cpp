@@ -765,10 +765,12 @@ std::vector<ProcessedLocus> readProcessedLoci(const std::string& path)
 //
 // What does need checking is the slice layout changing between the two runs. At --threads > 1 a slice is
 // one contig, and a contig's entries keep their relative order no matter which run wrote them, so every
-// entry is reusable. At --threads 1 a single slice covers every contig in one coordinate sweep, so its
-// rebuilt temp has to be a prefix of that sweep: contigs may only move forwards, and a contig may only be
-// left behind once every one of its loci is finished. A --threads > 1 checkpoint generally fails that (it
-// can finish chr3 while chr1 is still running), and is cut at the first entry that breaks it.
+// entry is reusable and this returns the full count. At --threads 1 a single slice covers every contig in
+// one coordinate sweep, so its rebuilt temp has to be a prefix of that sweep: contigs may only move
+// forwards, and a contig may only be left behind once every one of its loci is finished. A --threads > 1
+// checkpoint generally fails that (it can finish chr3 while chr1 is still running), and then this returns
+// a count smaller than the list; loadResumeCheckpoint treats that as a refusal and stops before rewriting
+// any file, rather than trimming away work the operator can still use by re-running with --threads > 1.
 std::size_t firstUnusableProcessedLocus(
     const std::vector<ProcessedLocus>& processedLoci, const LocusDescriptionCatalog& catalog,
     const std::unordered_map<std::string, std::int32_t>& contigOfLocus, bool perContig)
@@ -1237,19 +1239,24 @@ ResumeLoadResult loadResumeCheckpoint(
         processedLoci.resize(verifiedCount);
     }
 
-    // Keep only what this run's slices can actually be appended to (see firstUnusableProcessedLocus). This
-    // is a no-op unless a --threads > 1 checkpoint is being resumed at --threads 1.
+    // Check that this run's slices can actually be appended to (see firstUnusableProcessedLocus) before
+    // rewriting anything. This only bites when a --threads > 1 checkpoint is resumed at --threads 1, whose
+    // single coordinate sweep cannot append to contigs finished out of order.
+    //
+    // Refusing rather than trimming is the point: the rewrite below would cut the checkpoint files down to
+    // the reusable part, destroying the rest of an interrupted run's work for good. Telling the operator to
+    // re-run with --threads > 1 keeps every finished locus, and is useless advice if the records are already
+    // gone by the time they read it.
     const std::size_t usableCount
         = firstUnusableProcessedLocus(processedLoci, catalog, contigOfLocus, demultiplexPerContig);
     if (usableCount < processedLoci.size())
     {
-        spdlog::warn(
-            "Resume: {} of the {} finished loci came from a run that genotyped contigs in parallel, which a "
-            "--threads 1 run cannot append to in one coordinate sweep, so they will be genotyped again; "
-            "resuming with --threads > 1 would keep them",
-            add_commas_at_thousands(processedLoci.size() - usableCount),
-            add_commas_at_thousands(processedLoci.size()));
-        processedLoci.resize(usableCount);
+        throw std::runtime_error(
+            "--resume: this checkpoint holds " + add_commas_at_thousands(processedLoci.size())
+            + " finished loci from a run that genotyped contigs in parallel, and only "
+            + add_commas_at_thousands(usableCount)
+            + " of them can be appended to in the single coordinate sweep --threads 1 uses. Resume with "
+            "--threads > 1 to keep all of them, or delete the .unfinished files to start over.");
     }
 
     for (const ProcessedLocus& processedLocus : processedLoci)

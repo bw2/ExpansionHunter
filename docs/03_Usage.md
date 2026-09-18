@@ -135,9 +135,12 @@ Things worth knowing:
   interrupted one. If they differ, ExpansionHunter stops with an error naming the option that
   changed, rather than silently mixing results from two different runs. Delete the `.unfinished`
   files (or use a different `--output-prefix`) to start over.
-* `--threads` may differ between the two runs, but keeping it the same recovers the most work: a
-  `--threads > 1` run finishes contigs independently, so resuming one with `--threads 1` can only
-  reuse the loci finished in catalog order from the start of the catalog.
+* `--threads` may differ between the two runs, with one exception. A `--threads 1` run can be resumed
+  with any thread count, and a `--threads > 1` run with any count above 1; every finished locus is
+  reused. Only resuming a `--threads > 1` run with `--threads 1` is refused, and only when that run
+  finished contigs out of order (it usually has), since one coordinate sweep cannot append to that. The
+  run then stops with an error and leaves the checkpoint untouched, so re-running with `--threads > 1`
+  still recovers everything.
 * Resuming skips the genotyping work, not the read scanning: the BAM/CRAM is still read from the
   beginning. On large catalogs genotyping dominates, so this is still a large saving.
 * Checkpointing costs one extra write of each record, and needs extra disk while the run is in

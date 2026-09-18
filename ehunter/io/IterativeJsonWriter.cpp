@@ -21,6 +21,8 @@
 
 #include "io/IterativeJsonWriter.hh"
 
+#include <cerrno>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -69,6 +71,7 @@ IterativeJsonWriter::IterativeJsonWriter(
     JsonOutputMode outputMode,
     bool hasExistingRecords)
     : contigInfo_(contigInfo)
+    , outputFilePath_(outputFilePath)
     , firstRecord_(outputMode == JsonOutputMode::kTruncate || !hasExistingRecords)
     , copyCatalogFields_(copyCatalogFields)
     , qualityModel_(qualityModel)
@@ -219,9 +222,17 @@ void IterativeJsonWriter::close()
     outStream_ << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
     outStream_.flush();
     outStream_.reset();
+    outFile_.flush();
+    const bool failed = !outFile_;
     if (outFile_.is_open())
     {
         outFile_.close();
+    }
+    // A write that silently failed (a full disk, most likely) would leave a truncated document that the
+    // end-of-run merge would accept as complete, quietly dropping the loci it could not write.
+    if (failed || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
     }
 }
 

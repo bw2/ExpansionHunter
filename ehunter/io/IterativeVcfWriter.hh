@@ -96,11 +96,14 @@ public:
     // unordered_map, so the variants are sorted by referenceLocus before output to keep the VCF position-sorted.
     void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings,
         std::string* capturedText = nullptr);
-    void close();  // Close output file (idempotent)
+    // Close the output file (idempotent). Throws if any of the writing failed, so a truncated output is
+    // never mistaken for a complete one; the destructor swallows that, an explicit call propagates it.
+    void close();
 
 private:
     std::string sampleId_;
     Reference& reference_;
+    std::string outputFilePath_;
 
     std::ofstream outFile_;
     boost::iostreams::filtering_ostream outStream_;

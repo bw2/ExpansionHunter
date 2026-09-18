@@ -121,8 +121,10 @@ When `--resume` finds existing checkpoint files (`htsLowMemStreamingSampleAnalys
    What does need checking is the slice layout changing between runs. At `--threads 1` one slice covers
    every contig in a single coordinate sweep, so its rebuilt temp must be a prefix of that sweep: a contig
    may only be left behind once every one of its loci is finished. A `--threads > 1` checkpoint generally
-   fails that (it can finish chr3 while chr1 is still running) and is cut at the first entry that breaks
-   it.
+   fails that (it can finish chr3 while chr1 is still running), and such a resume is **refused before any
+   file is rewritten**. Trimming instead would cut the checkpoint down to the reusable part, destroying the
+   rest of the interrupted run's work for good, and the advice to re-run with `--threads > 1` would be
+   useless by the time it was read.
 5. Rewrite all three checkpoint files to the surviving set, via a sibling temp plus rename, so they
    agree exactly and later appends start from a clean stream.
 6. Rebuild the genotyping temps from the kept records: `<prefix>.contig<N>.{json,vcf}` at
@@ -153,9 +155,10 @@ entries collide into one record even without `--resume`). And a checkpoint writt
 suffix, so flipping `-z` would otherwise look like "no checkpoint here" and quietly start over.
 
 `--threads` is deliberately **not** part of the signature. Temp files are keyed by contig index rather
-than by worker, and step 4 above makes a thread-count change safe, so a `--threads 8` run can be
-resumed with `--threads 2`. Going the other way, from `--threads > 1` down to `--threads 1`, is safe but
-recovers little: a single sweep can only reuse the finished contigs at the very start of the catalog.
+than by worker, so a `--threads 1` checkpoint is reusable at any thread count, and a `--threads > 1`
+checkpoint at any count above 1: a `--threads 8` run can be resumed with `--threads 2`. The one
+combination step 4 refuses is a `--threads > 1` checkpoint resumed at `--threads 1`, and only when that
+run actually finished contigs out of order.
 
 ### 2.6 Finalization
 

@@ -273,7 +273,12 @@ void assertValidity(const UserParameters& userParameters)
     // The bamlet is opened for writing from scratch on every run and holds no record of which loci it
     // already covers, so a resumed run would silently replace it with one holding only the loci that run
     // genotyped. Rejecting the combination is better than handing back a bamlet that looks complete.
-    if (userParameters.resume && userParameters.enableBamletOutput)
+    //
+    // Only for the modes that actually checkpoint: elsewhere --resume is a documented no-op that just logs
+    // a warning, so there is nothing for the bamlet to conflict with and refusing the run would be noise.
+    const bool resumeCheckpointsThisMode = userParameters.analysisMode == "low-mem-streaming"
+        || userParameters.analysisMode == "optimized-streaming";
+    if (userParameters.resume && resumeCheckpointsThisMode && userParameters.enableBamletOutput)
     {
         throw std::invalid_argument(
             "--resume and --enable-bamlet-output cannot be used together: the bamlet is rewritten from "
