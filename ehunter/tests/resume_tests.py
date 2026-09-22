@@ -8,7 +8,7 @@ Everything the tests need is in the repo: the fixture under
 ``ehunter/tests/data/parallel_processing_fixtures`` is a 5-contig synthetic reference with 4
 loci, so no external reference genome or read data is required.
 
-Run with:  python3 -m unittest resume_tests -v
+Run from the repo root with:  python3 ehunter/tests/resume_tests.py -v
 """
 
 import glob
@@ -21,8 +21,9 @@ import tempfile
 import unittest
 
 
-REPO_DIR = os.path.dirname(os.path.abspath(__file__))
-FIXTURE_DIR = os.path.join(REPO_DIR, "ehunter", "tests", "data", "parallel_processing_fixtures")
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+EHUNTER_DIR = os.path.dirname(TESTS_DIR)
+FIXTURE_DIR = os.path.join(TESTS_DIR, "data", "parallel_processing_fixtures")
 
 
 def is_sanitizer_build(binary_path):
@@ -49,7 +50,7 @@ def binary_candidates():
     """
     if os.environ.get("EH_BINARY"):
         return [os.environ["EH_BINARY"]]
-    paths = glob.glob(os.path.join(REPO_DIR, "ehunter", "build*", "ExpansionHunter"))
+    paths = glob.glob(os.path.join(EHUNTER_DIR, "build*", "ExpansionHunter"))
     return sorted(paths, key=os.path.getmtime, reverse=True)
 
 
