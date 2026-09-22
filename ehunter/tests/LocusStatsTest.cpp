@@ -22,6 +22,7 @@
 #include "core/LocusStats.hh"
 
 #include "gtest/gtest.h"
+#include <htslib/sam.h>
 
 #include "graphalign/GraphAlignmentOperations.hh"
 #include "graphcore/GraphBuilders.hh"
@@ -162,6 +163,32 @@ TEST(LocusStatsCalculatorFromReadAlignments, FlankBoundaries_AreHalfOpen)
         ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
     lastLeftFlankBaseCalculator.inspect(makeReadPair("lastLeftFlankBase", 50, 999, 999));
     EXPECT_NEAR(50.0 * 2 / 150, lastLeftFlankBaseCalculator.estimate(Sex::kFemale).depth(), 1e-9);
+}
+
+TEST(LocusStatsCalculatorFromReadAlignments, LeadingSoftClip_ReadPlacedAtItsFirstBase)
+{
+    // A read from an expanded allele: its first 30 bases are repeat sequence the aligner soft-clipped, so
+    // BAM POS is 1040 (in the right flank) but the read's first base sits at 1010, inside the repeat. Placed
+    // by POS it would count as right-flank-anchored, and such reads only exist for alleles longer than the
+    // reference.
+    const auto cigarOp = [](int length, int op) { return (static_cast<uint32_t>(length) << BAM_CIGAR_SHIFT) | op; };
+
+    LocusStatsCalculatorFromReadAlignments statsCalculator(
+        ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
+    FullReadPair clippedPair = makeReadPair("clippedIntoRepeat", 50, 950, 1040);
+    clippedPair.secondMate->s.cigar = { cigarOp(30, BAM_CSOFT_CLIP), cigarOp(20, BAM_CMATCH) };
+    statsCalculator.inspect(clippedPair);
+    EXPECT_NEAR(50.0 * 1 / 150, statsCalculator.estimate(Sex::kFemale).depth(), 1e-9);
+
+    // A hard clip before the soft clip does not change that, and a read whose soft-clipped bases still
+    // start in the flank stays counted.
+    LocusStatsCalculatorFromReadAlignments flankClipCalculator(
+        ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
+    FullReadPair flankClippedPair = makeReadPair("clippedInFlank", 50, 950, 1060);
+    flankClippedPair.secondMate->s.cigar
+        = { cigarOp(5, BAM_CHARD_CLIP), cigarOp(10, BAM_CSOFT_CLIP), cigarOp(40, BAM_CMATCH) };
+    flankClipCalculator.inspect(flankClippedPair);
+    EXPECT_NEAR(50.0 * 2 / 150, flankClipCalculator.estimate(Sex::kFemale).depth(), 1e-9);
 }
 
 TEST(LocusStatsCalculatorFromReadAlignments, ReadsExtendingPastTheLocusWindow_NotCounted)
