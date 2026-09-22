@@ -140,10 +140,9 @@ Things worth knowing:
 * `--resume` does not work with `seeking` or `streaming` mode. Those modes write everything only
   after the last locus, so there is nothing to resume from; passing `--resume` with them is an
   error, and the run stops before doing anything.
-* The resumed run must use the same catalog, reads, sample and output-affecting options as the
-  interrupted one. If they differ, ExpansionHunter stops with an error naming the option that
-  changed, rather than silently mixing results from two different runs. Delete
-  `<output-prefix>.processed_loci.txt` (or use a different `--output-prefix`) to start over.
+* The resumed run must use the same catalog, reads, reference, sample, ExpansionHunter build and
+  output-affecting options as the interrupted one. Otherwise, ExpansionHunter stops with an error.
+  Delete `<output-prefix>.processed_loci.txt` (or use a different `--output-prefix`) to start over.
 * Resuming skips the genotyping work, not the read scanning: the BAM/CRAM is still read from the
   beginning. On large catalogs genotyping dominates, so this is still a large saving.
 * While the run is in progress, the temp files take roughly one uncompressed copy of the output on
