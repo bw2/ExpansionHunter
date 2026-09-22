@@ -5,7 +5,9 @@ information about repeat's location and genotype. The records for non hom-ref
 repeats are demarcated by `<STRn>` symbolic alleles where `n` is the number of
 repeat units that the corresponding allele spans.
 
-The header of the VCF file contains a detailed description of each record.
+The header of the VCF file contains a detailed description of each record. It
+also has a `##contig` line, with the name and length from the BAM/CRAM header,
+for each chromosome that has at least one locus in the catalog.
 
 ## Example
 

@@ -21,10 +21,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 
+#include "core/ReferenceContigInfo.hh"
 #include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
 
@@ -91,6 +94,11 @@ private:
 };
 
 void outputVcfHeader(const RegionCatalog& regionCatalog, const SampleFindings& sampleFindings, std::ostream& out);
+
+// Writes a `##contig=<ID=...,length=...>` line for each contig in `contigIndices`, in BAM/CRAM header order,
+// taking names and lengths from the BAM/CRAM header. bcftools sort needs every CHROM value declared this way.
+void outputVcfContigLines(
+    const ReferenceContigInfo& contigInfo, const std::set<int32_t>& contigIndices, std::ostream& out);
 
 std::ostream& operator<<(std::ostream& out, FieldType fieldType);
 std::ostream& operator<<(std::ostream& out, const FieldDescription& fieldDescription);

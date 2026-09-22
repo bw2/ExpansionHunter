@@ -26,7 +26,12 @@
 #include "io/VcfWriterHelpers.hh"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <sstream>
 #include <vector>
+
+#include <boost/filesystem.hpp>
 
 namespace ehunter
 {
@@ -42,11 +47,53 @@ void IterativeVariantVcfWriter::visit(const SmallVariantFindings* smallVariantFi
         reference_, locusSpec_, locusDepth_, variantSpec_, *smallVariantFindingsPtr);
 }
 
-IterativeVcfWriter::IterativeVcfWriter(
-    std::string sampleId, Reference& reference, const std::string& outputFile)
-    : sampleId_(std::move(sampleId)), reference_(reference)
+std::set<int32_t> contigsWithLoci(const LocusDescriptionCatalog& catalog)
 {
-    outFile_.open(outputFile, std::ios::out | std::ios::binary);
+    // A locus's variants all lie on its contig: decoding a locus fails unless its reference regions merge
+    // into one region (mergeRegions in io/LocusSpecDecoding.cpp).
+    std::set<int32_t> contigIndices;
+    for (const LocusDescription& locusDescription : catalog)
+    {
+        contigIndices.insert(locusDescription.locusContigIndex());
+    }
+    return contigIndices;
+}
+
+std::string vcfDocumentHeader(
+    const std::string& sampleId, const ReferenceContigInfo& contigInfo, const std::set<int32_t>& headerContigs)
+{
+    // Per-genotype `##ALT=<ID=STR{n}>` lines are intentionally omitted — streaming mode does not know
+    // which STR<N> ALT symbols will be emitted in the body until all records are written, so we don't try
+    // to predeclare them. Record bodies still emit `<STR{n}>` ALT symbols; downstream consumers tolerate
+    // undeclared symbolic ALTs.
+    std::ostringstream header;
+    header << "##fileformat=VCFv4.1\n";
+    FieldDescriptionCatalog catalog;
+    addCommonFieldDescriptions(catalog);
+    addRepeatFieldDescriptions(catalog);
+    addSmallVariantFieldDescriptions(catalog);
+    // The header is written before any record is seen, so every FORMAT key a record body can emit has to
+    // be declared here. buildSmallVariantVcfRecordElements emits DST/RPL for SMN variants; without this
+    // an SMN locus would produce records whose FORMAT keys are missing from the header.
+    addSmnFieldDescriptions(catalog);
+    for (const auto& fieldIdAndDescription : catalog)
+    {
+        header << fieldIdAndDescription.second << "\n";
+    }
+    outputVcfContigLines(contigInfo, headerContigs, header);
+    writeBodyHeader(sampleId, header);
+    return header.str();
+}
+
+IterativeVcfWriter::IterativeVcfWriter(
+    std::string sampleId, Reference& reference, const std::set<int32_t>& headerContigs, const std::string& outputFile,
+    VcfOutputMode outputMode)
+    : sampleId_(std::move(sampleId)), reference_(reference), outputFilePath_(outputFile)
+{
+    const bool append = outputMode == VcfOutputMode::kAppendAfterHeader;
+    const std::ios::openmode openMode
+        = std::ios::out | std::ios::binary | (append ? std::ios::app : std::ios::trunc);
+    outFile_.open(outputFile, openMode);
     if (!outFile_)
     {
         throw std::runtime_error("Failed to open VCF file: " + outputFile);
@@ -60,24 +107,12 @@ IterativeVcfWriter::IterativeVcfWriter(
 
     outStream_.push(outFile_);
 
-    // Write the VCF header upfront. Per-genotype `##ALT=<ID=STR{n}>` lines are intentionally omitted —
-    // streaming mode does not know which STR<N> ALT symbols will be emitted in the body until all
-    // records are written, so we don't try to predeclare them. Record bodies still emit `<STR{n}>`
-    // ALT symbols; downstream consumers tolerate undeclared symbolic ALTs.
-    outStream_ << "##fileformat=VCFv4.1\n";
-    FieldDescriptionCatalog catalog;
-    addCommonFieldDescriptions(catalog);
-    addRepeatFieldDescriptions(catalog);
-    addSmallVariantFieldDescriptions(catalog);
-    // The header is written before any record is seen, so every FORMAT key a record body can emit has to
-    // be declared here. buildSmallVariantVcfRecordElements emits DST/RPL for SMN variants; without this
-    // an SMN locus would produce records whose FORMAT keys are missing from the header.
-    addSmnFieldDescriptions(catalog);
-    for (const auto& fieldIdAndDescription : catalog)
+    // In append mode the header is whatever the interrupted run left behind, so only a fresh file
+    // writes one.
+    if (!append)
     {
-        outStream_ << fieldIdAndDescription.second << "\n";
+        outStream_ << vcfDocumentHeader(sampleId_, reference_.contigInfo(), headerContigs);
     }
-    writeBodyHeader(sampleId_, outStream_);
 }
 
 void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
@@ -127,6 +162,17 @@ void IterativeVcfWriter::addRecords(const LocusSpecification& locusSpec, const L
     }
 }
 
+std::uintmax_t IterativeVcfWriter::flushAndGetFileSize()
+{
+    outStream_.flush();
+    outFile_.flush();
+    if (!outStream_ || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
+    }
+    return boost::filesystem::file_size(outputFilePath_);
+}
+
 void IterativeVcfWriter::close()
 {
     if (closed_)
@@ -136,9 +182,16 @@ void IterativeVcfWriter::close()
     closed_ = true;
     outStream_.flush();
     outStream_.reset();  // Ensure proper flushing of data (incl. gzip trailer if compressing)
+    outFile_.flush();
+    const bool failed = !outFile_;
     if (outFile_.is_open())
     {
         outFile_.close();
+    }
+    // As in IterativeJsonWriter::close: a silently truncated VCF would be merged as if complete.
+    if (failed || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
     }
 }
 

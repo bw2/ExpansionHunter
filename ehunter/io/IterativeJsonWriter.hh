@@ -23,6 +23,7 @@
 
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+#include <cstdint>
 #include <fstream>
 
 #include "core/Parameters.hh"
@@ -37,6 +38,18 @@ namespace ehunter
 
 using Json = nlohmann::json;
 
+// The exact bytes an IterativeJsonWriter emits before its first record: the opening brace, the
+// SampleParameters object, and the start of the LocusResults object. --resume uses its size to tell
+// whether a temp file it cut back still holds any record (see io/ResumeCheckpoint.hh).
+std::string jsonDocumentHeader(const SampleParameters& sampleParams);
+
+// How a writer should attach to its output file.
+enum class JsonOutputMode
+{
+    kTruncate,          // create/overwrite the file and write the document header
+    kAppendAfterHeader, // open an existing partial document and continue after its last record
+};
+
 class IterativeJsonWriter
 {
 public:
@@ -44,17 +57,25 @@ public:
 		const std::string& outputFilePath, bool copyCatalogFields = false,
 		const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0,
 		int threadCount = 1, AnalysisMode analysisMode = AnalysisMode::kSeeking,
-		const std::string& commandLine = "");
+		const std::string& commandLine = "", JsonOutputMode outputMode = JsonOutputMode::kTruncate,
+		bool hasExistingRecords = false);
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
 
 	void addRecord(const LocusSpecification& locusSpec,  const LocusFindings& locusFindings);
     void addSkippedRecord(const std::string& locusId, const std::string& reason);
-    void close();  // Close the output file (idempotent)
+    // Flush everything written so far through to the output file and return the file's size in bytes.
+    // --resume records this after each locus so an interrupted run's temp file can be cut back to its last
+    // finished locus. Only meaningful for an uncompressed file, which the --resume temp files always are.
+    std::uintmax_t flushAndGetFileSize();
+    // Close the output file (idempotent). Throws if any of the writing failed, so a truncated output is
+    // never mistaken for a complete one; the destructor swallows that, an explicit call propagates it.
+    void close();
 
 private:
     const ReferenceContigInfo& contigInfo_;
+    std::string outputFilePath_;
     std::ofstream outFile_;
     boost::iostreams::filtering_ostream outStream_;
     bool firstRecord_;

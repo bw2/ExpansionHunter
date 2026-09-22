@@ -21,6 +21,9 @@
 
 #include "io/StreamingOutputMerge.hh"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -53,16 +56,55 @@ void openMergedOutput(const std::string& finalPath, std::ofstream& outFile, boos
     outStream.push(outFile);
 }
 
-std::string readWholeFile(const std::string& path)
+// Flush the merged output and fail loudly if any of the writing went wrong. Without this a full disk or a
+// write error would leave a truncated final output that the caller reports as a successful run -- and, under
+// --resume, would take the checkpoint files needed to recover with it.
+void closeMergedOutput(
+    const std::string& finalPath, std::ofstream& outFile, boost::iostreams::filtering_ostream& outStream)
 {
-    std::ifstream inFile(path, std::ios::in | std::ios::binary);
-    if (!inFile)
+    outStream.flush();
+    outStream.reset();
+    outFile.flush();
+    const bool failed = !outFile;
+    outFile.close();
+    if (failed || !outFile)
     {
-        throw std::runtime_error("Failed to open file: " + path);
+        throw std::runtime_error("Failed to write " + finalPath + " (" + std::strerror(errno) + ")");
     }
-    std::ostringstream buffer;
-    buffer << inFile.rdbuf();
-    return buffer.str();
+}
+
+// Read the first `count` bytes of an already-open file, from its current position.
+std::string readBytes(std::ifstream& inFile, std::size_t count)
+{
+    std::string buffer(count, '\0');
+    inFile.read(&buffer[0], static_cast<std::streamsize>(count));
+    buffer.resize(static_cast<std::size_t>(inFile.gcount()));
+    inFile.clear();
+    return buffer;
+}
+
+// Copy bytes [begin, end) of `inFile` to `outStream` in bounded chunks, so a multi-gigabyte region file
+// never has to be held in memory at once.
+void copyRange(std::ifstream& inFile, std::streamoff begin, std::streamoff end, std::ostream& outStream)
+{
+    const std::size_t kChunkSize = 1 << 20;
+    std::vector<char> chunk(kChunkSize);
+    inFile.clear();
+    inFile.seekg(begin);
+    std::streamoff remaining = end - begin;
+    while (remaining > 0)
+    {
+        const std::streamsize wanted
+            = static_cast<std::streamsize>(std::min<std::streamoff>(remaining, static_cast<std::streamoff>(kChunkSize)));
+        inFile.read(chunk.data(), wanted);
+        const std::streamsize got = inFile.gcount();
+        if (got <= 0)
+        {
+            break;
+        }
+        outStream.write(chunk.data(), got);
+        remaining -= got;
+    }
 }
 
 }  // namespace
@@ -93,6 +135,8 @@ void mergeRegionVcfFiles(const std::string& finalPath, const std::vector<std::st
             }
         }
     }
+
+    closeMergedOutput(finalPath, outFile, outStream);
 }
 
 void mergeRegionJsonFiles(
@@ -113,43 +157,91 @@ void mergeRegionJsonFiles(
     boost::iostreams::filtering_ostream outStream;
     openMergedOutput(finalPath, outFile, outStream);
 
+    // The header and the footer sit at known ends of the file, so each region file is located by reading
+    // only those two ends and then streamed through in chunks. A region file holds a whole contig's records,
+    // which can run to gigabytes, so it must never be slurped into memory.
+    //
+    // The windows start small and grow rather than being fixed, because the footer carries the run's whole
+    // command line inside its RunInfo record: with a long one (a --locus list naming thousands of loci, say)
+    // a fixed window would miss the marker and fail the run at its very last step, after all the genotyping.
+    // Growth stops at kMaxMarkerWindow, well past any command line the OS will accept, so a genuinely
+    // markerless file reports that instead of being read into memory whole.
+    const std::size_t kInitialMarkerWindow = 64 * 1024;
+    const std::size_t kMaxMarkerWindow = 64u * 1024 * 1024;
+
     bool wroteAnyBody = false;
     for (size_t fileIndex = 0; fileIndex != regionTempPaths.size(); ++fileIndex)
     {
-        const std::string content = readWholeFile(regionTempPaths[fileIndex]);
-
-        const size_t markerPos = content.find(kBodyStartMarker);
-        if (markerPos == std::string::npos)
+        const std::string& path = regionTempPaths[fileIndex];
+        std::ifstream inFile(path, std::ios::in | std::ios::binary);
+        if (!inFile)
         {
-            throw std::runtime_error("Missing \"LocusResults\" marker in file: " + regionTempPaths[fileIndex]);
+            throw std::runtime_error("Failed to open file: " + path);
         }
-        const size_t bodyStart = markerPos + kBodyStartMarker.size();
+        inFile.seekg(0, std::ios::end);
+        const std::streamoff fileSize = inFile.tellg();
+        inFile.seekg(0);
 
-        const size_t bodyEnd = content.rfind(kBodyEndMarker);
-        if (bodyEnd == std::string::npos || bodyEnd < bodyStart)
+        std::string header;
+        size_t markerPos = std::string::npos;
+        for (std::size_t window = kInitialMarkerWindow; markerPos == std::string::npos; window *= 2)
         {
-            throw std::runtime_error("Missing closing markers in file: " + regionTempPaths[fileIndex]);
+            inFile.clear();
+            inFile.seekg(0);
+            header = readBytes(inFile, static_cast<std::size_t>(std::min<std::streamoff>(fileSize, window)));
+            markerPos = header.find(kBodyStartMarker);
+            if (markerPos == std::string::npos
+                && (static_cast<std::streamoff>(header.size()) >= fileSize || window >= kMaxMarkerWindow))
+            {
+                throw std::runtime_error("Missing \"LocusResults\" marker in file: " + path);
+            }
+        }
+        const std::streamoff bodyStart = static_cast<std::streamoff>(markerPos + kBodyStartMarker.size());
+
+        std::streamoff bodyEnd = -1;
+        for (std::size_t window = kInitialMarkerWindow; bodyEnd < 0; window *= 2)
+        {
+            const std::streamoff footerStart
+                = std::max<std::streamoff>(bodyStart, fileSize - static_cast<std::streamoff>(window));
+            inFile.clear();
+            inFile.seekg(footerStart);
+            const std::string footer = readBytes(inFile, static_cast<std::size_t>(fileSize - footerStart));
+            const size_t footerMarkerPos = footer.rfind(kBodyEndMarker);
+            if (footerMarkerPos != std::string::npos)
+            {
+                bodyEnd = footerStart + static_cast<std::streamoff>(footerMarkerPos);
+                break;
+            }
+            if (footerStart <= bodyStart || window >= kMaxMarkerWindow)
+            {
+                throw std::runtime_error("Missing closing markers in file: " + path);
+            }
+        }
+        if (bodyEnd < bodyStart)
+        {
+            throw std::runtime_error("Missing closing markers in file: " + path);
         }
 
         // Region 0's prefix (everything up to and including the body-start marker) is canonical.
         if (fileIndex == 0)
         {
-            outStream << content.substr(0, bodyStart);
+            outStream << header.substr(0, static_cast<std::size_t>(bodyStart));
         }
 
-        const std::string body = content.substr(bodyStart, bodyEnd - bodyStart);
-        if (!body.empty())
+        if (bodyEnd > bodyStart)
         {
             if (wroteAnyBody)
             {
                 outStream << ", ";
             }
-            outStream << body;
+            copyRange(inFile, bodyStart, bodyEnd, outStream);
             wroteAnyBody = true;
         }
     }
 
     outStream << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
+
+    closeMergedOutput(finalPath, outFile, outStream);
 }
 
 }

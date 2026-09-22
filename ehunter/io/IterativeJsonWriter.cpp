@@ -21,6 +21,8 @@
 
 #include "io/IterativeJsonWriter.hh"
 
+#include <cerrno>
+#include <cstring>
 #include <exception>
 #include <iomanip>
 #include <iostream>
@@ -29,6 +31,7 @@
 #include <vector>
 
 #include <boost/algorithm/string/join.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 
 #include "app/Version.hh"
@@ -46,6 +49,16 @@ using boost::optional;
 using std::to_string;
 using std::vector;
 
+std::string jsonDocumentHeader(const SampleParameters& sampleParams)
+{
+    Json sampleParametersRecord;
+    sampleParametersRecord["SampleId"] = sampleParams.id();
+    sampleParametersRecord["Sex"] = streamToString(sampleParams.sex());
+
+    const std::string jsonString = std::regex_replace(sampleParametersRecord.dump(2), std::regex("\n"), "\n  ");
+    return "{\n  \"SampleParameters\": " + jsonString + ",\n  \"LocusResults\": {";
+}
+
 IterativeJsonWriter::IterativeJsonWriter(
     const SampleParameters& sampleParams,
     const ReferenceContigInfo& contigInfo,
@@ -55,9 +68,12 @@ IterativeJsonWriter::IterativeJsonWriter(
     std::time_t startedEpoch,
     int threadCount,
     AnalysisMode analysisMode,
-    const std::string& commandLine)
+    const std::string& commandLine,
+    JsonOutputMode outputMode,
+    bool hasExistingRecords)
     : contigInfo_(contigInfo)
-    , firstRecord_(true)
+    , outputFilePath_(outputFilePath)
+    , firstRecord_(outputMode == JsonOutputMode::kTruncate || !hasExistingRecords)
     , copyCatalogFields_(copyCatalogFields)
     , qualityModel_(qualityModel)
     , startedEpoch_(startedEpoch)
@@ -65,7 +81,10 @@ IterativeJsonWriter::IterativeJsonWriter(
     , analysisMode_(analysisMode)
     , commandLine_(commandLine)
 {
-	outFile_.open(outputFilePath, std::ios::out | std::ios::binary);
+    const bool append = outputMode == JsonOutputMode::kAppendAfterHeader;
+    const std::ios::openmode openMode
+        = std::ios::out | std::ios::binary | (append ? std::ios::app : std::ios::trunc);
+	outFile_.open(outputFilePath, openMode);
 	if (!outFile_)
 	{
 		throw std::runtime_error("Failed to open file: " + outputFilePath);
@@ -79,14 +98,12 @@ IterativeJsonWriter::IterativeJsonWriter(
 
 	outStream_.push(outFile_);
 
-    Json sampleParametersRecord;
-    sampleParametersRecord["SampleId"] = sampleParams.id();
-    sampleParametersRecord["Sex"] = streamToString(sampleParams.sex());
-
-	std::string jsonString = std::regex_replace(sampleParametersRecord.dump(2), std::regex("\n"), "\n  ");
-    outStream_ << "{\n";
-    outStream_ << "  \"SampleParameters\": " << jsonString << ",\n";
-    outStream_ << "  \"LocusResults\": {";
+    // In append mode the header (and any already-written records) are whatever the interrupted run left
+    // behind, so only a fresh document writes one.
+    if (!append)
+    {
+        outStream_ << jsonDocumentHeader(sampleParams);
+    }
 }
 
 
@@ -152,6 +169,17 @@ void IterativeJsonWriter::addSkippedRecord(const std::string& locusId, const std
     firstRecord_ = false;
 }
 
+std::uintmax_t IterativeJsonWriter::flushAndGetFileSize()
+{
+    outStream_.flush();
+    outFile_.flush();
+    if (!outStream_ || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
+    }
+    return boost::filesystem::file_size(outputFilePath_);
+}
+
 void IterativeJsonWriter::close()
 {
     if (closed_)
@@ -194,9 +222,17 @@ void IterativeJsonWriter::close()
     outStream_ << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
     outStream_.flush();
     outStream_.reset();
+    outFile_.flush();
+    const bool failed = !outFile_;
     if (outFile_.is_open())
     {
         outFile_.close();
+    }
+    // A write that silently failed (a full disk, most likely) would leave a truncated document that the
+    // end-of-run merge would accept as complete, quietly dropping the loci it could not write.
+    if (failed || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
     }
 }
 

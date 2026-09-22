@@ -214,7 +214,8 @@ public:
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
-        bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false)
+        bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false,
+        bool initResume = false, size_t initAbortAfterLoci = 0)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -225,6 +226,8 @@ public:
         , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
         , maxDepth_(initMaxDepth)
         , outputGenotypeTiming_(initOutputGenotypeTiming)
+        , resume_(initResume)
+        , abortAfterLoci_(initAbortAfterLoci)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -272,6 +275,13 @@ public:
     // the JSON as GenotypingTimeMillis, on both the full-genotyper and optimized-streaming fast paths.
     // Off by default since timing makes output non-deterministic.
     bool outputGenotypeTiming() const { return outputGenotypeTiming_; }
+    // When true (--resume), the per-contig temp files are kept up to date together with a list of finished
+    // loci as they are genotyped, and a later run with --resume picks up where the interrupted one left
+    // off. See io/ResumeCheckpoint.hh.
+    bool resume() const { return resume_; }
+    // Test-only hook (--internal-abort-after-loci): abort the process, without unwinding, once this many
+    // loci have been checkpointed. 0 disables it. Used to produce a deterministically interrupted run.
+    size_t abortAfterLoci() const { return abortAfterLoci_; }
 
     // The genotype-quality model used to annotate output (embedded by default, or loaded
     // from --genotype-quality-model). Null when no model is available, in which case no
@@ -297,6 +307,8 @@ private:
     bool heuristicGenotypingOnly_;
     int maxDepth_;
     bool outputGenotypeTiming_;
+    bool resume_;
+    size_t abortAfterLoci_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;
