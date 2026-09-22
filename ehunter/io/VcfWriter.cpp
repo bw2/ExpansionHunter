@@ -311,7 +311,8 @@ vector<string> buildSmallVariantVcfRecordElements(
     string altSequence;
     int64_t startPosition = -1;
 
-    if (variantSpec.classification().subtype == VariantSubtype::kSwap)
+    if ((variantSpec.classification().subtype == VariantSubtype::kSwap)
+        || (variantSpec.classification().subtype == VariantSubtype::kSMN))
     {
         assert(variantSpec.optionalRefNode());
         const auto refNode = *variantSpec.optionalRefNode();
@@ -375,6 +376,27 @@ vector<string> buildSmallVariantVcfRecordElements(
     std::ostringstream adEncoding;
     adEncoding << smallVariantFindings.numRefReads() << "," << smallVariantFindings.numAltReads();
     sampleValues.push_back(adEncoding.str());
+
+    if (variantSpec.classification().subtype == VariantSubtype::kSMN)
+    {
+        string dst;
+        switch (smallVariantFindings.refAllelePresenceStatus().status)
+        {
+        case AlleleStatus::kAbsent:
+            dst = "+";
+            break;
+        case AlleleStatus::kPresent:
+            dst = "-";
+            break;
+        case AlleleStatus::kUncertain:
+            dst = "?";
+            break;
+        }
+        sampleFields.emplace_back("DST");
+        sampleValues.push_back(dst);
+        sampleFields.emplace_back("RPL");
+        sampleValues.push_back(streamToString(smallVariantFindings.refAllelePresenceStatus().logLikelihoodRatio));
+    }
 
     sampleFields.emplace_back("LC");
     sampleValues.push_back(std::to_string(locusDepth));

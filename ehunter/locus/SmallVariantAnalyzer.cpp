@@ -86,6 +86,11 @@ std::unique_ptr<VariantFindings> SmallVariantAnalyzer::analyze(const LocusStats&
     case VariantSubtype::kSwap:
         altNode = (refNode == nodeIds_.front()) ? nodeIds_.back() : nodeIds_.front();
         break;
+    case VariantSubtype::kSMN:
+        if (refNode != nodeIds_.front())
+            throw std::logic_error("Invalid SMN specification");
+        altNode = nodeIds_.back();
+        break;
     default:
         std::ostringstream encoding;
         encoding << variantSubtype_;
@@ -112,7 +117,7 @@ std::unique_ptr<VariantFindings> SmallVariantAnalyzer::analyze(const LocusStats&
         || alignmentStats.numReadsSpanningRightBreakpoint() < minBreakpointSpanningReads;
 
     auto genotypeFilter = GenotypeFilter();
-    if (insufficientBreakpointCoverage)
+    if ((variantSubtype_ != VariantSubtype::kSMN) && insufficientBreakpointCoverage)
     {
         genotypeFilter = genotypeFilter | GenotypeFilter::kLowDepth;
     }

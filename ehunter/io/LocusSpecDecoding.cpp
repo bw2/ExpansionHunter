@@ -183,7 +183,14 @@ static VariantSubtype determineVariantSubtype(
     }
     else if (featureType == GraphBlueprintFeatureType::kSwap)
     {
-        return VariantSubtype::kSwap;
+        if (variantTypeFromUser == VariantTypeFromUser::kSMN)
+        {
+            return VariantSubtype::kSMN;
+        }
+        else
+        {
+            return VariantSubtype::kSwap;
+        }
     }
     else if (variantTypeFromUser == VariantTypeFromUser::kCommonRepeat)
     {
