@@ -63,7 +63,7 @@ Repeat records contain the following fields.
 Records for small variants contain the following fields.
 * `VariantId` Unique variant identifier
 * `VariantType` Always set to "SmallVariant"
-* `VariantSubtype` Either "Insertion", "Deletion", or "Swap"
+* `VariantSubtype` Either "Insertion", "Deletion", "Swap", or "SMN"
 * `ReferenceRegion` Reference region of the variant
 * `CountOfRefReads` Number of reads supporting the ref allele
 * `CountOfAltReads` Number of reads supporting the alt allele

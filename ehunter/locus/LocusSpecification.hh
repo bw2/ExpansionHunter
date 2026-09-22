@@ -111,6 +111,11 @@ public:
 
     const NodeToRegionAssociation& referenceProjectionOfNodes() const { return referenceRegions_; }
 
+    // True for SMN loci, whose copy-number test needs sample-level depth rather than the local flank
+    // estimate. NOTE: this only takes effect if a caller supplies a depth to LocusAnalyzer::analyze, and
+    // no analysis mode computes one -- every call site passes boost::none, exactly as upstream v5.0.0
+    // shipped it. Until a caller estimates genome-wide depth, SMN loci are genotyped against flank depth
+    // like every other locus and this predicate has no observable effect.
     bool requiresGenomeWideDepth() const;
 
     bool useRFC1MotifAnalysis() const { return useRFC1MotifAnalysis_; }
@@ -147,7 +152,8 @@ enum class VariantTypeFromUser
 {
     kRareRepeat,
     kCommonRepeat,
-    kSmallVariant
+    kSmallVariant,
+    kSMN
 };
 
 class LocusDescription

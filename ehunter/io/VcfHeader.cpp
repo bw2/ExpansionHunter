@@ -85,6 +85,14 @@ void addSmallVariantFieldDescriptions(FieldDescriptionCatalog& catalog)
         "Allelic depths for the ref and alt alleles in the order listed");
 }
 
+void addSmnFieldDescriptions(FieldDescriptionCatalog& catalog)
+{
+    tryAddFieldDescription(catalog, FieldType::kFormat, "RPL", "1", "Float",
+        "Log-Likelihood ratio for the presence of the reference allele");
+    tryAddFieldDescription(catalog, FieldType::kFormat, "DST", "1", "Character",
+        "Result ('+' detected, '-' undetected, '?' undetermined) of the test represented by the variant");
+}
+
 void FieldDescriptionWriter::visit(const RepeatFindings* repeatFindingsPtr)
 {
     addCommonFieldDescriptions(fieldDescriptions_);
@@ -122,6 +130,10 @@ void FieldDescriptionWriter::visit(const SmallVariantFindings* smallVariantFindi
     }
     addCommonFieldDescriptions(fieldDescriptions_);
     addSmallVariantFieldDescriptions(fieldDescriptions_);
+    if (variantSpec_.classification().subtype == VariantSubtype::kSMN)
+    {
+        addSmnFieldDescriptions(fieldDescriptions_);
+    }
 }
 
 void FieldDescriptionWriter::tryAddingFieldDescription(
