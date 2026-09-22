@@ -158,9 +158,8 @@ void mergeRegionJsonFiles(
     openMergedOutput(finalPath, outFile, outStream);
 
     // The header and the footer sit at known ends of the file, so each region file is located by reading
-    // only those two ends and then streamed through in chunks. A region file holds a whole contig's records
-    // (every locus, under --resume at --threads 1), which can run to gigabytes, so it must never be slurped
-    // into memory.
+    // only those two ends and then streamed through in chunks. A region file holds a whole contig's records,
+    // which can run to gigabytes, so it must never be slurped into memory.
     //
     // The windows start small and grow rather than being fixed, because the footer carries the run's whole
     // command line inside its RunInfo record: with a long one (a --locus list naming thousands of loci, say)

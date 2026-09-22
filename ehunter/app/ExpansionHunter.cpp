@@ -273,11 +273,6 @@ int main(int argc, char** argv)
         if (params.analysisMode() == AnalysisMode::kLowMemStreaming
             || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
         {
-            if (params.resume())
-            {
-                spdlog::info("Resume is enabled: genotyped loci will be checkpointed to {} and {}",
-                    outputPaths.json() + ".unfinished", outputPaths.vcf() + ".unfinished");
-            }
             spdlog::info("Running sample analysis in {} mode", analysisModeToString(params.analysisMode()));
             BamletWriterPtr bamletWriter = params.enableBamletOutput
                 ? std::make_shared<BamletWriterImpl>(outputPaths.bamlet(), reference.contigInfo(), RegionCatalog{})
@@ -285,14 +280,6 @@ int main(int argc, char** argv)
             htsLowMemStreamingSampleAnalysis(locusDescriptionCatalog, params, reference, bamletWriter, startedEpoch, commandLine);
             bamletWriter->finish();  // join the writer thread and surface any deferred bamlet write error
             return 0;
-        }
-
-        if (params.resume())
-        {
-            spdlog::warn("--resume has no effect in {} mode, which writes its output only once all loci have "
-                         "been genotyped; use --analysis-mode low-mem-streaming or optimized-streaming to be "
-                         "able to resume an interrupted run",
-                analysisModeToString(params.analysisMode()));
         }
 
         RegionCatalog regionCatalog = convertLocusDescriptionsToLocusSpecs(

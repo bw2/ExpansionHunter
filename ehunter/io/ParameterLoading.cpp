@@ -137,7 +137,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
         ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to low-mem-streaming and optimized-streaming modes.")
         ("genotype-quality-model", po::value<string>(&params.genotypeQualityModelPath), "Path to a genotype-quality model (.json or .json.gz) used to add per-allele PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong fields. Overrides the model compiled into the binary.")
-        ("resume", po::bool_switch(&params.resume), "Checkpoint each genotyped locus to <output-prefix>.{json,vcf}[.gz].unfinished files as the run proceeds, and, if those files are already present from an interrupted run, skip the loci they already contain and continue from there. The checkpoint files are deleted once the final output files have been written. Applies to low-mem-streaming and optimized-streaming modes.")
+        ("resume", po::bool_switch(&params.resume), "Make an interrupted run restartable: keep the per-contig temp output files (<output-prefix>.contig<N>.{json,vcf}) and a list of finished loci (<output-prefix>.processed_loci.txt) up to date as the run proceeds, and, if they are already present from an interrupted run, skip the loci the list names and continue from there. These files are deleted once the final output files have been written. Only works in optimized-streaming and low-mem-streaming modes.")
     ;
     // clang-format on
 
@@ -270,21 +270,6 @@ void assertValidity(const UserParameters& userParameters)
         throw std::invalid_argument("--plot-all and --disable-all-plots are mutually exclusive");
     }
 
-    // The bamlet is opened for writing from scratch on every run and holds no record of which loci it
-    // already covers, so a resumed run would silently replace it with one holding only the loci that run
-    // genotyped. Rejecting the combination is better than handing back a bamlet that looks complete.
-    //
-    // Only for the modes that actually checkpoint: elsewhere --resume is a documented no-op that just logs
-    // a warning, so there is nothing for the bamlet to conflict with and refusing the run would be noise.
-    const bool resumeCheckpointsThisMode = userParameters.analysisMode == "low-mem-streaming"
-        || userParameters.analysisMode == "optimized-streaming";
-    if (userParameters.resume && resumeCheckpointsThisMode && userParameters.enableBamletOutput)
-    {
-        throw std::invalid_argument(
-            "--resume and --enable-bamlet-output cannot be used together: the bamlet is rewritten from "
-            "scratch on each run, so a resumed run would produce one covering only the loci it genotyped");
-    }
-
     // Validate analysis Mode:
     if ((userParameters.analysisMode != "seeking")
         and (userParameters.analysisMode != "low-mem-streaming")
@@ -292,6 +277,26 @@ void assertValidity(const UserParameters& userParameters)
         and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
+    }
+
+    // seeking and streaming modes keep every result in memory and write the output only once all loci
+    // have been genotyped, so an interrupted run leaves nothing to resume from.
+    if (userParameters.resume && userParameters.analysisMode != "low-mem-streaming"
+        && userParameters.analysisMode != "optimized-streaming")
+    {
+        throw std::invalid_argument(
+            "--resume only works in optimized-streaming and low-mem-streaming modes, not in "
+            + userParameters.analysisMode + " mode, which writes its output only once all loci have been genotyped");
+    }
+
+    // The bamlet is opened for writing from scratch on every run and holds no record of which loci it
+    // already covers, so a resumed run would silently replace it with one holding only the loci that run
+    // genotyped. Rejecting the combination is better than handing back a bamlet that looks complete.
+    if (userParameters.resume && userParameters.enableBamletOutput)
+    {
+        throw std::invalid_argument(
+            "--resume and --enable-bamlet-output cannot be used together: the bamlet is rewritten from "
+            "scratch on each run, so a resumed run would produce one covering only the loci it genotyped");
     }
 
     // Validate input file paths

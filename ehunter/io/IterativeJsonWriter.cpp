@@ -31,6 +31,7 @@
 #include <vector>
 
 #include <boost/algorithm/string/join.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 
 #include "app/Version.hh"
@@ -106,8 +107,7 @@ IterativeJsonWriter::IterativeJsonWriter(
 }
 
 
-void IterativeJsonWriter::addRecord(
-    const LocusSpecification& locusSpec, const LocusFindings& locusFindings, std::string* capturedText) {
+void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const LocusFindings& locusFindings) {
 	const std::string& locusId(locusSpec.locusId());
 
     Json locusRecord;
@@ -146,36 +146,36 @@ void IterativeJsonWriter::addRecord(
     }
 
 	std::string jsonString = std::regex_replace(locusRecord.dump(2), std::regex("\n"), "\n    ");
-    const std::string recordText = "\n    \"" + locusId + "\": " + jsonString;
     if (!firstRecord_)
         outStream_ << ", ";
-    outStream_ << recordText;
-    if (capturedText)
-    {
-        *capturedText = recordText;
-    }
+    outStream_ << "\n    \"" << locusId << "\": " << jsonString;
 
     firstRecord_ = false;
 }
 
-void IterativeJsonWriter::addSkippedRecord(
-    const std::string& locusId, const std::string& reason, std::string* capturedText) {
+void IterativeJsonWriter::addSkippedRecord(const std::string& locusId, const std::string& reason) {
     Json locusRecord;
     locusRecord["LocusId"] = locusId;
     locusRecord["Status"] = "skipped";
     locusRecord["Reason"] = reason;
 
     std::string jsonString = std::regex_replace(locusRecord.dump(2), std::regex("\n"), "\n    ");
-    const std::string recordText = "\n    \"" + locusId + "\": " + jsonString;
     if (!firstRecord_)
         outStream_ << ", ";
-    outStream_ << recordText;
-    if (capturedText)
-    {
-        *capturedText = recordText;
-    }
+    outStream_ << "\n    \"" << locusId << "\": " << jsonString;
 
     firstRecord_ = false;
+}
+
+std::uintmax_t IterativeJsonWriter::flushAndGetFileSize()
+{
+    outStream_.flush();
+    outFile_.flush();
+    if (!outStream_ || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
+    }
+    return boost::filesystem::file_size(outputFilePath_);
 }
 
 void IterativeJsonWriter::close()

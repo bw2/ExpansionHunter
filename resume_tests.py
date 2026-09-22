@@ -80,6 +80,31 @@ def read_maybe_gzipped(path):
         return f.read()
 
 
+def read_processed_loci(prefix):
+    """Returns the locus ids listed in a run's processed-loci list, in order.
+
+    The list's first line is "#" plus the run signature; every other line is
+    "<LocusId>\t<json file size>\t<vcf file size>".
+    """
+    with open(prefix + ".processed_loci.txt") as f:
+        lines = f.read().splitlines()
+    assert lines and lines[0].startswith("#"), "the processed-loci list must start with its signature line"
+    return [line.split("\t")[0] for line in lines[1:]]
+
+
+def last_finished_contig_json(prefix):
+    """Returns the per-contig JSON temp file that the last listed locus wrote to.
+
+    The abort hook kills the process without unwinding, so that file ends exactly at the size
+    listed for the last locus, which is how it is identified.
+    """
+    with open(prefix + ".processed_loci.txt") as f:
+        last_json_size = int(f.read().splitlines()[-1].split("\t")[1])
+    matches = [p for p in glob.glob(prefix + ".contig*.json") if os.path.getsize(p) == last_json_size]
+    assert len(matches) == 1, f"expected one temp file of {last_json_size} bytes, found {matches}"
+    return matches[0]
+
+
 def output_body(path):
     """Returns an output file's content without the trailing RunInfo record.
 
@@ -143,7 +168,7 @@ class ResumeTest(unittest.TestCase):
 
     def assert_no_leftover_files(self, prefix):
         leftovers = [os.path.basename(p) for p in glob.glob(prefix + "*")
-                     if ".unfinished" in p or ".contig" in p or ".resume_part" in p]
+                     if ".processed_loci" in p or ".contig" in p]
         self.assertEqual(leftovers, [], f"checkpoint/temp files left behind: {leftovers}")
 
     def test_resumed_output_matches_uninterrupted_output(self):
@@ -174,11 +199,8 @@ class ResumeTest(unittest.TestCase):
         args = ["--threads", "2", "--skip-hom-ref"]
         prefix = os.path.join(self.work_dir, "skip_hom_ref")
         self.run_eh(prefix, args + ["--resume", "--internal-abort-after-loci", "2"], expect_success=False)
-        with open(prefix + ".processed_loci.unfinished") as f:
-            finished = [line.split("\t")[0] for line in f.read().splitlines()]
-        # The abort hook fires once a whole batch has been checkpointed, so it can overshoot its N.
-        self.assertGreaterEqual(len(finished), 2)
-        self.assertLess(len(finished), 4)
+        finished = read_processed_loci(prefix)
+        self.assertEqual(len(finished), 2)
 
         result = self.run_eh(prefix, args + ["--resume"])
         # Every finished locus here is one --skip-hom-ref emitted no record for, so seeing them counted as
@@ -187,52 +209,55 @@ class ResumeTest(unittest.TestCase):
         self.assert_matches_baseline(prefix, args)
 
     def test_resume_across_a_change_in_thread_count(self):
-        # Any thread count above 1 can resume any other, because a slice is one contig either way.
-        prefix = os.path.join(self.work_dir, "mixed_threads")
-        self.run_eh(prefix, ["--threads", "3", "--resume", "--internal-abort-after-loci", "2"],
+        # Every --resume run genotypes through one temp file per contig, whatever --threads is, so a
+        # run can be resumed with any other thread count, including switching to or from 1.
+        for first, second in ((3, 2), (3, 1), (1, 3)):
+            with self.subTest(first=first, second=second):
+                prefix = os.path.join(self.work_dir, f"threads_{first}_then_{second}")
+                self.run_eh(prefix, ["--threads", str(first), "--resume", "--internal-abort-after-loci", "2"],
+                            expect_success=False)
+                self.run_eh(prefix, ["--threads", str(second), "--resume"])
+                self.assert_matches_baseline(prefix)
+                self.assert_no_leftover_files(prefix)
+
+    def test_resume_across_a_change_in_compression(self):
+        # The temp files are uncompressed either way and -z only affects the final merge, so -z may
+        # differ between the interrupted run and its resume.
+        prefix = os.path.join(self.work_dir, "compression_changed")
+        self.run_eh(prefix, ["--threads", "2", "--resume", "--internal-abort-after-loci", "2"],
                     expect_success=False)
-        self.run_eh(prefix, ["--threads", "2", "--resume"])
-        self.assert_matches_baseline(prefix)
-
-    def test_resuming_a_parallel_checkpoint_at_one_thread_never_destroys_it(self):
-        # One coordinate sweep cannot append to contigs finished out of order, so such a resume is refused
-        # rather than trimming the checkpoint down to the reusable part and destroying the rest. Which of
-        # the two cases arises depends on the order the workers happened to finish in, so both are allowed
-        # here; what must hold either way is that the checkpoint survives and --threads > 1 still works.
-        # The refusal itself is pinned down deterministically by ResumeTest in ehunter/tests/ResumeTest.cpp.
-        prefix = os.path.join(self.work_dir, "parallel_then_serial")
-        self.run_eh(prefix, ["--threads", "3", "--resume", "--internal-abort-after-loci", "2"],
-                    expect_success=False)
-        with open(prefix + ".processed_loci.unfinished") as f:
-            before = f.read()
-
-        result = self.run_eh(prefix, ["--threads", "1", "--resume"], expect_success=False)
-        if result.returncode != 0:
-            self.assertIn("Resume with --threads > 1", result.stdout + result.stderr)
-            with open(prefix + ".processed_loci.unfinished") as f:
-                self.assertEqual(f.read(), before, "a refused run must not have altered the checkpoint")
-            # The advice in that message has to actually work.
-            self.run_eh(prefix, ["--threads", "3", "--resume"])
-        self.assert_matches_baseline(prefix)
-
-    def test_resume_without_a_checkpoint_runs_normally(self):
-        prefix = os.path.join(self.work_dir, "fresh")
-        self.run_eh(prefix, ["--threads", "2", "--resume"])
-        self.assert_matches_baseline(prefix)
+        self.run_eh(prefix, ["--threads", "2", "-z", "--resume"])
+        self.assert_matches_baseline(prefix, ["--threads", "2", "-z"])
         self.assert_no_leftover_files(prefix)
 
-    def test_a_truncated_checkpoint_is_recovered(self):
-        # Cut bytes off the end of the JSON checkpoint, which is what losing buffered writes to a
-        # dying machine looks like. Whatever survives has to be used, and the rest genotyped again.
+    def test_resume_without_a_checkpoint_runs_normally(self):
+        for threads in (1, 2):
+            with self.subTest(threads=threads):
+                prefix = os.path.join(self.work_dir, f"fresh_t{threads}")
+                self.run_eh(prefix, ["--threads", str(threads), "--resume"])
+                self.assert_matches_baseline(prefix)
+                self.assert_no_leftover_files(prefix)
+
+    def test_a_run_without_resume_leaves_no_temp_files(self):
+        for threads in (1, 2):
+            with self.subTest(threads=threads):
+                prefix = os.path.join(self.work_dir, f"no_resume_t{threads}")
+                self.run_eh(prefix, ["--threads", str(threads)])
+                self.assert_no_leftover_files(prefix)
+
+    def test_a_truncated_temp_file_is_recovered(self):
+        # Cut bytes off the end of a temp file the list already counts, which is what losing
+        # buffered writes to a dying machine looks like. Whatever survives has to be used, and the
+        # rest genotyped again.
         for keep_fraction in (0.4, 0.7, 0.95):
             with self.subTest(keep_fraction=keep_fraction):
                 prefix = os.path.join(self.work_dir, f"truncated_{keep_fraction}")
                 self.run_eh(prefix, ["--threads", "2", "--resume", "--internal-abort-after-loci", "3"],
                             expect_success=False)
-                checkpoint = prefix + ".json.unfinished"
-                with open(checkpoint, "rb") as f:
+                temp_file = last_finished_contig_json(prefix)
+                with open(temp_file, "rb") as f:
                     content = f.read()
-                with open(checkpoint, "wb") as f:
+                with open(temp_file, "wb") as f:
                     f.write(content[:int(len(content) * keep_fraction)])
 
                 self.run_eh(prefix, ["--threads", "2", "--resume"])
@@ -240,45 +265,46 @@ class ResumeTest(unittest.TestCase):
 
     def test_a_multi_variant_locus_missing_one_vcf_line_is_regenotyped(self):
         # CHR4_MULTI in the fixture has two variants and so writes two VCF lines. Losing only the
-        # second one must not leave the locus counted as finished: checking mere presence of the
-        # locus in the VCF checkpoint would silently drop that variant from the final output.
+        # second one must not leave the locus counted as finished, or that variant would silently
+        # be missing from the final output.
         prefix = os.path.join(self.work_dir, "multi_variant")
         self.run_eh(prefix, ["--threads", "1", "--resume", "--internal-abort-after-loci", "4"],
                     expect_success=False)
 
-        checkpoint = prefix + ".vcf.unfinished"
-        with open(checkpoint) as f:
+        chr4_temps = [p for p in glob.glob(prefix + ".contig*.vcf") if "\nchr4\t" in read_maybe_gzipped(p)]
+        self.assertEqual(len(chr4_temps), 1, "expected one temp VCF holding CHR4_MULTI's lines")
+        with open(chr4_temps[0]) as f:
             lines = f.read().splitlines(keepends=True)
-        self.assertTrue(lines[-1].startswith("chr4"), "expected the fixture's last VCF line to be CHR4_MULTI's")
-        with open(checkpoint, "w") as f:
+        self.assertTrue(lines[-1].startswith("chr4") and lines[-2].startswith("chr4"),
+                        "expected the temp VCF to end with CHR4_MULTI's two lines")
+        with open(chr4_temps[0], "w") as f:
             f.write("".join(lines[:-1]))
 
         self.run_eh(prefix, ["--threads", "1", "--resume"])
         self.assert_matches_baseline(prefix)
 
-    def test_a_truncated_checkpoint_still_preserves_earlier_progress(self):
-        # Asserting only that the final output is correct would not catch a resume that silently threw
-        # the whole checkpoint away and re-genotyped everything, which is what a truncated gzip tail used
-        # to do. So check how many loci the resumed run actually skipped.
+    def test_a_truncated_temp_file_only_costs_the_loci_it_lost(self):
+        # Asserting only that the final output is correct would not catch a resume that silently
+        # threw the whole checkpoint away and re-genotyped everything. So check how many loci the
+        # resumed run actually skipped: losing one byte of the last locus's output costs that one
+        # locus and nothing else.
         for compress in (False, True):
             with self.subTest(compressed=compress):
                 args = ["--threads", "1"] + (["-z"] if compress else [])
                 prefix = os.path.join(self.work_dir, f"progress_{int(compress)}")
                 self.run_eh(prefix, args + ["--resume", "--internal-abort-after-loci", "3"],
                             expect_success=False)
+                finished = read_processed_loci(prefix)
 
-                checkpoint = prefix + (".json.gz.unfinished" if compress else ".json.unfinished")
-                with open(checkpoint, "rb") as f:
+                temp_file = last_finished_contig_json(prefix)
+                with open(temp_file, "rb") as f:
                     content = f.read()
-                with open(checkpoint, "wb") as f:
+                with open(temp_file, "wb") as f:
                     f.write(content[:-1])   # lose a single trailing byte
 
                 result = self.run_eh(prefix, args + ["--resume"])
-                output = result.stdout + result.stderr
-                match = re.search(r"Resuming: (\d+) of \d+ loci were already genotyped", output)
-                self.assertIsNotNone(match, f"resume recovered nothing from the checkpoint:\n{output}")
-                self.assertGreater(int(match.group(1)), 0,
-                                   "a one-byte truncation should not discard every finished locus")
+                self.assertIn(f"Resuming: {len(finished) - 1} of 4 loci were already genotyped",
+                              result.stdout + result.stderr)
                 self.assert_matches_baseline(prefix, args)
 
     def test_a_checkpoint_from_a_different_run_is_rejected(self):
@@ -301,33 +327,31 @@ class ResumeTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("written by a different run", result.stdout + result.stderr)
         # The checkpoint is left alone rather than silently discarded, so the run can still be resumed.
-        self.assertTrue(os.path.exists(prefix + ".json.unfinished"))
+        self.assertEqual(len(read_processed_loci(prefix)), 2)
+        self.assertTrue(glob.glob(prefix + ".contig*.json"))
 
     def test_an_unreadable_checkpoint_starts_over(self):
         prefix = os.path.join(self.work_dir, "corrupt")
         self.run_eh(prefix, ["--threads", "2", "--resume", "--internal-abort-after-loci", "2"],
                     expect_success=False)
-        with open(prefix + ".json.unfinished", "w") as f:
-            f.write("this is not an ExpansionHunter output file")
+        with open(prefix + ".processed_loci.txt", "w") as f:
+            f.write("this is not a processed-loci list\n")
 
         result = self.run_eh(prefix, ["--threads", "2", "--resume"])
         self.assertIn("starting from the beginning", result.stdout + result.stderr)
         self.assert_matches_baseline(prefix)
 
-    def test_resume_has_no_effect_in_seeking_mode(self):
-        prefix = os.path.join(self.work_dir, "seeking")
-        result = subprocess.run([
-            self.binary,
-            "--reads", os.path.join(FIXTURE_DIR, "reads.bam"),
-            "--reference", os.path.join(FIXTURE_DIR, "reference.fa"),
-            "--catalog", os.path.join(FIXTURE_DIR, "variant_catalog.json"),
-            "--output-prefix", prefix,
-            "--analysis-mode", "seeking", "--resume",
-        ], capture_output=True, text=True)
-
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("--resume has no effect in seeking mode", result.stdout + result.stderr)
-        self.assert_no_leftover_files(prefix)
+    def test_resume_is_rejected_in_seeking_and_streaming_modes(self):
+        # These modes write their output only once every locus is done, so there is nothing to resume.
+        for mode in ("seeking", "streaming"):
+            with self.subTest(mode=mode):
+                prefix = os.path.join(self.work_dir, mode)
+                result = self.run_eh(prefix, ["--analysis-mode", mode, "--resume"], expect_success=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"--resume only works in optimized-streaming and low-mem-streaming modes, not in {mode} mode",
+                    result.stdout + result.stderr)
+                self.assertEqual(glob.glob(prefix + "*"), [], "a rejected run must not write anything")
 
 
 if __name__ == "__main__":

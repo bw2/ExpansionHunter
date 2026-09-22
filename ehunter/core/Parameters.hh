@@ -275,9 +275,9 @@ public:
     // the JSON as GenotypingTimeMillis, on both the full-genotyper and optimized-streaming fast paths.
     // Off by default since timing makes output non-deterministic.
     bool outputGenotypeTiming() const { return outputGenotypeTiming_; }
-    // When true (--resume), completed loci are checkpointed to <output>.unfinished files as they are
-    // genotyped, and a later run with --resume picks up where the interrupted one left off. See
-    // io/ResumeCheckpoint.hh.
+    // When true (--resume), the per-contig temp files are kept up to date together with a list of finished
+    // loci as they are genotyped, and a later run with --resume picks up where the interrupted one left
+    // off. See io/ResumeCheckpoint.hh.
     bool resume() const { return resume_; }
     // Test-only hook (--internal-abort-after-loci): abort the process, without unwinding, once this many
     // loci have been checkpointed. 0 disables it. Used to produce a deterministically interrupted run.

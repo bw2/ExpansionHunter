@@ -180,6 +180,15 @@ void outputVcfHeader(const RegionCatalog& locusCatalog, const SampleFindings& sa
     }
 }
 
+void outputVcfContigLines(const ReferenceContigInfo& contigInfo, const std::set<int32_t>& contigIndices, ostream& out)
+{
+    for (const int32_t contigIndex : contigIndices)
+    {
+        out << "##contig=<ID=" << contigInfo.getContigName(contigIndex)
+            << ",length=" << contigInfo.getContigSize(contigIndex) << ">\n";
+    }
+}
+
 std::ostream& operator<<(std::ostream& out, FieldType fieldType)
 {
     switch (fieldType)

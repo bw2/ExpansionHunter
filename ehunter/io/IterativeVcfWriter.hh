@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -66,9 +67,16 @@ private:
     std::vector<std::string> vcfLine_;
 };
 
-// The exact header bytes an IterativeVcfWriter emits before its first record. Shared with the --resume
-// checkpoint, which writes documents in this same format (see io/ResumeCheckpoint.hh).
-std::string vcfDocumentHeader(const std::string& sampleId);
+// The contigs that have at least one locus in `catalog`, which are the ones an IterativeVcfWriter's header
+// declares. Every temp file of a run, and every run resuming it, must declare the same contigs, so this has
+// to be computed from the whole catalog, before --resume drops the loci that are already done.
+std::set<int32_t> contigsWithLoci(const LocusDescriptionCatalog& catalog);
+
+// The exact header bytes an IterativeVcfWriter emits before its first record, declaring the contigs in
+// `headerContigs`. --resume uses its size to sanity-check the sizes it cuts a temp file back to (see
+// io/ResumeCheckpoint.hh).
+std::string vcfDocumentHeader(
+    const std::string& sampleId, const ReferenceContigInfo& contigInfo, const std::set<int32_t>& headerContigs);
 
 // How a writer should attach to its output file.
 enum class VcfOutputMode
@@ -81,21 +89,21 @@ enum class VcfOutputMode
 class IterativeVcfWriter
 {
 public:
+    // `headerContigs` are the contigs the header declares (see contigsWithLoci); unused in append mode.
     IterativeVcfWriter(
-        std::string sampleId, Reference& reference, const std::string& outputFilePath,
-        VcfOutputMode outputMode = VcfOutputMode::kTruncate);
+        std::string sampleId, Reference& reference, const std::set<int32_t>& headerContigs,
+        const std::string& outputFilePath, VcfOutputMode outputMode = VcfOutputMode::kTruncate);
     // Ensure the VCF stream is flushed (and the gzip footer written if compressing) even when an
     // exception unwinds past the writer; otherwise a partially-written VCF may be left on disk.
     ~IterativeVcfWriter();
 
-    // capturedText, when non-null, has the record lines written by this call appended to it, so the
-    // --resume checkpoint can replay them verbatim.
-    void addRecord(const std::string& variantId, const LocusSpecification& locusSpec,
-        const LocusFindings& locusFindings, std::string* capturedText = nullptr);
+    void addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
     // Emit every variant record for a locus in genomic-position order. findingsForEachVariant is an
     // unordered_map, so the variants are sorted by referenceLocus before output to keep the VCF position-sorted.
-    void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings,
-        std::string* capturedText = nullptr);
+    void addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings);
+    // Flush everything written so far through to the output file and return the file's size in bytes. See
+    // IterativeJsonWriter::flushAndGetFileSize.
+    std::uintmax_t flushAndGetFileSize();
     // Close the output file (idempotent). Throws if any of the writing failed, so a truncated output is
     // never mistaken for a complete one; the destructor swallows that, an explicit call propagates it.
     void close();

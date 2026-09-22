@@ -69,9 +69,24 @@ void writeBodyHeader(const string& sampleName, ostream& out)
     out << "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" << sampleName << "\n";
 }
 
+// The contigs of the catalog's variants: every value the CHROM column can take.
+static set<int32_t> contigsWithVariants(const RegionCatalog& regionCatalog)
+{
+    set<int32_t> contigIndices;
+    for (const LocusSpecification& locusSpec : regionCatalog)
+    {
+        for (const VariantSpecification& variantSpec : locusSpec.variantSpecs())
+        {
+            contigIndices.insert(variantSpec.referenceLocus().contigIndex());
+        }
+    }
+    return contigIndices;
+}
+
 std::ostream& operator<<(std::ostream& out, VcfWriter& vcfWriter)
 {
     outputVcfHeader(vcfWriter.regionCatalog_, vcfWriter.sampleFindings_, out);
+    outputVcfContigLines(vcfWriter.reference_.contigInfo(), contigsWithVariants(vcfWriter.regionCatalog_), out);
     writeBodyHeader(vcfWriter.sampleId_, out);
     vcfWriter.writeBody(out);
     return out;

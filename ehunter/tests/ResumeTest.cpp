@@ -19,19 +19,24 @@
 
 #include "io/ResumeCheckpoint.hh"
 
-#include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <boost/filesystem.hpp>
+
 #include "gtest/gtest.h"
 
-#include "core/Common.hh"
 #include "core/Parameters.hh"
-#include "thirdparty/json/json.hpp"
+#include "core/Reference.hh"
+#include "core/ReferenceContigInfo.hh"
+#include "io/IterativeJsonWriter.hh"
+#include "io/IterativeVcfWriter.hh"
 #include "locus/LocusSpecification.hh"
+#include "thirdparty/json/json.hpp"
 
 using namespace ehunter;
 
@@ -39,19 +44,7 @@ namespace
 {
 
 const char* const kTestPrefix = "ResumeTest_tmp";
-
-ResumeCheckpointPaths testPaths()
-{
-    return ResumeCheckpointPaths{ std::string(kTestPrefix) + ".json.unfinished",
-        std::string(kTestPrefix) + ".vcf.unfinished", std::string(kTestPrefix) + ".processed_loci.unfinished" };
-}
-
-ResumeCheckpointPaths testPathsGz()
-{
-    return ResumeCheckpointPaths{ std::string(kTestPrefix) + ".json.gz.unfinished",
-        std::string(kTestPrefix) + ".vcf.gz.unfinished",
-        std::string(kTestPrefix) + ".processed_loci.unfinished" };
-}
+const char* const kSignature = R"({"Catalog":"catalog.json","SampleId":"sample"})";
 
 // A locus on `contigIndex` whose one variant is named after it, matching what the catalog loader produces
 // for a single-region locus.
@@ -68,13 +61,13 @@ LocusDescriptionCatalog makeCatalog()
         makeLocus("L4", 2, 3000) };
 }
 
-// The record text IterativeJsonWriter would have captured for `locusId`.
+// A JSON record shaped like the ones IterativeJsonWriter writes for `locusId`.
 std::string jsonRecordFor(const std::string& locusId)
 {
     return "\n    \"" + locusId + "\": {\n      \"LocusId\": \"" + locusId + "\",\n      \"Coverage\": 30.0\n    }";
 }
 
-// The VCF line IterativeVcfWriter would have captured for `locusId`'s single variant.
+// A VCF line shaped like the one IterativeVcfWriter writes for `locusId`'s single variant.
 std::string vcfLineFor(const std::string& locusId)
 {
     return "chr\t100\t.\tA\t.\t.\tPASS\tEND=130;VARID=" + locusId + ";REPID=" + locusId + "\tGT\t0/0\n";
@@ -90,11 +83,37 @@ std::string readFile(const std::string& path)
     return buffer.str();
 }
 
-bool fileExists(const std::string& path)
+void appendToFile(const std::string& path, const std::string& text)
+{
+    std::ofstream file(path, std::ios::out | std::ios::binary | std::ios::app);
+    file << text;
+}
+
+std::vector<std::string> readLines(const std::string& path)
 {
     std::ifstream file(path);
-    return static_cast<bool>(file);
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(file, line);)
+    {
+        lines.push_back(line);
+    }
+    return lines;
 }
+
+// The writers need a Reference to format VCF records, which these tests never do, and for the names and
+// lengths of the contigs the VCF header declares: one per contig used by makeCatalog().
+class StubReference : public Reference
+{
+public:
+    std::string getSequence(const std::string&, int64_t, int64_t) override { return ""; }
+    std::string getSequence(const GenomicRegion&) override { return ""; }
+    void loadContigIntoCache(const std::string&) override {}
+    void clearContigCache() override {}
+    const ReferenceContigInfo& contigInfo() const override { return contigInfo_; }
+
+private:
+    ReferenceContigInfo contigInfo_{ { { "chr1", 10000 }, { "chr2", 10000 }, { "chr3", 10000 } } };
+};
 
 class ResumeTest : public ::testing::Test
 {
@@ -104,256 +123,223 @@ protected:
 
     void cleanUp()
     {
-        for (const ResumeCheckpointPaths& paths : { testPaths(), testPathsGz() })
-        {
-            removeIfPresent(paths.json);
-            removeIfPresent(paths.vcf);
-            removeIfPresent(paths.processedLoci);
-        }
+        removeIfPresent(processedLociPath(kTestPrefix));
+        removeIfPresent(processedLociPath(kTestPrefix) + ".trimmed");
         for (std::int32_t contigIndex = 0; contigIndex < 4; ++contigIndex)
         {
             removeIfPresent(contigTempJsonPath(kTestPrefix, contigIndex));
             removeIfPresent(contigTempVcfPath(kTestPrefix, contigIndex));
         }
-        removeIfPresent(singleSliceTempJsonPath(kTestPrefix));
-        removeIfPresent(singleSliceTempVcfPath(kTestPrefix));
     }
 
-    // Writes a checkpoint holding `locusIds` in order, as an interrupted run would have left it.
-    void writeCheckpoint(const ResumeCheckpointPaths& paths, const std::vector<std::string>& locusIds)
+    // Appends a locus's output to its contig's temp files the way the genotyping writers do (a new file
+    // starts with the document header, and every JSON record but the first is preceded by ", "), then lists
+    // the locus with the files' new sizes, as a --resume run does after each locus.
+    void finishLocus(
+        ResumeCheckpointWriter& writer, const std::string& locusId, std::int32_t contigIndex, bool writesRecord = true)
     {
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", false, false, 0);
-        for (const std::string& locusId : locusIds)
+        const std::string jsonPath = contigTempJsonPath(kTestPrefix, contigIndex);
+        const std::string vcfPath = contigTempVcfPath(kTestPrefix, contigIndex);
+        if (!boost::filesystem::exists(jsonPath))
         {
-            writer.recordLocus(locusId, jsonRecordFor(locusId), vcfLineFor(locusId));
+            appendToFile(jsonPath, jsonDocumentHeader(sampleParams_));
+            appendToFile(vcfPath, vcfHeader());
         }
-        writer.close();
+        if (writesRecord)
+        {
+            const bool firstRecord = readFile(jsonPath) == jsonDocumentHeader(sampleParams_);
+            appendToFile(jsonPath, (firstRecord ? "" : ", ") + jsonRecordFor(locusId));
+            appendToFile(vcfPath, vcfLineFor(locusId));
+        }
+        writer.recordLocus(
+            locusId, boost::filesystem::file_size(jsonPath), boost::filesystem::file_size(vcfPath));
+    }
+
+    // Lists L1 and L2 (contig 0) and L3 (contig 1) as finished, as an interrupted run would have left them.
+    void finishThreeLoci()
+    {
+        ResumeCheckpointWriter writer(kTestPrefix, kSignature, false, 0);
+        finishLocus(writer, "L1", 0);
+        finishLocus(writer, "L2", 0);
+        finishLocus(writer, "L3", 1);
+    }
+
+    ResumeLoadResult loadCheckpoint(const LocusDescriptionCatalog& catalog = makeCatalog())
+    {
+        return loadResumeCheckpoint(kTestPrefix, sampleParams_, reference_.contigInfo(), catalog);
+    }
+
+    std::string jsonHeader() const { return jsonDocumentHeader(sampleParams_); }
+    std::string vcfHeader() const
+    {
+        return vcfDocumentHeader(sampleParams_.id(), reference_.contigInfo(), contigsWithLoci(makeCatalog()));
     }
 
     SampleParameters sampleParams_{ "sample", Sex::kFemale };
+    StubReference reference_;
 };
 
-TEST_F(ResumeTest, CheckpointPathsFollowTheOutputPathsCompression)
+TEST_F(ResumeTest, PathsAreDerivedFromTheOutputPrefix)
 {
-    const OutputPaths plain("out.vcf", "out.json", "out.bam", "out.tsv", "out");
-    EXPECT_EQ(resumeCheckpointPaths(plain).json, "out.json.unfinished");
-    EXPECT_EQ(resumeCheckpointPaths(plain).vcf, "out.vcf.unfinished");
-    EXPECT_EQ(resumeCheckpointPaths(plain).processedLoci, "out.processed_loci.unfinished");
+    EXPECT_EQ(processedLociPath("out"), "out.processed_loci.txt");
+    EXPECT_EQ(contigTempJsonPath("out", 3), "out.contig3.json");
+    EXPECT_EQ(contigTempVcfPath("out", 3), "out.contig3.vcf");
+}
 
-    const OutputPaths compressed("out.vcf.gz", "out.json.gz", "out.bam", "out.tsv", "out");
-    EXPECT_EQ(resumeCheckpointPaths(compressed).json, "out.json.gz.unfinished");
-    EXPECT_EQ(resumeCheckpointPaths(compressed).vcf, "out.vcf.gz.unfinished");
+TEST_F(ResumeTest, TheListIsWhatMarksACheckpoint)
+{
+    EXPECT_FALSE(resumeCheckpointExists(kTestPrefix));
+    ResumeCheckpointWriter writer(kTestPrefix, kSignature, false, 0);
+    EXPECT_TRUE(resumeCheckpointExists(kTestPrefix));
 }
 
 TEST_F(ResumeTest, AllFinishedLociAreRecovered)
 {
-    const ResumeCheckpointPaths paths = testPaths();
-    writeCheckpoint(paths, { "L1", "L2", "L3" });
-    ASSERT_TRUE(resumeCheckpointExists(paths));
-
-    const LocusDescriptionCatalog catalog = makeCatalog();
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, catalog, kTestPrefix, true);
-
-    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L4"), 0u);
-    EXPECT_TRUE(loaded.hasExistingJsonRecords);
-    // Contigs 0 (L1, L2) and 1 (L3) were rebuilt; contig 2 has nothing finished.
-    EXPECT_EQ(loaded.rebuiltSlices.size(), 2u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(0), 1u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(1), 1u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(2), 0u);
-}
-
-TEST_F(ResumeTest, RebuiltTempsHoldTheirContigsRecordsInOrder)
-{
-    writeCheckpoint(testPaths(), { "L1", "L2", "L3" });
-    loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
-
+    finishThreeLoci();
     const std::string contig0Json = readFile(contigTempJsonPath(kTestPrefix, 0));
-    EXPECT_NE(contig0Json.find("\"LocusResults\": {"), std::string::npos);
-    EXPECT_LT(contig0Json.find("\"L1\""), contig0Json.find("\"L2\""));
-    EXPECT_EQ(contig0Json.find("\"L3\""), std::string::npos);
-    // The temp is left open-ended for the genotyping writer to append to and close.
-    EXPECT_EQ(contig0Json.find("\"RunInfo\""), std::string::npos);
-
-    const std::string contig1Json = readFile(contigTempJsonPath(kTestPrefix, 1));
-    EXPECT_NE(contig1Json.find("\"L3\""), std::string::npos);
-    EXPECT_EQ(contig1Json.find("\"L1\""), std::string::npos);
-
     const std::string contig0Vcf = readFile(contigTempVcfPath(kTestPrefix, 0));
-    EXPECT_NE(contig0Vcf.find("#CHROM"), std::string::npos);
-    EXPECT_NE(contig0Vcf.find("VARID=L1"), std::string::npos);
-    EXPECT_NE(contig0Vcf.find("VARID=L2"), std::string::npos);
-    EXPECT_EQ(contig0Vcf.find("VARID=L3"), std::string::npos);
 
-    EXPECT_FALSE(fileExists(contigTempJsonPath(kTestPrefix, 2)));
+    const ResumeLoadResult loaded = loadCheckpoint();
+
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L1", "L2", "L3" }));
+    // Contigs 0 (L1, L2) and 1 (L3) have finished loci; contig 2 (L4) has none.
+    ASSERT_EQ(loaded.resumedContigs.size(), 2u);
+    EXPECT_TRUE(loaded.resumedContigs.at(0).hasJsonRecords);
+    EXPECT_TRUE(loaded.resumedContigs.at(1).hasJsonRecords);
+    // Nothing followed the last finished locus, so nothing is cut off.
+    EXPECT_EQ(readFile(contigTempJsonPath(kTestPrefix, 0)), contig0Json);
+    EXPECT_EQ(readFile(contigTempVcfPath(kTestPrefix, 0)), contig0Vcf);
 }
 
-TEST_F(ResumeTest, ARecordWrittenAfterTheLastProcessedLocusIsDropped)
+TEST_F(ResumeTest, TempFilesAreCutBackToTheLastFinishedLocus)
 {
-    const ResumeCheckpointPaths paths = testPaths();
-    writeCheckpoint(paths, { "L1", "L2" });
+    finishThreeLoci();
+    const std::string expectedJson = jsonHeader() + jsonRecordFor("L1") + ", " + jsonRecordFor("L2");
+    const std::string expectedVcf = vcfHeader() + vcfLineFor("L1") + vcfLineFor("L2");
 
-    // The run got further in the record files than in the processed-loci list, which is what an
-    // interruption between the two writes leaves behind.
-    std::ofstream(paths.json, std::ios::app) << ", " << jsonRecordFor("L3");
-    std::ofstream(paths.vcf, std::ios::app) << vcfLineFor("L3");
+    // What a kill part way through the next locus leaves behind: half a record in each file. A writer that
+    // unwound would have added the closing footer instead; either way it has to go.
+    appendToFile(contigTempJsonPath(kTestPrefix, 0), ", \n    \"L9\": {\n      \"LocusId\": ");
+    appendToFile(contigTempVcfPath(kTestPrefix, 0), "chr\t500\t.\tA");
 
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true);
+    loadCheckpoint();
 
-    EXPECT_EQ(loaded.doneLocusIds.count("L3"), 0u);
-    EXPECT_EQ(readFile(paths.json).find("\"L3\""), std::string::npos);
-    EXPECT_EQ(readFile(paths.vcf).find("VARID=L3"), std::string::npos);
-    EXPECT_FALSE(fileExists(contigTempJsonPath(kTestPrefix, 1)));
+    EXPECT_EQ(readFile(contigTempJsonPath(kTestPrefix, 0)), expectedJson);
+    EXPECT_EQ(readFile(contigTempVcfPath(kTestPrefix, 0)), expectedVcf);
 }
 
-TEST_F(ResumeTest, ATruncatedTrailingRecordIsDropped)
+TEST_F(ResumeTest, ALocusThatWroteNothingIsStillFinished)
 {
-    const ResumeCheckpointPaths paths = testPaths();
-    writeCheckpoint(paths, { "L1", "L2", "L3" });
-
-    // Cut the JSON file mid-record, as a lost buffered write would. The processed-loci list still names
-    // every locus, so the loss has to be detected rather than silently dropping L3 from the output.
-    const std::string content = readFile(paths.json);
-    const std::size_t lastRecordStart = content.rfind("\"L3\"");
-    ASSERT_NE(lastRecordStart, std::string::npos);
-    std::ofstream(paths.json, std::ios::trunc | std::ios::binary) << content.substr(0, lastRecordStart + 10);
-
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true);
-
-    EXPECT_EQ(loaded.doneLocusIds.size(), 2u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L3"), 0u);
-    EXPECT_EQ(readFile(paths.processedLoci).find("L3"), std::string::npos);
-}
-
-TEST_F(ResumeTest, ALocusThatProducedNoRecordIsStillTreatedAsFinished)
-{
-    const ResumeCheckpointPaths paths = testPaths();
     {
-        // L2 is what --skip-hom-ref leaves behind: genotyped, but with no record in either output file.
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.recordLocus("L2", "", "");
-        writer.close();
+        ResumeCheckpointWriter writer(kTestPrefix, kSignature, false, 0);
+        finishLocus(writer, "L1", 0, false);  // e.g. dropped by --skip-hom-ref
+        finishLocus(writer, "L3", 1);
     }
 
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true);
+    const ResumeLoadResult loaded = loadCheckpoint();
 
-    EXPECT_EQ(loaded.doneLocusIds.count("L2"), 1u);
-    EXPECT_EQ(readFile(paths.json).find("\"L2\""), std::string::npos);
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L1", "L3" }));
+    // Contig 0 is resumed, but its JSON temp holds only the header, so the next record needs no separator.
+    ASSERT_EQ(loaded.resumedContigs.count(0), 1u);
+    EXPECT_FALSE(loaded.resumedContigs.at(0).hasJsonRecords);
+    EXPECT_EQ(readFile(contigTempJsonPath(kTestPrefix, 0)), jsonHeader());
 }
 
-TEST_F(ResumeTest, GzippedCheckpointsRoundTripThroughSeveralAppends)
+TEST_F(ResumeTest, LociWhoseOutputIsNotOnDiskAreRedoneFromThereOnTheirContigOnly)
 {
-    const ResumeCheckpointPaths paths = testPathsGz();
-    {
-        // Each close() of a batch ends a gzip member, so several appends make this a multi-member file.
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.close();
-    }
-    {
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", true, true, 0);
-        writer.recordLocus("L2", jsonRecordFor("L2"), vcfLineFor("L2"));
-        writer.close();
-    }
+    finishThreeLoci();
+    // A machine crash can lose file bytes the list already counts. Here contig 0 loses L2's record.
+    const std::string contig0JsonAfterL1 = jsonHeader() + jsonRecordFor("L1");
+    boost::filesystem::resize_file(contigTempJsonPath(kTestPrefix, 0), contig0JsonAfterL1.size());
 
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true);
+    const ResumeLoadResult loaded = loadCheckpoint();
 
-    EXPECT_EQ(loaded.doneLocusIds.size(), 2u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L1"), 1u);
-    EXPECT_EQ(loaded.doneLocusIds.count("L2"), 1u);
-    EXPECT_NE(readFile(contigTempJsonPath(kTestPrefix, 0)).find("\"L2\""), std::string::npos);
+    // L2 is redone; L3 is on another contig and unaffected.
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L1", "L3" }));
+    EXPECT_EQ(readFile(contigTempJsonPath(kTestPrefix, 0)), contig0JsonAfterL1);
+    EXPECT_EQ(readFile(contigTempVcfPath(kTestPrefix, 0)), vcfHeader() + vcfLineFor("L1"));
+
+    // The list no longer names L2, so a later resume cannot count it as finished either.
+    const std::vector<std::string> lines = readLines(processedLociPath(kTestPrefix));
+    ASSERT_EQ(lines.size(), 3u);
+    EXPECT_EQ(lines[1].substr(0, 3), "L1\t");
+    EXPECT_EQ(lines[2].substr(0, 3), "L3\t");
 }
 
-TEST_F(ResumeTest, PerContigSlicesKeepRecordsThatFinishedOutOfCatalogOrder)
+TEST_F(ResumeTest, AMissingTempFileMeansItsContigIsRedone)
 {
-    // A locus is released for genotyping once the reads pass the end of its flank window, so a locus nested
-    // inside a wider one finishes first even though it comes second in the position-sorted catalog. The
-    // checkpoint records the order the run actually emitted in, and appending to a rebuilt temp only needs
-    // that order, so nothing here may be discarded.
-    writeCheckpoint(testPaths(), { "L2", "L1" });
+    finishThreeLoci();
+    removeIfPresent(contigTempJsonPath(kTestPrefix, 0));
 
-    const ResumeLoadResult loaded
-        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
+    const ResumeLoadResult loaded = loadCheckpoint();
 
-    EXPECT_EQ(loaded.doneLocusIds.size(), 2u);
-    // The rebuilt temp has to preserve the emission order, not re-sort into catalog order: the genotyping
-    // writer appends after these, and an uninterrupted run would have emitted them in this same order.
-    const std::string contig0Json = readFile(contigTempJsonPath(kTestPrefix, 0));
-    EXPECT_LT(contig0Json.find("\"L2\""), contig0Json.find("\"L1\""));
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L3" }));
+    EXPECT_EQ(loaded.resumedContigs.count(0), 0u);
 }
 
-TEST_F(ResumeTest, SingleSliceKeepsRecordsFromAnAscendingContigSweep)
+TEST_F(ResumeTest, APartlyWrittenLastListLineIsIgnored)
 {
-    // One slice covers every contig in one coordinate sweep, which is what a --threads 1 checkpoint is:
-    // its contigs only ever move forwards, whatever the order within each of them.
-    writeCheckpoint(testPaths(), { "L2", "L1", "L3" });
+    finishThreeLoci();
+    appendToFile(processedLociPath(kTestPrefix), "L4\t12");  // killed before the line was complete
 
-    const ResumeLoadResult loaded
-        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
+    const ResumeLoadResult loaded = loadCheckpoint();
 
-    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
-    EXPECT_EQ(loaded.rebuiltSlices.count(kSingleSliceKey), 1u);
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L1", "L2", "L3" }));
+    // Rewritten without it, so the resumed run's first line does not get glued onto the fragment.
+    const std::string list = readFile(processedLociPath(kTestPrefix));
+    EXPECT_EQ(list.find("L4"), std::string::npos);
+    EXPECT_EQ(list.back(), '\n');
 }
 
-TEST_F(ResumeTest, SingleSliceRefusesRecordsThatSkipAnUnfinishedContig)
+TEST_F(ResumeTest, AMalformedListLineIsRejectedAsCorrupt)
 {
-    // A --threads > 1 checkpoint finishes contigs independently, so it can hold contig 1's locus while
-    // contig 0 is still running. One coordinate sweep never produces that, and cannot append to it either:
-    // it would emit contig 0's loci after records already sitting in the temp for contig 1.
-    writeCheckpoint(testPaths(), { "L3", "L1", "L2" });  // contigs 1, 0, 0
+    finishThreeLoci();
+    appendToFile(processedLociPath(kTestPrefix), "L4\tnot-a-size\t12\n");
 
-    EXPECT_THROW(
-        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false), std::runtime_error);
+    EXPECT_THROW(loadCheckpoint(), ResumeCheckpointCorruptError);
 }
 
-TEST_F(ResumeTest, RefusingASingleSliceResumeLeavesTheCheckpointIntact)
+TEST_F(ResumeTest, AListWithoutASignatureLineIsRejectedAsCorrupt)
 {
-    // The refusal exists so the operator can re-run with --threads > 1 and keep everything, which only
-    // works if nothing was rewritten on the way out.
-    writeCheckpoint(testPaths(), { "L3", "L1", "L2" });  // contig 1 finished before contig 0
-    const std::string checkpointBefore = readFile(testPaths().processedLoci);
-    const std::string recordsBefore = readFile(testPaths().json);
+    appendToFile(processedLociPath(kTestPrefix), "L1\t100\t200\n");
 
-    EXPECT_THROW(
-        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false), std::runtime_error);
-
-    EXPECT_EQ(readFile(testPaths().processedLoci), checkpointBefore);
-    EXPECT_EQ(readFile(testPaths().json), recordsBefore);
-
-    // The same checkpoint is still fully usable per contig, which is what the error tells the operator.
-    const ResumeLoadResult loaded
-        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
-    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
-}
-
-TEST_F(ResumeTest, SingleSliceKeepsASweepThatFinishesEachContigBeforeMovingOn)
-{
-    // L1 and L2 are all of contig 0, so the sweep may move on to contig 1's L3; every entry is reusable.
-    writeCheckpoint(testPaths(), { "L1", "L2", "L3" });
-
-    const ResumeLoadResult loaded
-        = loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, false);
-
-    EXPECT_EQ(loaded.doneLocusIds.size(), 3u);
+    EXPECT_THROW(readCheckpointRunSignature(kTestPrefix), ResumeCheckpointCorruptError);
+    EXPECT_THROW(loadCheckpoint(), ResumeCheckpointCorruptError);
 }
 
 TEST_F(ResumeTest, ALocusMissingFromTheCatalogIsRejected)
 {
-    writeCheckpoint(testPaths(), { "L1", "NOT_IN_CATALOG" });
+    finishThreeLoci();
+    LocusDescriptionCatalog catalog = makeCatalog();
+    catalog.erase(catalog.begin() + 1);  // L2
 
-    EXPECT_THROW(
-        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true), std::runtime_error);
+    try
+    {
+        loadCheckpoint(catalog);
+        FAIL() << "expected the checkpoint to be rejected";
+    }
+    catch (const ResumeCheckpointCorruptError&)
+    {
+        FAIL() << "a checkpoint from a different run must be reported, not discarded as corrupt";
+    }
+    catch (const std::runtime_error&)
+    {
+    }
 }
 
-TEST_F(ResumeTest, AMissingLocusResultsMarkerIsRejected)
+TEST_F(ResumeTest, AResumedListCanBeAppendedToAndResumedAgain)
 {
-    writeCheckpoint(testPaths(), { "L1" });
-    std::ofstream(testPaths().json, std::ios::trunc) << "not an ExpansionHunter document";
+    finishThreeLoci();
+    loadCheckpoint();
+    {
+        ResumeCheckpointWriter writer(kTestPrefix, kSignature, true, 0);
+        finishLocus(writer, "L4", 2);
+    }
 
-    EXPECT_THROW(
-        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true), std::runtime_error);
+    const ResumeLoadResult loaded = loadCheckpoint();
+
+    EXPECT_EQ(loaded.doneLocusIds, (std::unordered_set<std::string>{ "L1", "L2", "L3", "L4" }));
+    EXPECT_EQ(readLines(processedLociPath(kTestPrefix)).size(), 5u);
 }
 
 TEST_F(ResumeTest, RunSignatureMismatchesAreDescribed)
@@ -370,19 +356,35 @@ TEST_F(ResumeTest, RunSignatureMismatchesAreDescribed)
     EXPECT_FALSE(describeSignatureMismatch("not json", R"({"A":1})").empty());
 }
 
-TEST_F(ResumeTest, RunSignatureIsStoredInAndReadBackFromTheCheckpoint)
+TEST_F(ResumeTest, TheRunSignatureSurvivesRepeatedResumes)
 {
-    const std::string signature = R"({
-  "Catalog": "catalog.json",
-  "SampleId": "sample"
-})";
+    finishThreeLoci();
+    for (int resumeCount = 0; resumeCount != 3; ++resumeCount)
     {
-        ResumeCheckpointWriter writer(testPaths(), sampleParams_, signature, false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.close();
+        loadCheckpoint();
+        EXPECT_EQ(readCheckpointRunSignature(kTestPrefix), kSignature);
+    }
+}
+
+TEST_F(ResumeTest, AnOversizedRunSignatureIsStillReadable)
+{
+    // The signature quotes options verbatim, so a long --locus list makes it very long. Failing to read it
+    // back would discard the whole checkpoint on every resume.
+    nlohmann::json signature;
+    signature["Catalog"] = "catalog.json";
+    signature["Locus"] = std::string(200 * 1024, 'x');
+    const std::string signatureText = signature.dump();
+    {
+        ResumeCheckpointWriter writer(kTestPrefix, signatureText, false, 0);
+        finishLocus(writer, "L1", 0);
     }
 
-    EXPECT_EQ(describeSignatureMismatch(signature, readCheckpointRunSignature(testPaths())), "");
+    EXPECT_EQ(describeSignatureMismatch(signatureText, readCheckpointRunSignature(kTestPrefix)), "");
+}
+
+TEST_F(ResumeTest, AMultiLineRunSignatureIsRefused)
+{
+    EXPECT_THROW(ResumeCheckpointWriter(kTestPrefix, "{\n}", false, 0), std::logic_error);
 }
 
 TEST_F(ResumeTest, ACatalogWithDuplicateLocusIdsIsRejected)
@@ -395,107 +397,37 @@ TEST_F(ResumeTest, ACatalogWithDuplicateLocusIdsIsRejected)
     EXPECT_THROW(assertCatalogIsResumable(catalog), std::runtime_error);
 }
 
-TEST_F(ResumeTest, ACatalogWhoseVariantIdsCollideAcrossLociIsRejected)
+TEST_F(ResumeTest, WritersReportTheirFileSizeAfterFlushing)
 {
-    // VCF lines are matched back to their locus by VariantId, so a shared one would file a locus's lines
-    // under a different locus.
-    LocusDescriptionCatalog catalog = makeCatalog();
-    catalog.push_back(LocusDescription("L5", ChromType::kAutosome, "(CAG)*", 3, 8000, 10000, 9000, 9030,
-        false, { "L1" }));
-
-    EXPECT_THROW(assertCatalogIsResumable(catalog), std::runtime_error);
-}
-
-TEST_F(ResumeTest, TheOppositeCompressionSettingsPathsAreDerivable)
-{
-    const OutputPaths plain("out.vcf", "out.json", "out.bam", "out.tsv", "out");
-    EXPECT_EQ(otherCompressionOutputPaths(plain).json(), "out.json.gz");
-    EXPECT_EQ(otherCompressionOutputPaths(plain).vcf(), "out.vcf.gz");
-
-    const OutputPaths compressed("out.vcf.gz", "out.json.gz", "out.bam", "out.tsv", "out");
-    EXPECT_EQ(otherCompressionOutputPaths(compressed).json(), "out.json");
-    EXPECT_EQ(otherCompressionOutputPaths(compressed).vcf(), "out.vcf");
-}
-
-TEST_F(ResumeTest, ATruncatedGzipTailKeepsTheMembersBeforeIt)
-{
-    // A gzip checkpoint is a chain of members, one per flush. Losing the tail of the last one must not
-    // cost the complete members before it, or a single lost byte would discard the whole run's progress.
-    const ResumeCheckpointPaths paths = testPathsGz();
+    const std::string jsonPath = contigTempJsonPath(kTestPrefix, 0);
+    const std::string vcfPath = contigTempVcfPath(kTestPrefix, 0);
+    const std::set<int32_t> headerContigs = contigsWithLoci(makeCatalog());
+    std::uintmax_t jsonSizeAfterL1 = 0;
     {
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.close();
-    }
-    {
-        ResumeCheckpointWriter writer(paths, sampleParams_, "{}", true, true, 0);
-        writer.recordLocus("L2", jsonRecordFor("L2"), vcfLineFor("L2"));
-        writer.close();
+        IterativeJsonWriter jsonWriter(sampleParams_, reference_.contigInfo(), jsonPath);
+        IterativeVcfWriter vcfWriter(sampleParams_.id(), reference_, headerContigs, vcfPath);
+        EXPECT_EQ(jsonWriter.flushAndGetFileSize(), jsonHeader().size());
+        EXPECT_EQ(vcfWriter.flushAndGetFileSize(), vcfHeader().size());
+
+        jsonWriter.addSkippedRecord("L1", "error");
+        jsonSizeAfterL1 = jsonWriter.flushAndGetFileSize();
+        EXPECT_EQ(jsonSizeAfterL1, readFile(jsonPath).size());
+        EXPECT_GT(jsonSizeAfterL1, jsonHeader().size());
     }
 
-    const std::string content = readFile(paths.json);
-    std::ofstream(paths.json, std::ios::trunc | std::ios::binary)
-        << content.substr(0, content.size() - 1);  // lose one byte of the final member
+    // Reopened in append mode, as a resumed run reopens a temp file it cut back. Before anything new is
+    // written, the size still has to count what the file already holds.
+    boost::filesystem::resize_file(jsonPath, jsonSizeAfterL1);
+    IterativeJsonWriter jsonWriter(sampleParams_, reference_.contigInfo(), jsonPath, false, nullptr, 0, 1,
+        AnalysisMode::kOptimizedStreaming, "", JsonOutputMode::kAppendAfterHeader, true);
+    IterativeVcfWriter vcfWriter(
+        sampleParams_.id(), reference_, headerContigs, vcfPath, VcfOutputMode::kAppendAfterHeader);
+    EXPECT_EQ(jsonWriter.flushAndGetFileSize(), jsonSizeAfterL1);
+    EXPECT_EQ(vcfWriter.flushAndGetFileSize(), vcfHeader().size());
 
-    const ResumeLoadResult loaded = loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true);
-
-    EXPECT_EQ(loaded.doneLocusIds.count("L1"), 1u);
-}
-
-TEST_F(ResumeTest, CorruptedGzipDataIsRejectedRatherThanPartlyTrusted)
-{
-    // Damaged bytes are different from a cut-short tail: whatever inflate produces before it notices is
-    // not trustworthy, so the checkpoint has to be reported unreadable instead of replayed.
-    const ResumeCheckpointPaths paths = testPathsGz();
-    writeCheckpoint(paths, { "L1", "L2" });
-
-    std::string content = readFile(paths.json);
-    ASSERT_GT(content.size(), 60u);
-    content[content.size() / 2] ^= 0xFF;  // flip a byte inside a member's compressed data
-    std::ofstream(paths.json, std::ios::trunc | std::ios::binary) << content;
-
-    EXPECT_THROW(loadResumeCheckpoint(paths, sampleParams_, makeCatalog(), kTestPrefix, true),
-        ResumeCheckpointCorruptError);
-}
-
-TEST_F(ResumeTest, AnOversizedRunSignatureIsStillReadable)
-{
-    // The signature quotes options verbatim, so a long --locus list makes it far larger than any fixed
-    // read window. Failing to read it back would discard the whole checkpoint on every resume.
-    nlohmann::json signature;
-    signature["Catalog"] = "catalog.json";
-    signature["Locus"] = std::string(200 * 1024, 'x');
-    const std::string signatureText = signature.dump(2);
-
-    {
-        ResumeCheckpointWriter writer(testPaths(), sampleParams_, signatureText, false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.close();
-    }
-
-    EXPECT_EQ(describeSignatureMismatch(signatureText, readCheckpointRunSignature(testPaths())), "");
-}
-
-TEST_F(ResumeTest, RewritingACheckpointLeavesItsSignatureUnchanged)
-{
-    // loadResumeCheckpoint rewrites the header using the signature it just read, so anything that is not
-    // idempotent there (re-indenting it, say) would compound on every successive resume.
-    const std::string signatureText = R"({
-  "Catalog": "catalog.json",
-  "SampleId": "sample"
-})";
-    {
-        ResumeCheckpointWriter writer(testPaths(), sampleParams_, signatureText, false, false, 0);
-        writer.recordLocus("L1", jsonRecordFor("L1"), vcfLineFor("L1"));
-        writer.close();
-    }
-
-    const std::string afterFirstWrite = readCheckpointRunSignature(testPaths());
-    for (int resumeCount = 0; resumeCount != 3; ++resumeCount)
-    {
-        loadResumeCheckpoint(testPaths(), sampleParams_, makeCatalog(), kTestPrefix, true);
-        EXPECT_EQ(readCheckpointRunSignature(testPaths()), afterFirstWrite);
-    }
+    jsonWriter.addSkippedRecord("L2", "error");
+    EXPECT_EQ(jsonWriter.flushAndGetFileSize(), readFile(jsonPath).size());
+    EXPECT_NE(readFile(jsonPath).find("}, \n    \"L2\""), std::string::npos);
 }
 
 TEST_F(ResumeTest, CompletedLociAreRemovedFromTheCatalog)

@@ -259,6 +259,7 @@ add_executable(UnitTests
         tests/StrAlignTest.cpp
         tests/StrGenotyperTest.cpp
         tests/UnitTests.cpp
+        tests/VcfHeaderTest.cpp
         tests/WeightedPurityCalculatorTest.cpp
         )
 add_subdirectory(locus)

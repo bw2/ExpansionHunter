@@ -62,8 +62,9 @@ optional arguments.
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to
   annotate results without a separate join step.
-* `--resume` Make an interrupted run restartable. See [Resuming an interrupted
-  run](#resuming-an-interrupted-run) below.
+* `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and
+  `low-mem-streaming` analysis modes. See [Resuming an interrupted run](#resuming-an-interrupted-run)
+  below.
 
 
 Note that the full list of program options with brief explanations can be
@@ -105,53 +106,52 @@ catalogs (> ~10k loci) since the majority of loci can be genotyped using only sp
 ### Resuming an interrupted run
 
 A run that is killed part way through (an out-of-memory kill, a preempted machine, Ctrl-C, a crash)
-normally has to be started over from the first locus. Adding `--resume` makes it restartable:
+normally has to be started over from the first locus. Adding `--resume` makes it restartable.
+`--resume` works with `--analysis-mode optimized-streaming` and `--analysis-mode low-mem-streaming`:
 
 ```bash
 ExpansionHunter --reads sample.cram --reference reference.fa --catalog catalog.json \
   --output-prefix sample --analysis-mode optimized-streaming --threads 8 --resume
 ```
 
-As each locus is genotyped it is recorded in three checkpoint files next to the output:
+Resuming requires the following intermediate files to be kept until ExpansionHunter is run again
+(for example, copied back if the rerun happens on a different machine):
 
-| File | Contents |
-|------|----------|
-| `<output-prefix>.json[.gz].unfinished` | each finished locus's JSON record |
-| `<output-prefix>.vcf[.gz].unfinished`  | each finished locus's VCF lines |
-| `<output-prefix>.processed_loci.unfinished` | one finished locus per line, with how many records it wrote to each file above |
+```
+<output-prefix>.processed_loci.txt
+<output-prefix>.contig<N>.json
+<output-prefix>.contig<N>.vcf
+```
 
-All three are deleted once the final `.json` and `.vcf` files have been written, so a completed run
-leaves nothing extra behind. Re-running the same command with `--resume` picks up the checkpoint
-files, skips the loci they already contain, and genotypes only the rest. The final output is
-identical to what an uninterrupted run would have produced.
+* `<output-prefix>.processed_loci.txt` lists the loci that are finished.
+* `<output-prefix>.contig<N>.json` and `<output-prefix>.contig<N>.vcf` hold the results of the
+  finished loci on one chromosome.
+
+If `<output-prefix>.processed_loci.txt` is missing, the run starts over from the first locus. If a
+chromosome's temp files are missing, that chromosome's loci are genotyped again; other chromosomes
+are unaffected.
+
+The temp files and the list are deleted once the final `.json` and `.vcf` files have been written, so
+a completed run leaves nothing extra behind. The final output is identical to what an uninterrupted
+run would have produced.
 
 Things worth knowing:
 
-* `--resume` only works with `--analysis-mode low-mem-streaming` and `optimized-streaming`, which
-  write their output as they go. `seeking` and `streaming` write everything only after the last
-  locus, so there is nothing to resume from; passing `--resume` there logs a warning and changes
-  nothing.
+* `--resume` does not work with `seeking` or `streaming` mode. Those modes write everything only
+  after the last locus, so there is nothing to resume from; passing `--resume` with them is an
+  error, and the run stops before doing anything.
 * The resumed run must use the same catalog, reads, sample and output-affecting options as the
   interrupted one. If they differ, ExpansionHunter stops with an error naming the option that
-  changed, rather than silently mixing results from two different runs. Delete the `.unfinished`
-  files (or use a different `--output-prefix`) to start over.
-* `--threads` may differ between the two runs, with one exception. A `--threads 1` run can be resumed
-  with any thread count, and a `--threads > 1` run with any count above 1; every finished locus is
-  reused. Only resuming a `--threads > 1` run with `--threads 1` is refused, and only when that run
-  finished contigs out of order (it usually has), since one coordinate sweep cannot append to that. The
-  run then stops with an error and leaves the checkpoint untouched, so re-running with `--threads > 1`
-  still recovers everything.
+  changed, rather than silently mixing results from two different runs. Delete
+  `<output-prefix>.processed_loci.txt` (or use a different `--output-prefix`) to start over.
 * Resuming skips the genotyping work, not the read scanning: the BAM/CRAM is still read from the
   beginning. On large catalogs genotyping dominates, so this is still a large saving.
-* Checkpointing costs one extra write of each record, and needs extra disk while the run is in
-  progress: the checkpoint files (compressed if `-z` is used), plus the per-slice temp files, which are
-  **never compressed**. At `--threads > 1` those temps are the per-contig files the merge already used
-  before `--resume` existed; at `--threads 1`, `--resume` adds one covering the whole output. So with
-  `-z` the peak extra disk is roughly one uncompressed copy of the output plus one compressed copy.
+* While the run is in progress, the temp files take roughly one uncompressed copy of the output on
+  disk (they are never compressed, even with `-z`). At `--threads > 1` this is no different from a
+  run without `--resume`. At `--threads 1` it is extra, because without `--resume` that mode writes
+  the final files directly and skips the merge.
 * Every `LocusId` in the catalog must be unique. Resume tells loci apart by their id, so a catalog with
   duplicates is rejected with `--resume` (it already produces a colliding JSON record without it).
-* Keep `-z` the same across the interrupted run and its resume. The checkpoint file names carry the
-  output's `.gz` suffix; changing `-z` is detected and reported rather than silently starting over.
 * `--resume` cannot be combined with `--enable-bamlet-output`. The bamlet is rewritten from scratch
   on every run and carries no record of which loci it covers, so a resumed run would replace it with
   one holding only the loci that run genotyped.
@@ -161,3 +161,13 @@ Things worth knowing:
 These two newer modes ignore `OfftargetRegions` entries in the variant catalog. This can affect loci that do
 explicitly list off-target regions in the catalog, such as **C9ORF72**, **FMR1**. For these loci,
 `--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
+
+Their VCF output is not always sorted by position within a chromosome. Loci are written in the order
+they finish. `bcftools index` and `tabix` require sorted input, so sort the VCF before indexing it:
+
+```bash
+bcftools sort -Oz -o sample.sorted.vcf.gz sample.vcf
+bcftools index -t sample.sorted.vcf.gz
+```
+
+The same commands work on the `-z` output (`sample.vcf.gz`).

@@ -31,6 +31,8 @@
 #include <sstream>
 #include <vector>
 
+#include <boost/filesystem.hpp>
+
 namespace ehunter
 {
 
@@ -45,7 +47,20 @@ void IterativeVariantVcfWriter::visit(const SmallVariantFindings* smallVariantFi
         reference_, locusSpec_, locusDepth_, variantSpec_, *smallVariantFindingsPtr);
 }
 
-std::string vcfDocumentHeader(const std::string& sampleId)
+std::set<int32_t> contigsWithLoci(const LocusDescriptionCatalog& catalog)
+{
+    // A locus's variants all lie on its contig: decoding a locus fails unless its reference regions merge
+    // into one region (mergeRegions in io/LocusSpecDecoding.cpp).
+    std::set<int32_t> contigIndices;
+    for (const LocusDescription& locusDescription : catalog)
+    {
+        contigIndices.insert(locusDescription.locusContigIndex());
+    }
+    return contigIndices;
+}
+
+std::string vcfDocumentHeader(
+    const std::string& sampleId, const ReferenceContigInfo& contigInfo, const std::set<int32_t>& headerContigs)
 {
     // Per-genotype `##ALT=<ID=STR{n}>` lines are intentionally omitted — streaming mode does not know
     // which STR<N> ALT symbols will be emitted in the body until all records are written, so we don't try
@@ -61,12 +76,14 @@ std::string vcfDocumentHeader(const std::string& sampleId)
     {
         header << fieldIdAndDescription.second << "\n";
     }
+    outputVcfContigLines(contigInfo, headerContigs, header);
     writeBodyHeader(sampleId, header);
     return header.str();
 }
 
 IterativeVcfWriter::IterativeVcfWriter(
-    std::string sampleId, Reference& reference, const std::string& outputFile, VcfOutputMode outputMode)
+    std::string sampleId, Reference& reference, const std::set<int32_t>& headerContigs, const std::string& outputFile,
+    VcfOutputMode outputMode)
     : sampleId_(std::move(sampleId)), reference_(reference), outputFilePath_(outputFile)
 {
     const bool append = outputMode == VcfOutputMode::kAppendAfterHeader;
@@ -90,12 +107,11 @@ IterativeVcfWriter::IterativeVcfWriter(
     // writes one.
     if (!append)
     {
-        outStream_ << vcfDocumentHeader(sampleId_);
+        outStream_ << vcfDocumentHeader(sampleId_, reference_.contigInfo(), headerContigs);
     }
 }
 
-void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpecification& locusSpec,
-    const LocusFindings& locusFindings, std::string* capturedText)
+void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
 {
     const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
     VariantFindings* findingsPtr = locusFindings.findingsForEachVariant.at(variantId).get();
@@ -111,17 +127,11 @@ void IterativeVcfWriter::addRecord(const std::string& variantId, const LocusSpec
     const std::vector<std::string>& vcfLine = recordWriter.getVcfLine();
     if (!vcfLine.empty())
     {
-        const std::string line = boost::algorithm::join(vcfLine, "\t") + "\n";
-        outStream_ << line;
-        if (capturedText)
-        {
-            *capturedText += line;
-        }
+        outStream_ << boost::algorithm::join(vcfLine, "\t") << "\n";
     }
 }
 
-void IterativeVcfWriter::addRecords(
-    const LocusSpecification& locusSpec, const LocusFindings& locusFindings, std::string* capturedText)
+void IterativeVcfWriter::addRecords(const LocusSpecification& locusSpec, const LocusFindings& locusFindings)
 {
     std::vector<std::string> variantIds;
     variantIds.reserve(locusFindings.findingsForEachVariant.size());
@@ -144,8 +154,19 @@ void IterativeVcfWriter::addRecords(
 
     for (const std::string& variantId : variantIds)
     {
-        addRecord(variantId, locusSpec, locusFindings, capturedText);
+        addRecord(variantId, locusSpec, locusFindings);
     }
+}
+
+std::uintmax_t IterativeVcfWriter::flushAndGetFileSize()
+{
+    outStream_.flush();
+    outFile_.flush();
+    if (!outStream_ || !outFile_)
+    {
+        throw std::runtime_error("Failed to write " + outputFilePath_ + " (" + std::strerror(errno) + ")");
+    }
+    return boost::filesystem::file_size(outputFilePath_);
 }
 
 void IterativeVcfWriter::close()
