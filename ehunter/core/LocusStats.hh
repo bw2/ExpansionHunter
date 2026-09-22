@@ -106,8 +106,9 @@ AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex);
 //
 // What is mirrored from LocusStatsCalculator::estimate, so that the emitted Coverage field measures the
 // same quantity in both modes: the flank window, the rule that only reads anchored in a flank are
-// counted, and the number-of-start-positions denominator. `s.pos` inside a flank interval is the linear
-// stand-in for the graph rule "the alignment path's first node is a flank node".
+// counted, and the number-of-start-positions denominator. The read's first base (`s.pos` moved back by
+// any leading soft clip) inside a flank interval is the linear stand-in for the graph rule "the alignment
+// path's first node is a flank node".
 //
 // What is NOT mirrored, so the two will not agree read-for-read: LocusStatsCalculator only ever sees
 // reads the graph aligner accepted (LocusAnalyzer::processOntargetMates skips a mate whose alignment came
@@ -150,7 +151,8 @@ private:
     Accumulator fragLengthAccumulator_;
     GenomicRegion locusRegion_;
     // Reference flanks of the locus, matching the graph's first and last node under full genotyping
-    // (io/LocusSpecDecoding.cpp addFlankingRegions). Half-open, clamped to the start of the contig.
+    // (io/LocusSpecDecoding.cpp addFlankingRegions). Half-open, clamped to the start of the contig and,
+    // when contigLength is known, to its end.
     int64_t leftFlankStart_;
     int64_t rightFlankEnd_;
 

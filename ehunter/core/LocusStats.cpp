@@ -26,10 +26,39 @@
 #include <sstream>
 #include <stdexcept>
 
+#include <htslib/sam.h>
+
 using graphtools::GraphAlignment;
 
 namespace ehunter
 {
+
+namespace
+{
+
+// Reference position of the read's first base. BAM POS is the first ALIGNED base, so without this a read
+// whose leading bases the aligner soft-clipped (typically repeat sequence from an allele longer than the
+// reference) would look like it starts in the right flank. The graph aligner aligns the whole read, so it
+// starts that read in the repeat and does not count it.
+int64_t readStartIncludingSoftClip(const FullRead& read)
+{
+    int64_t start = read.s.pos;
+    for (const uint32_t operation : read.s.cigar)
+    {
+        if (bam_cigar_op(operation) == BAM_CHARD_CLIP)
+        {
+            continue;
+        }
+        if (bam_cigar_op(operation) == BAM_CSOFT_CLIP)
+        {
+            start -= bam_cigar_oplen(operation);
+        }
+        break;
+    }
+    return start;
+}
+
+}
 
 bool LocusStats::operator==(const LocusStats& other) const
 {
@@ -165,7 +194,7 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
         return Flank::kNone;
     }
 
-    const int64_t alignmentStart = read.s.pos;
+    const int64_t alignmentStart = readStartIncludingSoftClip(read);
     const int64_t alignmentEnd = alignmentStart + static_cast<int64_t>(read.r.sequence().size());
 
     // The read must fit inside the locus window, not merely start in a flank. estimate() below counts on
@@ -249,10 +278,10 @@ void LocusStatsCalculatorFromReadAlignments::recordReadLen(const Read& read)
 
 void LocusStatsCalculatorFromReadAlignments::recordFragLen(const FullRead& read, const FullRead& mate)
 {
-    const int64_t readStart = read.s.pos;
+    const int64_t readStart = readStartIncludingSoftClip(read);
     const int64_t readEnd = readStart + static_cast<int64_t>(read.r.sequence().size());
 
-    const int64_t mateStart = mate.s.pos;
+    const int64_t mateStart = readStartIncludingSoftClip(mate);
     const int64_t mateEnd = mateStart + static_cast<int64_t>(mate.r.sequence().size());
 
     if (readEnd < mateEnd)
