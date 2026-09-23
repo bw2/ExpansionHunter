@@ -33,6 +33,7 @@
 #include "genotyping/RepeatGenotype.hh"
 #include "genotyping/SmallVariantGenotype.hh"
 #include "locus/AlleleQualityMetrics.hh"
+#include "locus/MotifComposition.hh"
 #include "locus/RFC1Status.hh"
 
 namespace ehunter
@@ -128,12 +129,19 @@ public:
 
     boost::optional<double> genotypingTimeMillis() const { return genotypingTimeMillis_; }
 
+    // Counts of motifs and adjacent motif pairs in the reads' repeat sequence, set only under
+    // --output-motif-composition (see locus/MotifComposition.hh). Emitted as "MotifComposition".
+    void setMotifComposition(MotifComposition motifComposition) { motifComposition_ = std::move(motifComposition); }
+
+    const boost::optional<MotifComposition>& motifComposition() const { return motifComposition_; }
+
     // Compares core findings only: read counts and genotype.
     // Deliberately excludes:
     // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
     // - genotypeFilter_: metadata about genotyping confidence, not the findings
     // - rfc1Status_, alleleQualityMetrics_: post-hoc enrichment fields
     // - consensusSequences_, consensusReadSupport_: derived consensus annotations
+    // - motifComposition_: derived motif counts
     // These excluded fields are either metadata, derived from external context, or
     // post-hoc annotations that don't represent the fundamental repeat findings.
     bool operator==(const RepeatFindings& other) const
@@ -159,6 +167,7 @@ private:
     bool quickGenotype_ = false;                     // genotyped via the fast path (processLocusFast)
     bool reservoirSampling_ = false;                 // read set reservoir-sampled due to the --max-depth cap
     boost::optional<double> genotypingTimeMillis_;   // thread-CPU full-genotyping time (ms), --output-genotype-timing
+    boost::optional<MotifComposition> motifComposition_; // --output-motif-composition
 };
 
 class SmallVariantFindings : public VariantFindings

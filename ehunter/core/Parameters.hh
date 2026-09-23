@@ -71,6 +71,17 @@ enum class SortCatalogBy
     kNone
 };
 
+// --output-motif-composition: which loci get a MotifComposition record in the JSON output.
+enum class MotifCompositionMode
+{
+    kOff,
+    kAllLoci,
+    kLociWithNonRefMotifs
+};
+
+// Encodes a MotifCompositionMode the way --output-motif-composition spells it ("off" when the flag is not set).
+std::string motifCompositionModeToString(MotifCompositionMode mode);
+
 class InputPaths
 {
 public:
@@ -215,7 +226,8 @@ public:
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
         bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
         bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false,
-        bool initResume = false, size_t initAbortAfterLoci = 0)
+        bool initResume = false, size_t initAbortAfterLoci = 0,
+        MotifCompositionMode initMotifCompositionMode = MotifCompositionMode::kOff)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -228,6 +240,7 @@ public:
         , outputGenotypeTiming_(initOutputGenotypeTiming)
         , resume_(initResume)
         , abortAfterLoci_(initAbortAfterLoci)
+        , motifCompositionMode_(initMotifCompositionMode)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -282,6 +295,8 @@ public:
     // Test-only hook (--internal-abort-after-loci): abort the process, without unwinding, once this many
     // loci have been checkpointed. 0 disables it. Used to produce a deterministically interrupted run.
     size_t abortAfterLoci() const { return abortAfterLoci_; }
+    // --output-motif-composition: write motif and motif-pair counts for eligible repeat loci to the JSON output.
+    MotifCompositionMode motifCompositionMode() const { return motifCompositionMode_; }
 
     // The genotype-quality model used to annotate output (embedded by default, or loaded
     // from --genotype-quality-model). Null when no model is available, in which case no
@@ -309,6 +324,7 @@ private:
     bool outputGenotypeTiming_;
     bool resume_;
     size_t abortAfterLoci_;
+    MotifCompositionMode motifCompositionMode_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

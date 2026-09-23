@@ -21,6 +21,7 @@
 #include "io/LocusSpecDecoding.hh"
 #include "io/ParameterLoading.hh"
 #include "locus/AlleleQualityMetrics.hh"
+#include "locus/MotifComposition.hh"
 #include "reviewer/ConsensusSequence.hh"
 #include "reviewer/Metrics.hh"
 #include "reviewer/ReviewerWorkflow.hh"
@@ -512,7 +513,7 @@ FastReadAnalysisResult processRead(
 
 bool processLocusFast(
     const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
-    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled, int typicalReadLength,
     IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter) {
 
     // Per-locus fast-path timing (thread-CPU clock), mirroring the full-genotyper path in
@@ -1053,6 +1054,11 @@ bool processLocusFast(
 		return false;
 	}
 
+    // Called only after the last `return false` above. A locus this fast path declines is re-genotyped by the
+    // full genotyper, which adds its own motif composition (HtsLowMemStreamingSampleAnalysis.cpp), so computing
+    // it any earlier would be wasted work for that locus.
+    addMotifComposition(params, reference, locusSpec, locusFindings, readPairs, typicalReadLength);
+
     jsonWriter.addRecord(locusSpec, locusFindings);
     for (const auto& variantIdAndFindings : locusFindings.findingsForEachVariant)
     {
@@ -1063,9 +1069,94 @@ bool processLocusFast(
     return true;
 }
 
+void addMotifComposition(
+    const ProgramParameters& params, Reference& reference, const LocusSpecification& locusSpec,
+    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength)
+{
+    if (params.motifCompositionMode() == MotifCompositionMode::kOff)
+    {
+        return;
+    }
+    // Loci with a single repeat only; small variants elsewhere in the locus do not matter.
+    const VariantSpecification* repeatVariantSpec = nullptr;
+    for (const VariantSpecification& spec : locusSpec.variantSpecs())
+    {
+        if (spec.classification().type == VariantType::kRepeat)
+        {
+            if (repeatVariantSpec != nullptr)
+            {
+                return;
+            }
+            repeatVariantSpec = &spec;
+        }
+    }
+    if (repeatVariantSpec == nullptr)
+    {
+        return;
+    }
+    const VariantSpecification& variantSpec = *repeatVariantSpec;
+    const string& motif = locusSpec.regionGraph().nodeSeq(variantSpec.nodes().front());
+    if (!isEligibleForMotifComposition(static_cast<int>(motif.size()), typicalReadLength))
+    {
+        return;
+    }
+    const auto findingsIt = locusFindings.findingsForEachVariant.find(variantSpec.id());
+    RepeatFindings* repeatFindings = findingsIt == locusFindings.findingsForEachVariant.end()
+        ? nullptr
+        : dynamic_cast<RepeatFindings*>(findingsIt->second.get());
+    if (repeatFindings == nullptr)
+    {
+        return;
+    }
+
+    const bool onlyLociWithNonRefMotifs
+        = params.motifCompositionMode() == MotifCompositionMode::kLociWithNonRefMotifs;
+    if (readPairs.empty())
+    {
+        if (!onlyLociWithNonRefMotifs)
+        {
+            repeatFindings->setMotifComposition(MotifComposition());
+        }
+        return;
+    }
+
+    MotifCompositionLocus locus;
+    locus.contigIndex = variantSpec.referenceLocus().contigIndex();
+    locus.referenceRepeatStart = variantSpec.referenceLocus().start();
+    locus.referenceRepeatEnd = variantSpec.referenceLocus().end();
+    locus.catalogMotif = motif;
+    locus.referenceRepeatSequence = reference.getSequence(variantSpec.referenceLocus());
+    locus.catalogKnownMotifs
+        = selectCatalogKnownMotifs(locusSpec.knownMotifs(), static_cast<int>(motif.size()), locusSpec.locusId());
+    const int kFlankLength = 30;
+    const int64_t contigSize = reference.contigInfo().getContigSize(locus.contigIndex);
+    locus.leftFlankSequence = reference.getSequence(GenomicRegion(
+        locus.contigIndex, std::max<int64_t>(0, locus.referenceRepeatStart - kFlankLength),
+        locus.referenceRepeatStart));
+    locus.rightFlankSequence = reference.getSequence(GenomicRegion(
+        locus.contigIndex, locus.referenceRepeatEnd,
+        std::min<int64_t>(contigSize, locus.referenceRepeatEnd + kFlankLength)));
+    locus.meanFragmentLength = locusFindings.stats.meanFragLength();
+
+    std::vector<const FullReadPair*> readPairPointers;
+    readPairPointers.reserve(readPairs.size());
+    for (const auto& readPair : readPairs)
+    {
+        readPairPointers.push_back(readPair.get());
+    }
+
+    boost::optional<MotifComposition> motifComposition = computeMotifComposition(
+        locus, typicalReadLength, params.heuristics().regionExtensionLength(), readPairPointers,
+        repeatFindings->optionalGenotype(), onlyLociWithNonRefMotifs);
+    if (motifComposition)
+    {
+        repeatFindings->setMotifComposition(std::move(*motifComposition));
+    }
+}
+
 bool writeZeroCoverageRecord(
     const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter)
+    int typicalReadLength, IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter)
 {
     // A zero-coverage locus has all-missing genotypes, so --skip-missing-genotypes excludes it entirely
     // (no record, and no graph build).
@@ -1109,6 +1200,7 @@ bool writeZeroCoverageRecord(
             }
             locusFindings.findingsForEachVariant.emplace(variantSpec.id(), std::move(variantFindingsPtr));
         }
+        addMotifComposition(params, reference, locusSpec, locusFindings, {}, typicalReadLength);
 
         jsonWriter.addRecord(locusSpec, locusFindings);
         vcfWriter.addRecords(locusSpec, locusFindings);

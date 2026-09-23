@@ -23,6 +23,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
+
+#include "thirdparty/json/json.hpp"
 
 #include "core/Common.hh"
 #include "core/Parameters.hh"
@@ -36,5 +39,11 @@ LocusDescriptionCatalog loadLocusDescriptions(
 	const ProgramParameters& params, const Reference& reference);
 RegionCatalog convertLocusDescriptionsToLocusSpecs(
     LocusDescriptionCatalog& locusDescriptionCatalog, const HeuristicParameters& heuristicParams, Reference& reference);
+
+// The optional "KnownMotifs" field of a catalog locus record: motifs to treat as known at this locus in
+// --output-motif-composition, as written in the catalog (empty if the field is absent). Entries the motif composition
+// calculation cannot use are skipped there, with a warning (see selectCatalogKnownMotifs). Throws if the field is
+// not an array of strings.
+std::vector<std::string> decodeKnownMotifs(const nlohmann::json& locusJson, const std::string& locusId);
 
 }

@@ -204,7 +204,10 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
     // contained reads). Low-mem streaming is looser on both sides -- its cache keeps a whole pair when
     // EITHER mate is contained, and genotypeLocusFull's containment test only picks single-ended vs paired
     // routing for NEARBY pairs, so a far-apart pair passes both mates through regardless. Applying the
-    // strict rule here keeps the numerator consistent with the denominator and matches seeking exactly.
+    // strict rule here keeps the numerator consistent with the denominator. It matches seeking except for
+    // reads with a leading soft clip: seeking tests containment from POS, while this tests it from the read's
+    // first base (readStartIncludingSoftClip), so such a read near either edge of the window can be kept by
+    // one and dropped by the other.
     if (alignmentStart < leftFlankStart_ || alignmentEnd > rightFlankEnd_)
     {
         return Flank::kNone;

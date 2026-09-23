@@ -89,6 +89,9 @@ struct UserParameters
     std::string genotypeQualityModelPath;
     bool resume = false;
     size_t abortAfterLoci = 0;
+    string motifCompositionMode;
+    // True when --max-depth was given on the command line rather than left at its default.
+    bool maxDepthWasSet = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -117,6 +120,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
         ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
         ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
+        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not. Only works in optimized-streaming and low-mem-streaming modes, and only for loci with a single repeat. Raises the default --max-depth to 500.")
     ;
     // clang-format on
 
@@ -196,6 +200,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
     }
 
     po::notify(argumentMap);
+    params.maxDepthWasSet = argumentMap.count("max-depth") && !argumentMap["max-depth"].defaulted();
 
     return params;
 }
@@ -297,6 +302,25 @@ void assertValidity(const UserParameters& userParameters)
         throw std::invalid_argument(
             "--resume and --enable-bamlet-output cannot be used together: the bamlet is rewritten from "
             "scratch on each run, so a resumed run would produce one covering only the loci it genotyped");
+    }
+
+    if (!userParameters.motifCompositionMode.empty())
+    {
+        if (userParameters.motifCompositionMode != "all-loci"
+            && userParameters.motifCompositionMode != "loci-with-non-ref-motifs")
+        {
+            throw std::invalid_argument(
+                "--output-motif-composition must be set to either all-loci or loci-with-non-ref-motifs, not '"
+                + userParameters.motifCompositionMode + "'");
+        }
+        // Motif composition is counted from each read's original alignment (its CIGAR string). Streaming mode does
+        // not keep it, and seeking mode is not supported yet.
+        if (userParameters.analysisMode != "low-mem-streaming" && userParameters.analysisMode != "optimized-streaming")
+        {
+            throw std::invalid_argument(
+                "--output-motif-composition only works in optimized-streaming and low-mem-streaming modes, not in "
+                + userParameters.analysisMode + " mode");
+        }
     }
 
     // Validate input file paths
@@ -459,6 +483,26 @@ static graphtools::AlignerType decodeAlignerType(const string& alignerType)
     }
 }
 
+static MotifCompositionMode decodeMotifCompositionMode(const string& encoding)
+{
+    if (encoding.empty())
+    {
+        return MotifCompositionMode::kOff;
+    }
+    else if (encoding == "all-loci")
+    {
+        return MotifCompositionMode::kAllLoci;
+    }
+    else if (encoding == "loci-with-non-ref-motifs")
+    {
+        return MotifCompositionMode::kLociWithNonRefMotifs;
+    }
+    else
+    {
+        throw std::logic_error(encoding + " is not a valid motif composition mode");
+    }
+}
+
 static SortCatalogBy decodeSortCatalogBy(const string& encoding)
 {
     if (encoding == "position")
@@ -568,13 +612,23 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         }
     }
 
+    // Motif composition tests new motifs against absolute read counts, so capping a deep locus at the usual
+    // --max-depth would change which motifs are found there, not just the counts. When the flag is on and the
+    // user did not choose a depth, keep more reads.
+    const MotifCompositionMode motifCompositionMode = decodeMotifCompositionMode(userParams.motifCompositionMode);
+    const int kMaxDepthWithMotifComposition = 500;
+    const int maxDepth = (motifCompositionMode != MotifCompositionMode::kOff && !userParams.maxDepthWasSet)
+        ? kMaxDepthWithMotifComposition
+        : userParams.maxDepth;
+
     ProgramParameters programParameters(
         inputPaths, sortCatalogBy, outputPaths, sampleParameters, heuristicParameters, analysisMode, userParams.locus,
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
         userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences,
-        userParams.maxDepth, userParams.outputGenotypeTiming, userParams.resume, userParams.abortAfterLoci);
+        maxDepth, userParams.outputGenotypeTiming, userParams.resume, userParams.abortAfterLoci,
+        motifCompositionMode);
     programParameters.setGenotypeQualityModel(std::move(genotypeQualityModel));
     return programParameters;
 }

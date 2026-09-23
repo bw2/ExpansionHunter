@@ -63,8 +63,16 @@ FastReadAnalysisResult processRead(
 
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
-    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled, int typicalReadLength,
     IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
+
+// When --output-motif-composition is specified, computes the motif composition of the locus's repeat from its cached reads and
+// attaches it to the repeat's findings. Applies only to loci with a single repeat variant (small variants may sit
+// alongside it) whose motif is between 2 bp and a third of typicalReadLength; other loci are left unchanged. With no reads, all-loci mode attaches an
+// empty composition (no reference access), so every eligible locus written to the JSON carries the field.
+void addMotifComposition(
+    const ProgramParameters& params, Reference& reference, const LocusSpecification& locusSpec,
+    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength);
 
 // Emit a no-call record for a locus with zero coverage, identical to what seeking/streaming mode produce,
 // without running genotyping. For single-region loci it builds a flankless stub LocusSpecification
@@ -78,5 +86,5 @@ bool processLocusFast(
 // Returns true if a no-call record was written, false if the locus was suppressed (--skip-missing-genotypes).
 bool writeZeroCoverageRecord(
     const ProgramParameters& params, Reference& reference, const LocusDescription& locusDescription,
-    IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
+    int typicalReadLength, IterativeJsonWriter& jsonWriter, IterativeVcfWriter& vcfWriter);
 }

@@ -57,6 +57,9 @@ Repeat records contain the following fields.
 * `ConsensusSequencesReadSupport` (optional) Array of read support strings
   corresponding to `ConsensusSequences`. See [Consensus sequences](#consensus-sequences)
   below for details.
+* `MotifComposition` (optional) Counts of each motif, and of each pair of adjacent motifs, within
+  read sequences overlapping the locus. Only written when `--output-motif-composition` is
+  specified. See [Motif composition](#motif-composition) below for details.
 
 ## Small variant records
 
@@ -213,6 +216,81 @@ always match what full genotyping would produce for the same locus:
 
 The genotype, confidence intervals, and read counts are unaffected by any of this -- the
 consensus is derived from the same reads after the call is made, and never changes it.
+
+## Motif composition
+
+When `--output-motif-composition` is specified, the output JSON file will include a
+`MotifComposition` field that describes which motifs were observed within read sequences
+overlapping each locus. For example:
+
+```json
+"MotifComposition": {
+    "Motifs": {"1:CAG": "(305, 20)", "2:CAA": "(15, 9)"},
+    "MotifPairs": {"[1][1]": "(250, 20)", "[1][2]": "(14, 9)", "[2][1]": "(13, 9)"},
+    "Allele1": {
+        "Motifs": {"1:CAG": "(130, 9)"},
+        "MotifPairs": {"[1][1]": "(118, 9)"}
+    },
+    "Allele2": {
+        "Motifs": {"1:CAG": "(160, 10)", "2:CAA": "(15, 9)"},
+        "MotifPairs": {"[1][1]": "(120, 10)", "[1][2]": "(14, 9)", "[2][1]": "(13, 9)"}
+    }
+}
+```
+
+* `Motifs` Keys are `"<id>:<motif>"`. Motif IDs are numbered from 1, sorted by how frequently they
+  were observed.
+* `MotifPairs` Keys are `"[<id>][<id>]"`. They represent consecutive motif pairs observed within
+  the read sequences. Pairs are counted only between neighboring motifs with nothing in between
+  them, so two repeats separated by an indel are not counted as a pair (though they could be added
+  to the individual observed motif counts). For example, if a read contains a
+  `CAG.CAG.CAA.CAA.CAG.CAG.CAG` sequence at a `CAG` repeat locus, it would add the following counts
+  to the output:
+
+  ```json
+  "MotifComposition": {
+      "Motifs": {"1:CAG": "(5, 1)", "2:CAA": "(2, 1)"},
+      "MotifPairs": {"[1][1]": "(3, 1)", "[1][2]": "(1, 1)", "[2][1]": "(1, 1)", "[2][2]": "(1, 1)"}
+  }
+  ```
+
+* Each value is a string `"(<occurrences>, <reads>)"`: how many times the motif (or pair) was
+  counted, and how many distinct reads contain at least one counted occurrence. Counts grow with
+  depth; `Coverage` can be used to normalize them.
+* `Allele1`, `Allele2` sections contain per-allele counts. These sections are only included for
+  heterozygous calls whose allele sizes differ by at least 2 repeat units, and when at least one
+  read could be unambiguously assigned to either allele. Reads are assigned based on the allele
+  length they support: For example, a read that is longer than the short allele (this can be a
+  flanking or in-repeat read) is assigned to the long allele. Reads that cannot be assigned count
+  only toward the locus totals, so the two allele sections can add up to less than the locus
+  totals.
+
+How it works, in brief:
+
+* Reads are parsed using their original BAM/CRAM alignments rather than their alignments to the
+  locus graph. A read made of a different motif than the catalog motif usually fails graph
+  alignment, but it is kept here.
+* The bases aligned between the two edges of a repeat locus are extracted, along with in-repeat
+  reads.
+* The repeat sequence is split into motif-sized substrings. Where a substring does not match a
+  known motif, the splitter looks ahead up to one motif length so that an indel or a partial motif
+  does not disrupt every subsequent substring. Bases skipped this way are not counted.
+* A homopolymer substring (such as `GGG` at a CAG locus) is never counted as a new motif.
+* A motif that is not in the reference repeat sequence (a new motif) is counted only if it is seen
+  in at least 2 read pairs, in at least 0.5% of the read pairs at the locus, and in enough reads
+  that it cannot be explained away as a sequencing error given a per-base error rate of 0.001.
+* A substring that differs from a more common motif at a low-quality base is not counted.
+* A catalog can list the motifs expected at a locus in an optional `KnownMotifs` field (see
+  [Variant catalog files](04_VariantCatalogFiles.md)). For each listed motif, the rotation the reads
+  show most often is counted without the sequencing-error part of the new-motif test above (it
+  still needs the same minimum number of read pairs); its other rotations are treated as frame
+  shifts and not counted.
+
+Limitations:
+
+* Only `--analysis-mode optimized-streaming` and `low-mem-streaming` are supported.
+* Motif units whose length differs from the catalog motif (for example 29 or 31 bp units in a
+  30 bp-motif VNTR) are not counted, even when listed in `KnownMotifs`.
 
 ## Catalog field passthrough
 

@@ -218,6 +218,7 @@ add_executable(UnitTests
         tests/AlignmentClassifierTest.cpp
         tests/AlignmentSummaryTest.cpp
         tests/AlleleCheckerTest.cpp
+        tests/CatalogLoadingKnownMotifsTest.cpp
         tests/CatalogLoadingPlotTest.cpp
         tests/ChromosomeStrideTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
@@ -238,6 +239,7 @@ add_executable(UnitTests
         tests/LocusSpecificationPlotTest.cpp
         tests/LocusStatsTest.cpp
         tests/MateExtractorMergeTest.cpp
+        tests/MotifCompositionTest.cpp
         tests/ReadSupportCalculatorTest.cpp
         tests/ReadTest.cpp
         tests/RegionGraphTest.cpp

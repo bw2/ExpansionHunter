@@ -40,4 +40,18 @@ std::string analysisModeToString(AnalysisMode mode)
     throw std::logic_error("Invalid AnalysisMode");
 }
 
+std::string motifCompositionModeToString(MotifCompositionMode mode)
+{
+    switch (mode)
+    {
+    case MotifCompositionMode::kOff:
+        return "off";
+    case MotifCompositionMode::kAllLoci:
+        return "all-loci";
+    case MotifCompositionMode::kLociWithNonRefMotifs:
+        return "loci-with-non-ref-motifs";
+    }
+    throw std::logic_error("Invalid MotifCompositionMode");
+}
+
 }

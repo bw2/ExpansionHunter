@@ -133,6 +133,15 @@ itself.
   file showing read alignments is generated. See
   [Read Visualization Conditions](#read-visualization-conditions) below.
 
+* `KnownMotifs` Optional array of motifs that `--output-motif-composition`
+  treats as known at this locus (for example
+  `"KnownMotifs": ["CAG", "CAA", "CCG"]`). The order of the entries does not
+  matter, and each can be written in any rotation. Entries must have the same
+  length as the `LocusStructure` motif, and must consist of A, C, G or T bases
+  only (other IUPAC letters are not supported). Otherwise, they will be skipped
+  with a warning. Additional motifs can still be discovered from the reads. See
+  [Motif composition](05_OutputJsonFiles.md#motif-composition).
+
 
 ## Using regular expressions to define locus structure
 
