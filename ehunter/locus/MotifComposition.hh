@@ -20,8 +20,7 @@
 // Motif composition of a repeat locus (--output-motif-composition): counts of each motif and of each pair of
 // adjacent motifs in the reads' repeat sequence, for the whole locus and, when the two alleles differ enough in
 // length, for each allele. Counting uses the reads' original BAM/CRAM alignments rather than their graph
-// alignments, so reads made of a motif other than the catalog motif are kept. See MOTIF_COMPOSITION_PLAN.md at
-// the repository root for the design and the reasoning behind each rule.
+// alignments, so reads made of a motif other than the catalog motif are kept.
 
 #pragma once
 
@@ -149,7 +148,7 @@ struct SequenceSubstring
     SequenceSubstringType type;
 };
 
-// Splits a tract into motif-sized substrings and gaps (plan section 5.2). knownMotifs are concrete upper-case motifs
+// Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs
 // ordered most common first; the shift search compares against the catalog motif and the first 8 of them.
 // startOffset is where the first substring starts. Candidate new motifs that do not touch another substring or a
 // trusted end of the tract on both sides are turned into gaps.

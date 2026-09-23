@@ -55,7 +55,7 @@ namespace
 // of the most common known motifs.
 const size_t kMaxMotifsInShiftSearch = 8;
 
-// Per-base error rate of high-quality bases (e in the plan), used to predict how often a sequencing error turns a
+// Per-base error rate of high-quality bases, used to predict how often a sequencing error turns a
 // common motif into a one-base variant of it.
 const double kMotifCompositionBaseErrorRate = 0.001;
 // Target chance that sequencing errors alone add a false motif at a locus.
@@ -234,7 +234,7 @@ void mergeAdjacentGaps(vector<SequenceSubstring>& sequenceSubstrings)
     sequenceSubstrings.swap(merged);
 }
 
-// Plan section 5.2; see splitIntoMotifs for the arguments. `upperTract` is `tract` in upper case; `tract` keeps the
+// See splitIntoMotifs for the arguments. `upperTract` is `tract` in upper case; `tract` keeps the
 // case that marks base quality.
 void splitTract(
     const string& tract, const string& upperTract, const string& catalogMotif, const MotifList& knownMotifs,
@@ -504,7 +504,7 @@ RepeatEdgeAlignment summarizeAlignment(const FullRead& read, int64_t repeatStart
             // A whole-motif insertion is a change in repeat length. As in the fast path, it counts toward the
             // assignment length when it lies in [S - k - 1, E + k], and it belongs to the tract when it sits
             // exactly on an edge. An insertion the aligner placed a few bases further out is separated from the
-            // tract by aligned flank bases; taking it in as well is left to a later milestone (plan 5.1).
+            // tract by aligned flank bases; taking it in as well is left to a later milestone.
             if (length % motifLength == 0)
             {
                 if (referencePosition >= repeatStart - motifLength - 1 && referencePosition <= repeatEnd + motifLength)
@@ -584,7 +584,7 @@ int computeOffsetFromReferenceFrame(int64_t referencePosition, const MotifCompos
 }
 
 // A 12-mer of reference flank close to the repeat that differs from the repeat, used to find where a read's repeat
-// sequence ends and the flank begins (plan 5.1).
+// sequence ends and the flank begins.
 struct FlankAnchor
 {
     string sequence;
@@ -834,7 +834,7 @@ int countSupportingReadPairs(
     return readPairs.size();
 }
 
-// Plan section 5.3: tests candidates in decreasing order of occurrences and adds the accepted ones to knownStats.
+// Tests candidates in decreasing order of occurrences and adds the accepted ones to knownStats.
 vector<string> acceptNewMotifs(
     const std::unordered_map<string, vector<SequenceSubstringLocation>>& candidates,
     std::unordered_map<string, MotifStats>& knownStats, const vector<RepeatTract>& tracts, const AcceptanceTest& test)
@@ -948,7 +948,7 @@ MotifCompositionCounts encodeCounts(const GroupTallies& tallies, const vector<in
     return counts;
 }
 
-// Plan section 5.5: 0 = not assigned, 1 = shorter allele, 2 = longer allele.
+// 0 = not assigned, 1 = shorter allele, 2 = longer allele.
 int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, int motifLength, int readLength)
 {
     switch (tract.kind)
@@ -1158,7 +1158,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     const int64_t repeatEnd = locus.referenceRepeatEnd;
     const bool catalogMotifIsConcrete = graphtools::checkIfNucleotideReferenceSequence(catalogMotif);
 
-    // --- Reference motifs (plan 5.7): parse the reference repeat, both of whose ends are trusted.
+    // --- Reference motifs: parse the reference repeat, both of whose ends are trusted.
     const int frameOffset = computeFrameOffset(locus.referenceRepeatSequence, catalogMotif);
     std::unordered_map<string, MotifStats> knownStats;
     {
@@ -1202,7 +1202,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     const boost::optional<string> referenceEndPartial = locus.referenceRepeatSequence.substr(
         repeatLength - std::max(0, repeatLength - frameOffset) % motifLength);
 
-    // --- Collect the tracts (plan 5.1): reads mapped to the repeat first, then in-repeat reads.
+    // --- Collect the tracts: reads mapped to the repeat first, then in-repeat reads.
     double averageMapq = 0;
     int mappedReadCount = 0;
     for (const FullReadPair* readPair : readPairs)
@@ -1412,14 +1412,14 @@ boost::optional<MotifComposition> computeMotifComposition(
             // A read that BWA placed confidently near the repeat, but not in it, came from where it was placed, for
             // example a neighbouring repeat of the same period or a repetitive flank; it is not an in-repeat read of
             // this repeat. (Telling apart the in-repeat reads of an expansion that BWA placed in a neighbouring repeat
-            // of the same motif needs the comparison between neighbouring repeats in plan 5.4, not yet implemented.)
+            // of the same motif needs a comparison between neighbouring repeats, not yet implemented.)
             if (read->s.isMapped && read->s.chromId == locus.contigIndex && read->s.mapq > 3
                 && read->s.pos < repeatEnd + flankLength && computeAlignedEnd(*read) > repeatStart - flankLength)
             {
                 continue;
             }
 
-            // In-repeat read: made of repeat and placed anywhere else (plan 5.1, 5.4). Its orientation comes from the
+            // In-repeat read: made of repeat and placed anywhere else. Its orientation comes from the
             // anchored mate: in a forward-reverse pair it comes from the strand opposite the mate.
             if (!mateIsAnchored || hasUnusuallyLowMapq(*mate, averageMapq)
                 || !passesPeriodTest(bases, motifLength, kMotifCompositionMinInrepeatReadPeriodScore))
@@ -1459,7 +1459,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     const bool isHeterozygousWithDistinctAlleles = genotype && genotype->numAlleles() == 2
         && genotype->longAlleleSizeInUnits() - genotype->shortAlleleSizeInUnits() >= 2;
 
-    // --- Parse with a given motif list and collect candidates (plan 5.3, 5.4).
+    // --- Parse with a given motif list and collect candidates.
     vector<string> upperTracts(tracts.size());
     for (size_t index = 0; index != tracts.size(); ++index)
     {
@@ -1607,7 +1607,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     }
     candidates.clear();
 
-    // --- Final motif list (plan 5.5): merge the rotations of each new motif into the one closest to the catalog
+    // --- Final motif list: merge the rotations of each new motif into the one closest to the catalog
     // motif, and drop new motifs that are rotations of a reference motif or of a catalog known motif found in the
     // reads.
     {
@@ -1668,7 +1668,7 @@ boost::optional<MotifComposition> computeMotifComposition(
             finalMotifs[index], knownStats.at(finalMotifs[index]).occurrences, knownStats);
     }
 
-    // --- Final parse and counting (plan 5.5, 5.6). A substring counts only if it is on the final list and its bases
+    // --- Final parse and counting. A substring counts only if it is on the final list and its bases
     // are high quality where it differs from its nearest more common motifs; anything else becomes a gap, which
     // breaks pairs.
     GroupTallies locusTallies(finalMotifs.size());

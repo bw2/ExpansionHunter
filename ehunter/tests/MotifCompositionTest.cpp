@@ -182,7 +182,7 @@ TEST(MotifCompositionFrame, OffsetOfTheBestTiling)
     EXPECT_EQ(0, computeFrameOffset(repeatMotif("AAGGG", 4), "AARRG"));
 }
 
-TEST(MotifCompositionSplitting, WorkedExampleFromThePlan)
+TEST(MotifCompositionSplitting, InterruptionAndDeletion)
 {
     // A CAA interruption and a 1 bp deletion: CAG CAG CAA CAG | gap | CAG CAG.
     const vector<SequenceSubstring> sequenceSubstrings
@@ -303,7 +303,7 @@ TEST(MotifCompositionPoisson, UpperTail)
 {
     EXPECT_DOUBLE_EQ(1.0, computePoissonUpperTail(2.0, 0));
     EXPECT_DOUBLE_EQ(0.0, computePoissonUpperTail(0.0, 1));
-    // Values from scipy.stats.poisson.sf; the first two are the plan's CAG x 20 example.
+    // Values from scipy.stats.poisson.sf.
     EXPECT_NEAR(3.2246e-5, computePoissonUpperTail(0.58, 6), 1e-8);
     EXPECT_NEAR(2.6429e-6, computePoissonUpperTail(0.58, 7), 1e-9);
     EXPECT_NEAR(1.10249e-3, computePoissonUpperTail(3.0, 10), 1e-7);
