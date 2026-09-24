@@ -30,6 +30,7 @@
 
 #include <htslib/sam.h>
 
+#include "core/Common.hh"
 #include "core/Read.hh"
 #include "graphutils/BaseMatching.hh"
 #include "graphutils/SequenceOperations.hh"
@@ -203,10 +204,10 @@ bool partialMotifMatchesMotif(
     return std::any_of(knownMotifs.begin(), knownMotifs.end(), matches);
 }
 
-// Motif list with fast membership test. The order does not change any result; listing the most common motifs first
-// only lets the mismatch counting stop sooner, since a window usually matches one of them exactly. Every motif must
-// have the catalog motif's length: the mismatch counting reads that many bases from each window, so a longer motif
-// would read past the end of the sequence.
+// Motif list with fast membership test. List the motifs from most common to rarest when the counts are known: the
+// order does not change any result, but the mismatch counting stops as soon as a window matches a motif exactly, so
+// putting the motifs most windows match first speeds it up. Every motif must have the catalog motif's length: the
+// mismatch counting reads that many bases from each window, so a longer motif would read past the end of the sequence.
 class MotifList
 {
 public:
@@ -456,19 +457,14 @@ int countDifferences(const string& left, const string& right)
 // Reads and their repeat tracts
 // ------------------------------------------------------------------------------------------------------------
 
-enum class ReadKind
-{
-    kSpanning,
-    kFlanking,
-    kInsideRepeat, // mapped inside the repeat, reaching neither edge
-    kInrepeat // in-repeat read (IRR): made of repeat, placed elsewhere, with a mate anchored next to the repeat
-};
-
 struct RepeatTract
 {
     string bases; // reference orientation; lower case marks low-quality bases
     int readPairIndex;
-    ReadKind kind;
+    // Judged from the read's BAM/CRAM alignment, not its graph alignment. kRepeat covers both reads mapped inside the
+    // repeat, reaching neither edge, and in-repeat reads (IRRs) placed elsewhere with a mate anchored next to the
+    // repeat. kOther is not used.
+    ReadType kind;
     int lengthForAssignment; // repeat length in bp used to assign the read to an allele
     bool startsAtRepeatEdge;
     bool endsAtRepeatEdge;
@@ -997,7 +993,7 @@ int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, in
 {
     switch (tract.kind)
     {
-    case ReadKind::kSpanning:
+    case ReadType::kSpanning:
     {
         const int units = tract.lengthForAssignment / motifSize;
         const int distanceToShort = std::abs(units - shortAllele);
@@ -1012,11 +1008,12 @@ int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, in
         }
         return 0;
     }
-    case ReadKind::kFlanking:
+    case ReadType::kFlanking:
         return tract.lengthForAssignment / motifSize > shortAllele + std::max(1.0, 0.1 * shortAllele) ? 2 : 0;
-    case ReadKind::kInsideRepeat:
-    case ReadKind::kInrepeat:
+    case ReadType::kRepeat:
         return (longAllele * motifSize >= readLength && shortAllele * motifSize < readLength) ? 2 : 0;
+    case ReadType::kOther:
+        break;
     }
     return 0;
 }
@@ -1363,7 +1360,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                     const bool isInside
                         = alignment.referenceStart >= repeatStart && alignment.referenceEnd <= repeatEnd;
                     tract.kind
-                        = isSpanning ? ReadKind::kSpanning : (isInside ? ReadKind::kInsideRepeat : ReadKind::kFlanking);
+                        = isSpanning ? ReadType::kSpanning : (isInside ? ReadType::kRepeat : ReadType::kFlanking);
                     tract.lengthForAssignment
                         = isSpanning ? alignment.lengthForAssignment : std::max(0, tractEnd - tractStart);
                 }
@@ -1384,7 +1381,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                                        kMotifCompositionMinSoftClipPeriodScore);
                         tract.startsAtRepeatEdge = true;
                         tract.startOffset = frameOffset;
-                        tract.kind = ReadKind::kFlanking;
+                        tract.kind = ReadType::kFlanking;
                         tract.lengthForAssignment = tractEnd - tractStart;
                     }
                 }
@@ -1402,7 +1399,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                                          bases, 0, 0, tractEnd, tractEnd, false, motifSize,
                                          kMotifCompositionMinSoftClipPeriodScore);
                         tract.endsAtRepeatEdge = true;
-                        tract.kind = ReadKind::kFlanking;
+                        tract.kind = ReadType::kFlanking;
                         tract.lengthForAssignment = tractEnd - tractStart;
                     }
                 }
@@ -1432,7 +1429,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                         tract.startOffset = -1;
                     }
                 }
-                if (tract.kind == ReadKind::kFlanking)
+                if (tract.kind == ReadType::kFlanking)
                 {
                     tract.lengthForAssignment = std::max(0, tractEnd - tractStart);
                 }
@@ -1443,7 +1440,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                 // Low MAPQ is judged on the read itself, except for reads mapped inside the repeat, whose placement
                 // is ambiguous by nature: for those it is judged on an anchored mate, if there is one.
                 const FullRead* mapqRead
-                    = tract.kind == ReadKind::kInsideRepeat ? (mateIsAnchored ? mate : nullptr) : read;
+                    = tract.kind == ReadType::kRepeat ? (mateIsAnchored ? mate : nullptr) : read;
                 if (mapqRead != nullptr && hasUnusuallyLowMapq(*mapqRead, averageMapq))
                 {
                     continue;
@@ -1470,7 +1467,7 @@ boost::optional<MotifComposition> computeMotifComposition(
             {
                 continue;
             }
-            tract.kind = ReadKind::kInrepeat;
+            tract.kind = ReadType::kRepeat;
             tract.bases = mate->r.isReversed() == read->r.isReversed() ? graphtools::reverseComplement(bases) : bases;
             {
                 // An in-repeat read can still hold some flank at either end.
@@ -1737,7 +1734,11 @@ boost::optional<MotifComposition> computeMotifComposition(
         GroupTallies* alleleTallies = allele == 1 ? &allele1Tallies : (allele == 2 ? &allele2Tallies : nullptr);
         if (spdlog::should_log(spdlog::level::debug))
         {
-            static const char* const kReadKindNames[] = { "spanning", "flanking", "inside", "inrepeat" };
+            // In-repeat reads come after the reads mapped to the locus.
+            const char* kindName = tract.kind == ReadType::kSpanning
+                ? "spanning"
+                : (tract.kind == ReadType::kFlanking ? "flanking"
+                                                     : (tractIndex < mappedTractCount ? "inside" : "inrepeat"));
             string encoding;
             for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
             {
@@ -1752,7 +1753,7 @@ boost::optional<MotifComposition> computeMotifComposition(
             }
             spdlog::debug(
                 "MotifComposition {}:{}-{} read pair {} {} allele {}: {}", locus.contigIndex, repeatStart, repeatEnd,
-                tract.readPairIndex, kReadKindNames[static_cast<int>(tract.kind)], allele, encoding);
+                tract.readPairIndex, kindName, allele, encoding);
         }
 
         int previousMotif = -1;
