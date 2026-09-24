@@ -460,12 +460,14 @@ int countDifferences(const string& left, const string& right)
 struct RepeatTract
 {
     string bases; // reference orientation; lower case marks low-quality bases
-    int readPairIndex;
+    int readPairIndex; // the read pair's position in computeMotifComposition's readPairs list
     // Judged from the read's BAM/CRAM alignment, not its graph alignment. kRepeat covers both reads mapped inside the
     // repeat, reaching neither edge, and in-repeat reads (IRRs) placed elsewhere with a mate anchored next to the
     // repeat. kOther is not used.
     ReadType kind;
-    int lengthForAssignment; // repeat length in bp used to assign the read to an allele
+    // Repeat length in bp used to assign the read to an allele: for a spanning read, the allele length it shows; for a
+    // flanking read, the repeat bases it shows, a lower bound on the allele length; not used for kRepeat reads.
+    int alleleLengthSupportedByThisRead;
     bool startsAtRepeatEdge;
     bool endsAtRepeatEdge;
     int startOffset; // frame offset of the first substring; -1 when it has to be found from the sequence
@@ -494,7 +496,7 @@ struct RepeatEdgeAlignment
     int flankBasesAfter = 0;
     // Aligned bases inside [S, E) plus whole-motif insertions near the repeat, computed the way the fast path
     // computes its size vote (processRead in sample/HtsLowMemStreamingHelpers.cpp).
-    int lengthForAssignment = 0;
+    int alleleLengthSupportedByThisRead = 0;
 };
 
 int64_t countOverlap(int64_t start, int64_t end, int64_t otherStart, int64_t otherEnd)
@@ -526,7 +528,8 @@ RepeatEdgeAlignment summarizeAlignment(const FullRead& read, int64_t repeatStart
             const int64_t operationEnd = referencePosition + length;
             summary.flankBasesBefore += countOverlap(referencePosition, operationEnd, INT64_MIN, repeatStart);
             summary.flankBasesAfter += countOverlap(referencePosition, operationEnd, repeatEnd, INT64_MAX);
-            summary.lengthForAssignment += countOverlap(referencePosition, operationEnd, repeatStart, repeatEnd);
+            summary.alleleLengthSupportedByThisRead
+                += countOverlap(referencePosition, operationEnd, repeatStart, repeatEnd);
             if (summary.readPositionAtStart == -1 && referencePosition <= repeatStart && repeatStart < operationEnd)
             {
                 summary.readPositionAtStart = readPosition + (repeatStart - referencePosition);
@@ -549,7 +552,7 @@ RepeatEdgeAlignment summarizeAlignment(const FullRead& read, int64_t repeatStart
             {
                 if (referencePosition >= repeatStart - motifSize - 1 && referencePosition <= repeatEnd + motifSize)
                 {
-                    summary.lengthForAssignment += length;
+                    summary.alleleLengthSupportedByThisRead += length;
                 }
                 if (summary.readPositionAtStart == -1 && referencePosition == repeatStart)
                 {
@@ -995,7 +998,7 @@ int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, in
     {
     case ReadType::kSpanning:
     {
-        const int units = tract.lengthForAssignment / motifSize;
+        const int units = tract.alleleLengthSupportedByThisRead / motifSize;
         const int distanceToShort = std::abs(units - shortAllele);
         const int distanceToLong = std::abs(units - longAllele);
         if (distanceToShort < distanceToLong && distanceToShort <= std::max(1.0, 0.1 * shortAllele))
@@ -1009,7 +1012,10 @@ int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, in
         return 0;
     }
     case ReadType::kFlanking:
-        return tract.lengthForAssignment / motifSize > shortAllele + std::max(1.0, 0.1 * shortAllele) ? 2 : 0;
+    {
+        const int units = tract.alleleLengthSupportedByThisRead / motifSize;
+        return units > shortAllele + std::max(1.0, 0.1 * shortAllele) ? 2 : 0;
+    }
     case ReadType::kRepeat:
         return (longAllele * motifSize >= readLength && shortAllele * motifSize < readLength) ? 2 : 0;
     case ReadType::kOther:
@@ -1284,12 +1290,10 @@ boost::optional<MotifComposition> computeMotifComposition(
     for (size_t pairIndex = 0; pairIndex != readPairs.size(); ++pairIndex)
     {
         const FullReadPair& readPair = *readPairs[pairIndex];
-        const FullRead* mates[2] = { readPair.firstMate ? &*readPair.firstMate : nullptr,
-                                     readPair.secondMate ? &*readPair.secondMate : nullptr };
-        for (int mateIndex = 0; mateIndex != 2; ++mateIndex)
+        const FullRead* firstMate = readPair.firstMate ? &*readPair.firstMate : nullptr;
+        const FullRead* secondMate = readPair.secondMate ? &*readPair.secondMate : nullptr;
+        for (const auto& [read, mate] : { std::pair(firstMate, secondMate), std::pair(secondMate, firstMate) })
         {
-            const FullRead* read = mates[mateIndex];
-            const FullRead* mate = mates[1 - mateIndex];
             if (read == nullptr || !isUsableAlignment(*read))
             {
                 continue;
@@ -1300,7 +1304,7 @@ boost::optional<MotifComposition> computeMotifComposition(
 
             RepeatTract tract;
             tract.readPairIndex = static_cast<int>(pairIndex);
-            tract.lengthForAssignment = 0;
+            tract.alleleLengthSupportedByThisRead = 0;
             tract.startsAtRepeatEdge = false;
             tract.endsAtRepeatEdge = false;
             tract.startOffset = -1;
@@ -1361,8 +1365,8 @@ boost::optional<MotifComposition> computeMotifComposition(
                         = alignment.referenceStart >= repeatStart && alignment.referenceEnd <= repeatEnd;
                     tract.kind
                         = isSpanning ? ReadType::kSpanning : (isInside ? ReadType::kRepeat : ReadType::kFlanking);
-                    tract.lengthForAssignment
-                        = isSpanning ? alignment.lengthForAssignment : std::max(0, tractEnd - tractStart);
+                    tract.alleleLengthSupportedByThisRead
+                        = isSpanning ? alignment.alleleLengthSupportedByThisRead : std::max(0, tractEnd - tractStart);
                 }
                 else if (
                     alignment.rightClipLength > 0 && alignment.referenceEnd <= repeatStart
@@ -1382,7 +1386,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                         tract.startsAtRepeatEdge = true;
                         tract.startOffset = frameOffset;
                         tract.kind = ReadType::kFlanking;
-                        tract.lengthForAssignment = tractEnd - tractStart;
+                        tract.alleleLengthSupportedByThisRead = tractEnd - tractStart;
                     }
                 }
                 else if (
@@ -1400,7 +1404,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                                          kMotifCompositionMinSoftClipPeriodScore);
                         tract.endsAtRepeatEdge = true;
                         tract.kind = ReadType::kFlanking;
-                        tract.lengthForAssignment = tractEnd - tractStart;
+                        tract.alleleLengthSupportedByThisRead = tractEnd - tractStart;
                     }
                 }
             }
@@ -1431,7 +1435,7 @@ boost::optional<MotifComposition> computeMotifComposition(
                 }
                 if (tract.kind == ReadType::kFlanking)
                 {
-                    tract.lengthForAssignment = std::max(0, tractEnd - tractStart);
+                    tract.alleleLengthSupportedByThisRead = std::max(0, tractEnd - tractStart);
                 }
                 if (tractEnd <= tractStart)
                 {
