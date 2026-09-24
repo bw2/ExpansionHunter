@@ -51,11 +51,6 @@ namespace motifcomposition
 namespace
 {
 
-// When no window matches exactly, the shift search and the start-offset search fall back to counting mismatches
-// against the catalog motif and at most this many of the most common known motifs. Exact matches are always checked
-// against every known motif.
-const size_t kMaxMotifsInShiftSearch = 8;
-
 // Per-base error rate of high-quality bases, used to predict how often a sequencing error turns a
 // common motif into a one-base variant of it.
 const double kMotifCompositionBaseErrorRate = 0.001;
@@ -109,8 +104,7 @@ int countMismatches(const char* window, const string& motif, int limit)
 int countFewestMismatches(const char* window, const string& catalogMotif, const vector<string>& knownMotifs, int limit)
 {
     int fewest = countMismatches(window, catalogMotif, limit);
-    const size_t motifCount = std::min(knownMotifs.size(), kMaxMotifsInShiftSearch);
-    for (size_t index = 0; index != motifCount && fewest > 0; ++index)
+    for (size_t index = 0; index != knownMotifs.size() && fewest > 0; ++index)
     {
         fewest = std::min(fewest, countMismatches(window, knownMotifs[index], fewest - 1));
     }
@@ -128,8 +122,8 @@ bool matchesMotifExactly(const char* window, const string& catalogMotif, const v
 }
 
 // Offset in [0, k) at which to tile motifs over the upper-case sequence: the offset with the most windows that match
-// a motif exactly, then the fewest mismatches over the other windows (against the catalog motif and the most common
-// known motifs), then the smallest offset. Every offset is scored over the same number of whole windows.
+// a motif exactly, then the fewest mismatches over the other windows (against the catalog motif and every known motif),
+// then the smallest offset. Every offset is scored over the same number of whole windows.
 int computeFrameOffsetAgainst(const string& sequence, const string& catalogMotif, const vector<string>& knownMotifs)
 {
     const int motifLength = catalogMotif.size();

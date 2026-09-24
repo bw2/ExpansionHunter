@@ -150,7 +150,7 @@ struct SequenceSubstring
 };
 
 // Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs
-// ordered most common first; the shift search compares against the catalog motif and the first 8 of them.
+// ordered most common first; the shift search compares against the catalog motif and all of them.
 // startOffset is where the first substring starts. Candidate new motifs that do not touch another substring or a
 // trusted end of the tract on both sides are turned into gaps.
 //
