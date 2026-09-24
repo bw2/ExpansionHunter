@@ -144,7 +144,7 @@ const string kInterruptedRepeat = "CAGCAGCAA" + repeatMotif("CAG", 7);
 
 } // namespace
 
-TEST(MotifCompositionEligibility, MotifLengthBetweenTwoAndAThirdOfTheReadLength)
+TEST(MotifCompositionEligibility, MotifSizeBetweenTwoAndAThirdOfTheReadLength)
 {
     EXPECT_FALSE(isEligibleForMotifComposition(1, 150));
     EXPECT_TRUE(isEligibleForMotifComposition(2, 150));
@@ -152,7 +152,7 @@ TEST(MotifCompositionEligibility, MotifLengthBetweenTwoAndAThirdOfTheReadLength)
     EXPECT_FALSE(isEligibleForMotifComposition(51, 150));
 }
 
-TEST(MotifCompositionPeriod, RepeatOfTheMotifLengthPasses)
+TEST(MotifCompositionPeriod, RepeatOfTheMotifSizePasses)
 {
     EXPECT_DOUBLE_EQ(1.0, computePeriodScore(repeatMotif("CAG", 10), 3));
     EXPECT_TRUE(passesPeriodTest(repeatMotif("CAG", 10), 3, 0.75));
@@ -175,11 +175,11 @@ TEST(MotifCompositionPeriod, HomopolymersAndShorterPeriodsAreRejected)
 
 TEST(MotifCompositionFrame, OffsetOfTheBestTiling)
 {
-    EXPECT_EQ(0, computeFrameOffset(repeatMotif("CAG", 5), "CAG"));
-    EXPECT_EQ(1, computeFrameOffset("A" + repeatMotif("CAG", 5), "CAG"));
-    EXPECT_EQ(2, computeFrameOffset("AG" + repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(0, computeReferenceRepeatFrame(repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(1, computeReferenceRepeatFrame("A" + repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(2, computeReferenceRepeatFrame("AG" + repeatMotif("CAG", 5), "CAG"));
     // IUPAC catalog motif.
-    EXPECT_EQ(0, computeFrameOffset(repeatMotif("AAGGG", 4), "AARRG"));
+    EXPECT_EQ(0, computeReferenceRepeatFrame(repeatMotif("AAGGG", 4), "AARRG"));
 }
 
 TEST(MotifCompositionSplitting, InterruptionAndDeletion)
@@ -243,6 +243,26 @@ TEST(MotifCompositionSplitting, CandidateAtAReadEndNeedsAMatchingPartialUnit)
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
 }
 
+TEST(MotifCompositionSplitting, PartialUnitMayHaveOneMismatchOnlyFromSixBases)
+{
+    // A 5-base partial unit must match the end of the motif exactly: CGTTG passes, CGTTA does not.
+    vector<SequenceSubstring> sequenceSubstrings
+        = splitIntoMotifs("CGTTGACCTTGACGTTG", "ACGTTG", { "ACGTTG" }, 5, false, false, string());
+    ASSERT_EQ(3u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
+
+    sequenceSubstrings = splitIntoMotifs("CGTTAACCTTGACGTTG", "ACGTTG", { "ACGTTG" }, 5, false, false, string());
+    ASSERT_EQ(2u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
+    EXPECT_EQ(11, sequenceSubstrings[0].length);
+
+    // A 6-base partial unit may have one mismatch: GTTGCT differs from the motif's end GTTGCA at one base.
+    sequenceSubstrings
+        = splitIntoMotifs("GTTGCTACCTTGCAACGTTGCA", "ACGTTGCA", { "ACGTTGCA" }, 6, false, false, string());
+    ASSERT_EQ(3u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
+}
+
 TEST(MotifCompositionSplitting, EndAtRepeatEdgeMustCarryTheReferencePartialUnit)
 {
     // Reference repeat CAG x 3 + "CA": the partial last unit is "CA".
@@ -277,6 +297,13 @@ TEST(MotifCompositionSplitting, IupacCatalogMotifMatchesAreRecordedAsTheirOwnBas
     EXPECT_EQ(SequenceSubstringType::kKnownMotif, sequenceSubstrings[0].type);
     EXPECT_EQ(SequenceSubstringType::kCatalogMotifMatch, sequenceSubstrings[1].type);
     EXPECT_EQ(SequenceSubstringType::kKnownMotif, sequenceSubstrings[2].type);
+}
+
+TEST(MotifCompositionSplitting, KnownMotifOfAnotherLengthIsRejected)
+{
+    EXPECT_THROW(
+        splitIntoMotifs("CAGCAGCAGCAG", "CAG", { "CAG", "CAGCAG" }, 0, true, true, string()), std::logic_error);
+    EXPECT_THROW(splitIntoMotifs("CAGCAGCAGCAG", "CAG", { "CA" }, 0, true, true, string()), std::logic_error);
 }
 
 TEST(MotifCompositionSoftClip, KeepsRepeatAndDropsWhatFollowsIt)

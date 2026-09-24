@@ -87,14 +87,14 @@ struct MotifCompositionLocus
 };
 
 // Motif lengths the calculation supports: at least 2, and at most a third of the read length.
-bool isEligibleForMotifComposition(int motifLength, int typicalReadLength);
+bool isEligibleForMotifComposition(int motifSize, int typicalReadLength);
 
 // The catalog's KnownMotifs for a locus, in upper case and in the catalog's order, without the entries the
 // calculation cannot use: motifs whose length differs from the catalog motif's, motifs with bases other than A, C,
 // G and T, and repeats of an earlier entry, including rotations of it (AAC after CAA). Each dropped entry is logged
 // as a warning that names the locus.
 std::vector<std::string> selectCatalogKnownMotifs(
-    const std::vector<std::string>& knownMotifs, int motifLength, const std::string& locusId);
+    const std::vector<std::string>& knownMotifs, int motifSize, const std::string& locusId);
 
 // Computes the motif composition of one repeat variant from the reads EH holds for its locus. The reads are
 // only read, never modified. When onlyLociWithNonRefMotifs is true, returns boost::none unless some counted motif
@@ -115,24 +115,24 @@ namespace motifcomposition
 // Fraction of positions whose base equals the base `lag` positions earlier (case-insensitive; N never matches).
 double computePeriodScore(const std::string& sequence, int lag);
 
-// True if the sequence repeats with period motifLength: its period score at lag motifLength is at least
-// minScore, and beats the score at every proper divisor of motifLength (including 1) by at least 0.1, so that
+// True if the sequence repeats with period motifSize: its period score at lag motifSize is at least
+// minScore, and beats the score at every proper divisor of motifSize (including 1) by at least 0.1, so that
 // homopolymers and repeats of a shorter period are rejected.
-bool passesPeriodTest(const std::string& sequence, int motifLength, double minScore);
+bool passesPeriodTest(const std::string& sequence, int motifSize, double minScore);
 
 // The offset in [0, motif length) at which tiling the motif over the sequence gives the most exactly matching
 // windows, then the fewest mismatches over the other windows (ties: smallest offset). Every offset is scored over
 // the same number of whole motif-sized windows.
-int computeFrameOffset(const std::string& sequence, const std::string& motif);
+int computeReferenceRepeatFrame(const std::string& sequence, const std::string& motif);
 
 // Number of soft-clipped bases to keep as repeat sequence, walking away from the aligned part. `sequence` is
 // the read, the clip is [clipStart, clipEnd), and the aligned repeat bases next to it are [tractStart, clipStart)
 // for a clip on the right (clipOnRight) or [clipEnd, tractEnd) for a clip on the left. Bases are kept while the
 // fraction of bases equal to the base one motif length back (toward the aligned part) stays at or above
-// minScore over a window of max(2 * motifLength, 12) comparisons.
+// minScore over a window of max(2 * motifSize, 12) comparisons.
 int computeSoftClipBasesToKeep(
     const std::string& sequence, int tractStart, int clipStart, int clipEnd, int tractEnd, bool clipOnRight,
-    int motifLength, double minScore);
+    int motifSize, double minScore);
 
 enum class SequenceSubstringType
 {
@@ -149,10 +149,10 @@ struct SequenceSubstring
     SequenceSubstringType type;
 };
 
-// Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs
-// ordered most common first; the shift search compares against the catalog motif and all of them.
-// startOffset is where the first substring starts. Candidate new motifs that do not touch another substring or a
-// trusted end of the tract on both sides are turned into gaps.
+// Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs of the catalog
+// motif's length (std::logic_error otherwise), ordered most common first; the shift search compares against the
+// catalog motif and all of them. startOffset is where the first substring starts. Candidate new motifs that do not
+// touch another substring or a trusted end of the tract on both sides are turned into gaps.
 //
 // Whether an end is trusted: startsAtRepeatEdge / endsAtRepeatEdge mean the read's alignment placed that end of the
 // tract exactly at the repeat's edge in the reference. referenceEndPartial is the reference repeat's partial last
