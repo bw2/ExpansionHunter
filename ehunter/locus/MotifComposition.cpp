@@ -68,6 +68,9 @@ const int kMotifCompositionMinFlankBases = 10;
 // and for a soft clip to be kept as repeat sequence.
 const double kMotifCompositionMinInrepeatReadPeriodScore = 0.75;
 const double kMotifCompositionMinSoftClipPeriodScore = 0.75;
+// A candidate new motif passes the in-frame test (see passesInFrameTest) only if at most this fraction of its bases,
+// rounded down, differ from the closest motif it is compared with in frame.
+const double kMotifCompositionInFrameMaxMismatchFraction = 0.10;
 
 // Bases with quality <= 20 are stored in lower case (see htshelpers::decodeRead). A no-call is never high quality,
 // whatever its case: reverse-complementing a read turns a low-quality 'n' into 'N'.
@@ -246,6 +249,43 @@ bool isHomopolymer(const string& upperSequence, int start, int motifSize)
     return true;
 }
 
+// True if the upper-case, motif-sized window looks like an in-frame variant of a motif rather than an out-of-frame
+// window that an indel created. Compared position by position with the catalog motif and each known motif, its
+// fewest mismatches must be at most kMotifCompositionInFrameMaxMismatchFraction of the motif size (rounded down), and
+// fewer than its fewest mismatches against any non-zero rotation of those same motifs. Example: at the motif
+// ACGTTGCAAG, ACGTTGCAAT passes (1 mismatch in frame, at least 7 against every rotation), while at AGAGAGAGAC,
+// AGAGAGAGAG fails, since the rotation AGAGAGACAG is also 1 mismatch away.
+bool passesInFrameTest(const char* window, const string& catalogMotif, const vector<string>& knownMotifs)
+{
+    const int motifSize = catalogMotif.size();
+    // The small tolerance keeps a product that should be a whole number from rounding to just below it.
+    const int maxMismatches
+        = static_cast<int>(std::floor(kMotifCompositionInFrameMaxMismatchFraction * motifSize + 1e-9));
+    const int inFrameMismatches = countFewestMismatches(window, catalogMotif, knownMotifs, maxMismatches);
+    if (inFrameMismatches > maxMismatches)
+    {
+        return false;
+    }
+    auto rotationIsAsClose = [&](const string& motif)
+    {
+        for (int shift = 1; shift != motifSize; ++shift)
+        {
+            int mismatches = 0;
+            for (int index = 0; index != motifSize && mismatches <= inFrameMismatches; ++index)
+            {
+                mismatches += !graphtools::checkIfReferenceBaseMatchesQueryBase(
+                    motif[(shift + index) % motifSize], window[index]);
+            }
+            if (mismatches <= inFrameMismatches)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    return !rotationIsAsClose(catalogMotif) && std::none_of(knownMotifs.begin(), knownMotifs.end(), rotationIsAsClose);
+}
+
 void mergeAdjacentGaps(vector<SequenceSubstring>& sequenceSubstrings)
 {
     vector<SequenceSubstring> merged;
@@ -398,8 +438,14 @@ void splitTract(
             tract.data() + trailingPartialStart, trailingPartialLength, true, catalogMotif, orderedMotifs);
     }
 
-    // A possible new motif is kept only if, on each side, it touches another substring or a trusted edge. Repeat until
-    // nothing changes, so a run of candidates survives only if both of its ends are anchored.
+    // A possible new motif is kept if, on each side, it touches another substring or a trusted edge (the anchoring
+    // rule), or else if it passes the in-frame test (passesInFrameTest). The anchoring rule stands in for the question
+    // the in-frame test asks of the candidate's own bases: is it an in-frame variant unit, or an out-of-frame window
+    // that an indel created? The test runs only on candidates the anchoring rule would remove. Its mismatch limit,
+    // kMotifCompositionInFrameMaxMismatchFraction (0.10) times the motif size rounded down, is 0 below 10 bp, and a
+    // candidate always differs from every motif it is compared with, so motifs shorter than 10 bp keep the plain
+    // anchoring rule. A candidate the test keeps stays a candidate, so it anchors its neighbors like any other
+    // substring. Repeat until nothing changes, since removing a candidate can leave its neighbor unanchored.
     auto isSequenceSubstring = [](SequenceSubstringType type) { return type != SequenceSubstringType::kGap; };
     bool changed = true;
     while (changed)
@@ -418,7 +464,9 @@ void splitTract(
                 = (index + 1 < sequenceSubstrings.size() && isSequenceSubstring(sequenceSubstrings[index + 1].type))
                 || (sequenceSubstring.offsetWithinRepeatTract + sequenceSubstring.length == trailingPartialStart
                     && endIsTrusted);
-            if (!leftSideIsAnchored || !rightSideIsAnchored)
+            if ((!leftSideIsAnchored || !rightSideIsAnchored)
+                && !passesInFrameTest(
+                    upperTract.data() + sequenceSubstring.offsetWithinRepeatTract, catalogMotif, orderedMotifs))
             {
                 sequenceSubstring.type = SequenceSubstringType::kGap;
                 changed = true;

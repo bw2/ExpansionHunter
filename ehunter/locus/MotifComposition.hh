@@ -152,7 +152,10 @@ struct SequenceSubstring
 // Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs of the catalog
 // motif's length (std::logic_error otherwise), ordered most common first; the shift search compares against the
 // catalog motif and all of them. startOffset is where the first substring starts. Candidate new motifs that do not
-// touch another substring or a trusted end of the tract on both sides are turned into gaps.
+// touch another substring or a trusted end of the tract on both sides are turned into gaps, unless they look like an
+// in-frame variant unit: compared position by position with the catalog motif and the known motifs, they differ from
+// the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other rotation
+// of those motifs. Below 10 bp that allows no mismatch, so the exception never applies there.
 //
 // Whether an end is trusted: startsAtRepeatEdge / endsAtRepeatEdge mean the read's alignment placed that end of the
 // tract exactly at the repeat's edge in the reference. referenceEndPartial is the reference repeat's partial last

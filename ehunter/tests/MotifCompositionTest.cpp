@@ -306,6 +306,67 @@ TEST(MotifCompositionSplitting, KnownMotifOfAnotherLengthIsRejected)
     EXPECT_THROW(splitIntoMotifs("CAGCAGCAGCAG", "CAG", { "CA" }, 0, true, true, string()), std::logic_error);
 }
 
+TEST(MotifCompositionSplitting, UnanchoredCandidateThatPassesTheInFrameTestIsKept)
+{
+    // ACGTTGCAAT is 1 base from the 10 bp motif in frame and at least 7 from each of its rotations. It is followed
+    // by a 2-base insertion, so its right side is not anchored.
+    const string motif = "ACGTTGCAAG";
+    const string tract = motif + motif + "ACGTTGCAAT" + "GG" + motif + motif;
+    vector<SequenceSubstring> sequenceSubstrings = splitIntoMotifs(tract, motif, { motif }, 0, true, true, string());
+    ASSERT_EQ(6u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[3].type);
+
+    // The closest motif in frame can be a known motif rather than the catalog motif.
+    sequenceSubstrings = splitIntoMotifs(tract, "TTGACCATGA", { motif }, 0, true, true, string());
+    ASSERT_EQ(6u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+
+    // Neither side needs to be anchored: here both are untrusted read ends.
+    sequenceSubstrings = splitIntoMotifs("ACGTTGCAAT" + string("TT"), motif, { motif }, 0, false, false, string());
+    ASSERT_EQ(2u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[0].type);
+
+    // A candidate kept this way anchors its neighbors: ACCATGCAAG, 2 bases from the motif, fails the in-frame test
+    // but touches a known motif on its left and the kept ACGTTGCAAT on its right.
+    sequenceSubstrings = splitIntoMotifs(
+        motif + motif + "ACCATGCAAG" + "ACGTTGCAAT" + "GG" + motif + motif, motif, { motif }, 0, true, true, string());
+    ASSERT_EQ(7u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[3].type);
+}
+
+TEST(MotifCompositionSplitting, UnanchoredCandidateThatFailsTheInFrameTestIsRemoved)
+{
+    // ACGTTGCATT is 2 bases from the 10 bp motif, and the in-frame test allows 1 at 10 bp.
+    const string motif = "ACGTTGCAAG";
+    vector<SequenceSubstring> sequenceSubstrings = splitIntoMotifs(
+        motif + motif + "ACGTTGCATT" + "GG" + motif + motif, motif, { motif }, 0, true, true, string());
+    ASSERT_EQ(5u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
+    EXPECT_EQ(12, sequenceSubstrings[2].length);
+
+    // AGAGAGAGAG is 1 base from AGAGAGAGAC in frame, but also from its rotation AGAGAGACAG.
+    const string dinucleotideLikeMotif = "AGAGAGAGAC";
+    sequenceSubstrings = splitIntoMotifs(
+        repeatMotif(dinucleotideLikeMotif, 2) + "AGAGAGAGAG" + "TT" + repeatMotif(dinucleotideLikeMotif, 2),
+        dinucleotideLikeMotif, { dinucleotideLikeMotif }, 0, true, true, string());
+    ASSERT_EQ(5u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
+    EXPECT_EQ(12, sequenceSubstrings[2].length);
+}
+
+TEST(MotifCompositionSplitting, InFrameTestNeverKeepsACandidateBelowTenBases)
+{
+    // ACGTTGCAT is 1 base from the 9 bp motif in frame, but below 10 bp the in-frame test allows no mismatch.
+    const string motif = "ACGTTGCAG";
+    const vector<SequenceSubstring> sequenceSubstrings = splitIntoMotifs(
+        motif + motif + "ACGTTGCAT" + "GG" + motif + motif, motif, { motif }, 0, true, true, string());
+    ASSERT_EQ(5u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
+    EXPECT_EQ(11, sequenceSubstrings[2].length);
+}
+
 TEST(MotifCompositionSoftClip, KeepsRepeatAndDropsWhatFollowsIt)
 {
     // Aligned repeat "CAGCAGCAG", then a clip of 9 more repeat bases followed by 15 non-repeat bases.
