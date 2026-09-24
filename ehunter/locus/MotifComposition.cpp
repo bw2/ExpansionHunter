@@ -166,9 +166,9 @@ int computeRepeatFrameWithinSequence(
 }
 
 // Checks whether a partial motif at the beginning or end of a sequence matches the motif(s) before or after it. 
-// - A partial motif at the end of a sequence (isMotifPrefix true) is compared with the first `length` bases of a
-//   whole motif; a partial motif at the beginning of a sequence (isMotifPrefix false) is compared with the last
-//   `length` bases of a whole motif.
+// - A partial motif at the end of a sequence (isMotifPrefix true) is compared with the first `partialMotifLength`
+//   bases of a whole motif; a partial motif at the beginning of a sequence (isMotifPrefix false) is compared with the
+//   last `partialMotifLength` bases of a whole motif.
 // - It passes if it matches the catalog motif (IUPAC codes allowed) or any of the known motifs.
 // - It must have at least min(4, motifSize - 1) bases and fewer than motifSize. Shorter partial units say
 //   too little to count. For example, at a 3 bp motif only a 2-base partial unit is judged.
@@ -176,20 +176,20 @@ int computeRepeatFrameWithinSequence(
 //   pass about 0.4% of the time at 4 bases with no mismatch and at 6 bases with one.
 // Example: at a CAG locus, "CA" after the last CAG passes, and "TG" does not.
 bool partialMotifMatchesMotif(
-    const char* partialMotif, int length, bool isMotifPrefix, const string& catalogMotif,
+    const char* partialMotif, int partialMotifLength, bool isMotifPrefix, const string& catalogMotif,
     const vector<string>& knownMotifs)
 {
     const int motifSize = catalogMotif.size();
-    if (length <= 0 || length >= motifSize || length < std::min(4, motifSize - 1))
+    if (partialMotifLength <= 0 || partialMotifLength >= motifSize || partialMotifLength < std::min(4, motifSize - 1))
     {
         return false;
     }
-    const int allowedMismatches = length >= 6 ? 1 : 0;
-    const int motifOffset = isMotifPrefix ? 0 : motifSize - length;
+    const int allowedMismatches = partialMotifLength >= 6 ? 1 : 0;
+    const int motifOffset = isMotifPrefix ? 0 : motifSize - partialMotifLength;
     auto matches = [&](const string& motif)
     {
         int mismatches = 0;
-        for (int index = 0; index != length && mismatches <= allowedMismatches; ++index)
+        for (int index = 0; index != partialMotifLength && mismatches <= allowedMismatches; ++index)
         {
             mismatches
                 += !graphtools::checkIfReferenceBaseMatchesQueryBase(motif[motifOffset + index], partialMotif[index]);
