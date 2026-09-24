@@ -120,8 +120,9 @@ double computePeriodScore(const std::string& sequence, int lag);
 // homopolymers and repeats of a shorter period are rejected.
 bool passesPeriodTest(const std::string& sequence, int motifLength, double minScore);
 
-// The offset in [0, motif length) at which tiling the motif over the sequence gives the fewest mismatches
-// (ties: smallest offset). Every offset is scored over the same number of whole motif-sized windows.
+// The offset in [0, motif length) at which tiling the motif over the sequence gives the most exactly matching
+// windows, then the fewest mismatches over the other windows (ties: smallest offset). Every offset is scored over
+// the same number of whole motif-sized windows.
 int computeFrameOffset(const std::string& sequence, const std::string& motif);
 
 // Number of soft-clipped bases to keep as repeat sequence, walking away from the aligned part. `sequence` is

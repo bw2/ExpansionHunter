@@ -51,8 +51,9 @@ namespace motifcomposition
 namespace
 {
 
-// The shift search and the start-offset search compare a window against the catalog motif and at most this many
-// of the most common known motifs.
+// When no window matches exactly, the shift search and the start-offset search fall back to counting mismatches
+// against the catalog motif and at most this many of the most common known motifs. Exact matches are always checked
+// against every known motif.
 const size_t kMaxMotifsInShiftSearch = 8;
 
 // Per-base error rate of high-quality bases, used to predict how often a sequencing error turns a
@@ -116,8 +117,19 @@ int countFewestMismatches(const char* window, const string& catalogMotif, const 
     return fewest;
 }
 
-// Offset in [0, k) at which tiling the catalog motif (and the most common known motifs) over the sequence gives
-// the fewest mismatches; every offset is scored over the same number of whole windows.
+// True if the upper-case window matches the catalog motif (IUPAC codes allowed) or any known motif exactly.
+bool matchesMotifExactly(const char* window, const string& catalogMotif, const vector<string>& knownMotifs)
+{
+    const size_t motifLength = catalogMotif.size();
+    return countMismatches(window, catalogMotif, 0) == 0
+        || std::any_of(
+               knownMotifs.begin(), knownMotifs.end(),
+               [&](const string& motif) { return motif.compare(0, motifLength, window, motifLength) == 0; });
+}
+
+// Offset in [0, k) at which to tile motifs over the upper-case sequence: the offset with the most windows that match
+// a motif exactly, then the fewest mismatches over the other windows (against the catalog motif and the most common
+// known motifs), then the smallest offset. Every offset is scored over the same number of whole windows.
 int computeFrameOffsetAgainst(const string& sequence, const string& catalogMotif, const vector<string>& knownMotifs)
 {
     const int motifLength = catalogMotif.size();
@@ -129,18 +141,28 @@ int computeFrameOffsetAgainst(const string& sequence, const string& catalogMotif
     const int windowCount = std::max(1, (length - motifLength + 1) / motifLength);
     const int lastOffset = std::min(motifLength - 1, length - windowCount * motifLength);
     int bestOffset = 0;
-    int bestScore = INT_MAX;
+    int bestExactWindows = -1;
+    int bestMismatches = INT_MAX;
     for (int offset = 0; offset <= lastOffset; ++offset)
     {
-        int score = 0;
-        for (int window = 0; window != windowCount && score < bestScore; ++window)
+        int exactWindows = 0;
+        int mismatches = 0;
+        for (int window = 0; window != windowCount; ++window)
         {
-            score += countFewestMismatches(
-                sequence.data() + offset + window * motifLength, catalogMotif, knownMotifs, motifLength);
+            const char* windowStart = sequence.data() + offset + window * motifLength;
+            if (matchesMotifExactly(windowStart, catalogMotif, knownMotifs))
+            {
+                ++exactWindows;
+            }
+            else
+            {
+                mismatches += countFewestMismatches(windowStart, catalogMotif, knownMotifs, motifLength);
+            }
         }
-        if (score < bestScore)
+        if (exactWindows > bestExactWindows || (exactWindows == bestExactWindows && mismatches < bestMismatches))
         {
-            bestScore = score;
+            bestExactWindows = exactWindows;
+            bestMismatches = mismatches;
             bestOffset = offset;
         }
     }
@@ -271,18 +293,32 @@ void splitTract(
             continue;
         }
 
-        // Look up to one motif length ahead for the offset where a known motif fits best, so an indel or a
-        // partial unit does not throw off every later substring.
+        // Look up to one motif length ahead for where the frame resumes, so an indel or a partial unit does not throw
+        // off every later substring: the nearest shift whose window matches a known motif or the catalog motif
+        // exactly, or, when there is none, the shift whose window has the fewest mismatches. The fallback keeps the
+        // frame at repeats whose units often differ from every known motif by a base or two, such as VNTRs.
         const int maxShift = std::min(motifLength - 1, length - position - motifLength);
         int bestShift = 0;
-        int bestScore = countFewestMismatches(windowStart, catalogMotif, orderedMotifs, motifLength);
-        for (int shift = 1; shift <= maxShift && bestScore > 0; ++shift)
+        for (int shift = 1; shift <= maxShift && bestShift == 0; ++shift)
         {
-            const int score = countFewestMismatches(windowStart + shift, catalogMotif, orderedMotifs, bestScore - 1);
-            if (score < bestScore)
+            window.assign(upperTract, position + shift, motifLength);
+            if (knownMotifs.contains(window) || countMismatches(windowStart + shift, catalogMotif, 0) == 0)
             {
-                bestScore = score;
                 bestShift = shift;
+            }
+        }
+        if (bestShift == 0)
+        {
+            int bestScore = countFewestMismatches(windowStart, catalogMotif, orderedMotifs, motifLength);
+            for (int shift = 1; shift <= maxShift && bestScore > 0; ++shift)
+            {
+                const int score
+                    = countFewestMismatches(windowStart + shift, catalogMotif, orderedMotifs, bestScore - 1);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestShift = shift;
+                }
             }
         }
 
@@ -615,9 +651,9 @@ boost::optional<FlankAnchor> findFlankAnchor(
     const int kMaxAnchorDistance = 30 - kFlankAnchorLength;
     const int kMinMismatchesVsRepeat = 3;
     vector<const string*> motifs = { &catalogMotif };
-    for (size_t index = 0; index != std::min(knownMotifs.size(), kMaxMotifsInShiftSearch); ++index)
+    for (const string& knownMotif : knownMotifs)
     {
-        motifs.push_back(&knownMotifs[index]);
+        motifs.push_back(&knownMotif);
     }
     const int flankLength = flank.size();
     for (int distance = 0; distance <= std::min(kMaxAnchorDistance, flankLength - kFlankAnchorLength); ++distance)
