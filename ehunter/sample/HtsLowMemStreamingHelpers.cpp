@@ -1122,8 +1122,8 @@ void addMotifComposition(
 
     MotifCompositionLocus locus;
     locus.contigIndex = variantSpec.referenceLocus().contigIndex();
-    locus.referenceRepeatStart = variantSpec.referenceLocus().start();
-    locus.referenceRepeatEnd = variantSpec.referenceLocus().end();
+    locus.locusStart = variantSpec.referenceLocus().start();
+    locus.locusEnd = variantSpec.referenceLocus().end();
     locus.catalogMotif = motif;
     locus.referenceRepeatSequence = reference.getSequence(variantSpec.referenceLocus());
     locus.catalogKnownMotifs
@@ -1131,11 +1131,11 @@ void addMotifComposition(
     const int kFlankLength = 30;
     const int64_t contigSize = reference.contigInfo().getContigSize(locus.contigIndex);
     locus.leftFlankSequence = reference.getSequence(GenomicRegion(
-        locus.contigIndex, std::max<int64_t>(0, locus.referenceRepeatStart - kFlankLength),
-        locus.referenceRepeatStart));
+        locus.contigIndex, std::max<int64_t>(0, locus.locusStart - kFlankLength),
+        locus.locusStart));
     locus.rightFlankSequence = reference.getSequence(GenomicRegion(
-        locus.contigIndex, locus.referenceRepeatEnd,
-        std::min<int64_t>(contigSize, locus.referenceRepeatEnd + kFlankLength)));
+        locus.contigIndex, locus.locusEnd,
+        std::min<int64_t>(contigSize, locus.locusEnd + kFlankLength)));
     locus.meanFragmentLength = locusFindings.stats.meanFragLength();
 
     std::vector<const FullReadPair*> readPairPointers;

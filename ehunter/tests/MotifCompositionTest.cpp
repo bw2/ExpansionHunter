@@ -54,7 +54,7 @@ string repeatMotif(const string& motif, int count)
     return sequence;
 }
 
-// A CAG x 10 repeat at [100, 130) on contig 0, with non-repetitive flanks.
+// A CAG x 10 locus at [100, 130) on contig 0, with non-repetitive flanks.
 const string kLeftFlank = "ATCGATTGCATGCAATGCCG"; // reference [80, 100)
 const string kRightFlank = "TTAGGCTAACGTTGACCTAG"; // reference [130, 150)
 const int kReadLength = 150;
@@ -64,8 +64,8 @@ MotifCompositionLocus makeCagLocus()
 {
     MotifCompositionLocus locus;
     locus.contigIndex = 0;
-    locus.referenceRepeatStart = 100;
-    locus.referenceRepeatEnd = 130;
+    locus.locusStart = 100;
+    locus.locusEnd = 130;
     locus.catalogMotif = "CAG";
     locus.referenceRepeatSequence = repeatMotif("CAG", 10);
     locus.meanFragmentLength = 300;
@@ -101,8 +101,8 @@ FullRead makeUnmappedRead(const string& name, MateNumber mateNumber, const strin
     return FullRead(std::move(read), std::move(stats));
 }
 
-// A spanning read over the whole repeat carrying `repeat` (any length) between the two 20 bp flanks. A repeat
-// longer or shorter than the reference is represented as a whole-motif insertion or deletion at S.
+// A spanning read over the whole locus carrying `repeat` (any length) between the two 20 bp flanks. A repeat
+// longer or shorter than the reference repeat sequence is represented as a whole-motif insertion or deletion at S.
 FullReadPair makeSpanningRead(const string& name, const string& repeat)
 {
     const int lengthChange = static_cast<int>(repeat.size()) - 30;
@@ -139,8 +139,8 @@ struct ReadSet
     }
 };
 
-// CAG x 10 with a CAA as the third unit.
-const string kInterruptedRepeat = "CAGCAGCAA" + repeatMotif("CAG", 7);
+// CAG x 10 with a CAA as the third repeat unit.
+const string kInterruptedRepeatSequence = "CAGCAGCAA" + repeatMotif("CAG", 7);
 
 } // namespace
 
@@ -152,7 +152,7 @@ TEST(MotifCompositionEligibility, MotifSizeBetweenTwoAndAThirdOfTheReadLength)
     EXPECT_FALSE(isEligibleForMotifComposition(51, 150));
 }
 
-TEST(MotifCompositionPeriod, RepeatOfTheMotifSizePasses)
+TEST(MotifCompositionPeriod, RepeatSequenceOfTheMotifSizePasses)
 {
     EXPECT_DOUBLE_EQ(1.0, computePeriodScore(repeatMotif("CAG", 10), 3));
     EXPECT_TRUE(passesPeriodTest(repeatMotif("CAG", 10), 3, 0.75));
@@ -175,11 +175,11 @@ TEST(MotifCompositionPeriod, HomopolymersAndShorterPeriodsAreRejected)
 
 TEST(MotifCompositionFrame, OffsetOfTheBestTiling)
 {
-    EXPECT_EQ(0, computeReferenceRepeatFrame(repeatMotif("CAG", 5), "CAG"));
-    EXPECT_EQ(1, computeReferenceRepeatFrame("A" + repeatMotif("CAG", 5), "CAG"));
-    EXPECT_EQ(2, computeReferenceRepeatFrame("AG" + repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(0, computeReferenceRepeatSequenceFrame(repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(1, computeReferenceRepeatSequenceFrame("A" + repeatMotif("CAG", 5), "CAG"));
+    EXPECT_EQ(2, computeReferenceRepeatSequenceFrame("AG" + repeatMotif("CAG", 5), "CAG"));
     // IUPAC catalog motif.
-    EXPECT_EQ(0, computeReferenceRepeatFrame(repeatMotif("AAGGG", 4), "AARRG"));
+    EXPECT_EQ(0, computeReferenceRepeatSequenceFrame(repeatMotif("AAGGG", 4), "AARRG"));
 }
 
 TEST(MotifCompositionSplitting, InterruptionAndDeletion)
@@ -189,13 +189,13 @@ TEST(MotifCompositionSplitting, InterruptionAndDeletion)
         = splitIntoMotifs("CAGCAGCAACAGCACAGCAG", "CAG", { "CAG" }, 0, true, true, string());
     ASSERT_EQ(7u, sequenceSubstrings.size());
     const vector<int> starts = { 0, 3, 6, 9, 12, 14, 17 };
-    const vector<SequenceSubstringType> types = { SequenceSubstringType::kKnownMotif,
-                                                  SequenceSubstringType::kKnownMotif,
+    const vector<SequenceSubstringType> types = { SequenceSubstringType::kAcceptedMotif,
+                                                  SequenceSubstringType::kAcceptedMotif,
                                                   SequenceSubstringType::kNewMotifCandidate,
-                                                  SequenceSubstringType::kKnownMotif,
+                                                  SequenceSubstringType::kAcceptedMotif,
                                                   SequenceSubstringType::kGap,
-                                                  SequenceSubstringType::kKnownMotif,
-                                                  SequenceSubstringType::kKnownMotif };
+                                                  SequenceSubstringType::kAcceptedMotif,
+                                                  SequenceSubstringType::kAcceptedMotif };
     for (size_t index = 0; index != sequenceSubstrings.size(); ++index)
     {
         EXPECT_EQ(starts[index], sequenceSubstrings[index].offsetWithinRepeatTract) << index;
@@ -204,9 +204,9 @@ TEST(MotifCompositionSplitting, InterruptionAndDeletion)
     EXPECT_EQ(2, sequenceSubstrings[4].length);
 }
 
-TEST(MotifCompositionSplitting, CandidateNextToAGapIsRemoved)
+TEST(MotifCompositionSplitting, MotifCandidateNextToAGapIsRemoved)
 {
-    // "CAA" followed by a 1-base shift is a substring cut from a longer unit, not a real motif.
+    // "CAA" followed by a 1-base shift is a substring cut from a longer repeat unit, not a real motif.
     const vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAGCAAGCAGCAG", "CAG", { "CAG" }, 0, true, true, string());
     ASSERT_EQ(5u, sequenceSubstrings.size());
@@ -215,7 +215,7 @@ TEST(MotifCompositionSplitting, CandidateNextToAGapIsRemoved)
     EXPECT_EQ(4, sequenceSubstrings[2].length);
 }
 
-TEST(MotifCompositionSplitting, ConsecutiveCandidatesBetweenKnownMotifsAreKept)
+TEST(MotifCompositionSplitting, ConsecutiveMotifCandidatesBetweenAcceptedMotifsAreKept)
 {
     const vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAACAACAG", "CAG", { "CAG" }, 0, true, true, string());
@@ -224,9 +224,10 @@ TEST(MotifCompositionSplitting, ConsecutiveCandidatesBetweenKnownMotifsAreKept)
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
 }
 
-TEST(MotifCompositionSplitting, CandidateAtAReadEndNeedsAMatchingPartialUnit)
+TEST(MotifCompositionSplitting, MotifCandidateAtAReadEndNeedsAMatchingPartialRepeatUnit)
 {
-    // Neither end is at the repeat's edge. The partial unit "AG" before CAA matches the end of CAG, so the read start is trusted.
+    // Neither end is at the edge of the repeat sequence. The partial repeat unit "AG" before CAA matches the end of
+    // CAG, so the read start is trusted.
     vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("AGCAACAGCAG", "CAG", { "CAG" }, 2, false, false, string());
     ASSERT_EQ(4u, sequenceSubstrings.size());
@@ -238,14 +239,14 @@ TEST(MotifCompositionSplitting, CandidateAtAReadEndNeedsAMatchingPartialUnit)
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
     EXPECT_EQ(5, sequenceSubstrings[0].length);
 
-    // No partial unit at all at a start that is not at the repeat's edge.
+    // No partial repeat unit at all at a start that is not at the edge of the repeat sequence.
     sequenceSubstrings = splitIntoMotifs("CAACAGCAG", "CAG", { "CAG" }, 0, false, false, string());
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
 }
 
-TEST(MotifCompositionSplitting, PartialUnitMayHaveOneMismatchOnlyFromSixBases)
+TEST(MotifCompositionSplitting, PartialRepeatUnitMayHaveOneMismatchOnlyFromSixBases)
 {
-    // A 5-base partial unit must match the end of the motif exactly: CGTTG passes, CGTTA does not.
+    // A 5-base partial repeat unit must match the end of the motif exactly: CGTTG passes, CGTTA does not.
     vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CGTTGACCTTGACGTTG", "ACGTTG", { "ACGTTG" }, 5, false, false, string());
     ASSERT_EQ(3u, sequenceSubstrings.size());
@@ -256,16 +257,16 @@ TEST(MotifCompositionSplitting, PartialUnitMayHaveOneMismatchOnlyFromSixBases)
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
     EXPECT_EQ(11, sequenceSubstrings[0].length);
 
-    // A 6-base partial unit may have one mismatch: GTTGCT differs from the motif's end GTTGCA at one base.
+    // A 6-base partial repeat unit may have one mismatch: GTTGCT differs from the motif's end GTTGCA at one base.
     sequenceSubstrings
         = splitIntoMotifs("GTTGCTACCTTGCAACGTTGCA", "ACGTTGCA", { "ACGTTGCA" }, 6, false, false, string());
     ASSERT_EQ(3u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
 }
 
-TEST(MotifCompositionSplitting, EndAtRepeatEdgeMustCarryTheReferencePartialUnit)
+TEST(MotifCompositionSplitting, EndAtEdgeOfRepeatSequenceMustCarryTheReferencePartialRepeatUnit)
 {
-    // Reference repeat CAG x 3 + "CA": the partial last unit is "CA".
+    // Reference repeat sequence CAG x 3 + "CA": the partial last repeat unit is "CA".
     vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAGCAACA", "CAG", { "CAG" }, 0, true, true, string("CA"));
     ASSERT_EQ(4u, sequenceSubstrings.size());
@@ -276,14 +277,14 @@ TEST(MotifCompositionSplitting, EndAtRepeatEdgeMustCarryTheReferencePartialUnit)
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
 }
 
-TEST(MotifCompositionSplitting, HomopolymerSequenceSubstringsAreNeverCandidates)
+TEST(MotifCompositionSplitting, HomopolymerSequenceSubstringsAreNeverMotifCandidates)
 {
     // GGG at a CAG locus is a homopolymer substring.
     vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAGGGGCAGCAG", "CAG", { "CAG" }, 0, true, true, string());
     ASSERT_EQ(5u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
-    // ATAT at an ATCT locus repeats a 2 bp unit but is not a homopolymer, so it can be a new motif.
+    // ATAT at an ATCT locus repeats a 2 bp repeat unit but is not a homopolymer, so it can be a new motif.
     sequenceSubstrings = splitIntoMotifs("ATCTATATATCT", "ATCT", { "ATCT" }, 0, true, true, string());
     ASSERT_EQ(3u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
@@ -294,19 +295,19 @@ TEST(MotifCompositionSplitting, IupacCatalogMotifMatchesAreRecordedAsTheirOwnBas
     const vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("AAAAGAAGGGAAAAG", "AARRG", { "AAAAG" }, 0, true, true, boost::none);
     ASSERT_EQ(3u, sequenceSubstrings.size());
-    EXPECT_EQ(SequenceSubstringType::kKnownMotif, sequenceSubstrings[0].type);
+    EXPECT_EQ(SequenceSubstringType::kAcceptedMotif, sequenceSubstrings[0].type);
     EXPECT_EQ(SequenceSubstringType::kCatalogMotifMatch, sequenceSubstrings[1].type);
-    EXPECT_EQ(SequenceSubstringType::kKnownMotif, sequenceSubstrings[2].type);
+    EXPECT_EQ(SequenceSubstringType::kAcceptedMotif, sequenceSubstrings[2].type);
 }
 
-TEST(MotifCompositionSplitting, KnownMotifOfAnotherLengthIsRejected)
+TEST(MotifCompositionSplitting, AcceptedMotifOfAnotherLengthIsRejected)
 {
     EXPECT_THROW(
         splitIntoMotifs("CAGCAGCAGCAG", "CAG", { "CAG", "CAGCAG" }, 0, true, true, string()), std::logic_error);
     EXPECT_THROW(splitIntoMotifs("CAGCAGCAGCAG", "CAG", { "CA" }, 0, true, true, string()), std::logic_error);
 }
 
-TEST(MotifCompositionSplitting, UnanchoredCandidateThatPassesTheInFrameTestIsKept)
+TEST(MotifCompositionSplitting, UnanchoredMotifCandidateThatPassesTheInFrameTestIsKept)
 {
     // ACGTTGCAAT is 1 base from the 10 bp motif in frame and at least 7 from each of its rotations. It is followed
     // by a 2-base insertion, so its right side is not anchored.
@@ -317,7 +318,7 @@ TEST(MotifCompositionSplitting, UnanchoredCandidateThatPassesTheInFrameTestIsKep
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[3].type);
 
-    // The closest motif in frame can be a known motif rather than the catalog motif.
+    // The closest motif in frame can be an accepted motif rather than the catalog motif.
     sequenceSubstrings = splitIntoMotifs(tract, "TTGACCATGA", { motif }, 0, true, true, string());
     ASSERT_EQ(6u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
@@ -327,8 +328,8 @@ TEST(MotifCompositionSplitting, UnanchoredCandidateThatPassesTheInFrameTestIsKep
     ASSERT_EQ(2u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[0].type);
 
-    // A candidate kept this way anchors its neighbors: ACCATGCAAG, 2 bases from the motif, fails the in-frame test
-    // but touches a known motif on its left and the kept ACGTTGCAAT on its right.
+    // A motif candidate kept this way anchors its neighbors: ACCATGCAAG, 2 bases from the motif, fails the in-frame
+    // test but touches an accepted motif on its left and the kept ACGTTGCAAT on its right.
     sequenceSubstrings = splitIntoMotifs(
         motif + motif + "ACCATGCAAG" + "ACGTTGCAAT" + "GG" + motif + motif, motif, { motif }, 0, true, true, string());
     ASSERT_EQ(7u, sequenceSubstrings.size());
@@ -336,7 +337,7 @@ TEST(MotifCompositionSplitting, UnanchoredCandidateThatPassesTheInFrameTestIsKep
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[3].type);
 }
 
-TEST(MotifCompositionSplitting, UnanchoredCandidateThatFailsTheInFrameTestIsRemoved)
+TEST(MotifCompositionSplitting, UnanchoredMotifCandidateThatFailsTheInFrameTestIsRemoved)
 {
     // ACGTTGCATT is 2 bases from the 10 bp motif, and the in-frame test allows 1 at 10 bp.
     const string motif = "ACGTTGCAAG";
@@ -356,7 +357,7 @@ TEST(MotifCompositionSplitting, UnanchoredCandidateThatFailsTheInFrameTestIsRemo
     EXPECT_EQ(12, sequenceSubstrings[2].length);
 }
 
-TEST(MotifCompositionSplitting, InFrameTestNeverKeepsACandidateBelowTenBases)
+TEST(MotifCompositionSplitting, InFrameTestNeverKeepsAMotifCandidateBelowTenBases)
 {
     // ACGTTGCAT is 1 base from the 9 bp motif in frame, but below 10 bp the in-frame test allows no mismatch.
     const string motif = "ACGTTGCAG";
@@ -367,7 +368,41 @@ TEST(MotifCompositionSplitting, InFrameTestNeverKeepsACandidateBelowTenBases)
     EXPECT_EQ(11, sequenceSubstrings[2].length);
 }
 
-TEST(MotifCompositionSoftClip, KeepsRepeatAndDropsWhatFollowsIt)
+TEST(MotifCompositionSplitting, CatalogKnownMotifsReplaceTheInFrameTest)
+{
+    // With a KnownMotifs list, a motif candidate the anchoring rule would remove is kept if it is a rotation of a
+    // listed motif, even below 10 bp, where the in-frame test never keeps one.
+    const string motif = "ACGTTGCAG";
+    const string tract = motif + motif + "ACGTTGCAT" + "GG" + motif + motif;
+    vector<SequenceSubstring> sequenceSubstrings
+        = splitIntoMotifs(tract, motif, { motif }, 0, true, true, string(), { motif, "ACGTTGCAT" });
+    ASSERT_EQ(6u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[3].type);
+
+    // The list may write the motif in any rotation: TACGTTGCA is ACGTTGCAT.
+    sequenceSubstrings = splitIntoMotifs(tract, motif, { motif }, 0, true, true, string(), { "TACGTTGCA" });
+    ASSERT_EQ(6u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+
+    // A motif candidate that is not listed is removed, even one the in-frame test would keep: ACGTTGCAAT is 1 base
+    // from the 10 bp motif in frame.
+    const string longerMotif = "ACGTTGCAAG";
+    sequenceSubstrings = splitIntoMotifs(
+        longerMotif + longerMotif + "ACGTTGCAAT" + "GG" + longerMotif + longerMotif, longerMotif, { longerMotif }, 0,
+        true, true, string(), { longerMotif });
+    ASSERT_EQ(5u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
+    EXPECT_EQ(12, sequenceSubstrings[2].length);
+
+    // Motif candidates anchored on both sides are kept whether or not they are listed.
+    sequenceSubstrings = splitIntoMotifs("CAGCAACAACAG", "CAG", { "CAG" }, 0, true, true, string(), { "CAG" });
+    ASSERT_EQ(4u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
+    EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
+}
+
+TEST(MotifCompositionSoftClip, KeepsRepeatSequenceAndDropsWhatFollowsIt)
 {
     // Aligned repeat "CAGCAGCAG", then a clip of 9 more repeat bases followed by 15 non-repeat bases.
     const string read = "CAGCAGCAG" + string("CAGCAGCAG") + "TTGACCTAGGATCCA";
@@ -377,8 +412,8 @@ TEST(MotifCompositionSoftClip, KeepsRepeatAndDropsWhatFollowsIt)
     EXPECT_LE(kept, 12);
 
     // All repeat: the whole clip is kept.
-    const string allRepeat = repeatMotif("CAG", 8);
-    EXPECT_EQ(15, computeSoftClipBasesToKeep(allRepeat, 0, 9, allRepeat.size(), 0, true, 3, 0.75));
+    const string allRepeatSequence = repeatMotif("CAG", 8);
+    EXPECT_EQ(15, computeSoftClipBasesToKeep(allRepeatSequence, 0, 9, allRepeatSequence.size(), 0, true, 3, 0.75));
 
     // A clip on the left, compared toward the aligned part on its right.
     const string leftClipped = "TTGACCTAGGATCCA" + repeatMotif("CAG", 6);
@@ -425,7 +460,7 @@ TEST(MotifComposition, InterruptionSeenInSeveralReadsIsAccepted)
     }
     for (int index = 0; index != 6; ++index)
     {
-        reads.pairs.push_back(makeSpanningRead("alt" + std::to_string(index), kInterruptedRepeat));
+        reads.pairs.push_back(makeSpanningRead("alt" + std::to_string(index), kInterruptedRepeatSequence));
     }
     const auto composition = computeMotifComposition(
         makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
@@ -448,7 +483,7 @@ TEST(MotifComposition, SingleReadWithAnInterruptionIsTreatedAsAnError)
     {
         reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
     }
-    reads.pairs.push_back(makeSpanningRead("alt", kInterruptedRepeat));
+    reads.pairs.push_back(makeSpanningRead("alt", kInterruptedRepeatSequence));
     const auto composition = computeMotifComposition(
         makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
@@ -502,7 +537,7 @@ TEST(MotifComposition, HeterozygousAllelesGetTheirOwnCounts)
     EXPECT_EQ(std::make_pair(55, 5), composition->allele2.motifPairs.at({ 1, 1 }));
     EXPECT_EQ(std::make_pair(5, 5), composition->allele2.motifPairs.at({ 1, 2 }));
 
-    // Alleles one unit apart: stutter reads cannot be told apart, so only locus totals are written.
+    // Alleles one repeat unit apart: stutter reads cannot be told apart, so only locus totals are written.
     const auto closeAlleles = computeMotifComposition(
         makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 13, 14 }), false);
     ASSERT_TRUE(closeAlleles);
@@ -574,10 +609,11 @@ TEST(MotifComposition, NoCallInAFlippedInrepeatReadIsNotHighQuality)
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 }
 
-TEST(MotifComposition, ReadConfidentlyPlacedNearTheRepeatIsNotAnInrepeatRead)
+TEST(MotifComposition, ReadConfidentlyPlacedNearTheLocusIsNotAnInrepeatRead)
 {
-    // A repeat-like read that BWA placed with high MAPQ 300 bp to the right of the repeat, whose mate is anchored
-    // facing the repeat, is flank sequence (for example a neighbouring repeat), not an in-repeat read.
+    // A repeat-like read that BWA placed with high MAPQ 300 bp to the right of the locus is flank sequence (for
+    // example a neighbouring repeat), not an in-repeat read, even though its mate is on the forward strand in the
+    // left flank, where the pair's other read would lie over the locus.
     ReadSet reads;
     for (int index = 0; index != 4; ++index)
     {
@@ -603,7 +639,7 @@ TEST(MotifComposition, ReadConfidentlyPlacedNearTheRepeatIsNotAnInrepeatRead)
     EXPECT_EQ(std::make_pair(40 + 20, 5), composition->locus.motifs.at(1));
 }
 
-TEST(MotifComposition, NewUnitInsertedAtTheRepeatEdgeIsNotTrusted)
+TEST(MotifComposition, NewRepeatUnitInsertedAtTheEdgeOfRepeatSequenceIsNotTrusted)
 {
     // Every read carries CAG x 10 followed by AAG, which the aligner wrote as a 3 bp insertion exactly at E. Where
     // the aligner put an edge insertion does not show whether it belongs to the repeat, so AAG is not reported.
@@ -623,26 +659,26 @@ TEST(MotifComposition, NewUnitInsertedAtTheRepeatEdgeIsNotTrusted)
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 
-    // The same AAG as the repeat's own last unit (a substitution, no insertion) is at an edge the alignment placed,
-    // so it is reported.
-    ReadSet substitutedLastUnit;
+    // The same AAG as the repeat's own last repeat unit (a substitution, no insertion) is at an edge the alignment
+    // placed, so it is reported.
+    ReadSet substitutedLastRepeatUnit;
     for (int index = 0; index != 8; ++index)
     {
-        substitutedLastUnit.pairs.push_back(
+        substitutedLastRepeatUnit.pairs.push_back(
             makeSpanningRead("sub" + std::to_string(index), repeatMotif("CAG", 9) + "AAG"));
     }
     composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, substitutedLastUnit.pointers(),
+        makeCagLocus(), kReadLength, kRegionExtensionLength, substitutedLastRepeatUnit.pointers(),
         RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "AAG" }), composition->motifs);
 }
 
-TEST(MotifComposition, FlankBasesAlignedOntoTheRepeatAreCutAtTheFlankAnchor)
+TEST(MotifComposition, FlankBasesAlignedOntoTheLocusAreCutAtTheFlankAnchor)
 {
     // A right flank that starts out resembling the repeat. Reads from a CAG x 6 allele, aligned without the
-    // deletion, put 12 bases of that flank on the reference repeat. With the reference flanks known, the right
-    // flank's anchor marks where the repeat ends.
+    // deletion, put 12 bases of that flank on the reference repeat sequence. With the reference flanks known, the
+    // right flank's anchor marks where the repeat sequence ends.
     const string repeatLikeRightFlank = "CAACAGCAT" + kRightFlank;
     ReadSet reads;
     for (int index = 0; index != 8; ++index)
@@ -669,7 +705,7 @@ TEST(MotifComposition, FlankBasesAlignedOntoTheRepeatAreCutAtTheFlankAnchor)
     EXPECT_GT(composition->motifs.size(), 1u);
 }
 
-TEST(MotifComposition, SoftClippedRepeatExtendsAFlankingRead)
+TEST(MotifComposition, SoftClippedRepeatSequenceExtendsAFlankingRead)
 {
     ReadSet reads;
     // Aligned through the left flank and 15 bases of repeat, then 15 more repeat bases soft-clipped.
@@ -710,7 +746,7 @@ TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
     {
         reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
     }
-    reads.pairs.push_back(makeSpanningRead("alt0", kInterruptedRepeat));
+    reads.pairs.push_back(makeSpanningRead("alt0", kInterruptedRepeatSequence));
     MotifCompositionLocus locus = makeCagLocus();
     // CAT is never seen, so it gets no ID.
     locus.catalogKnownMotifs = { "CAG", "CAA", "CAT" };
@@ -722,7 +758,7 @@ TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 
     // Two are: without the catalog list, two CAA read pairs among ten CAG ones still fail the error test.
-    reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeat));
+    reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeatSequence));
     locus.catalogKnownMotifs.clear();
     composition = computeMotifComposition(
         locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
@@ -740,7 +776,7 @@ TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
     EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifPairs.at({ 1, 2 }));
     EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifPairs.at({ 2, 1 }));
 
-    // CAA is not in the reference repeat, so it counts as a non-reference motif.
+    // CAA is not in the reference repeat sequence, so it counts as a motif not in the reference repeat sequence.
     EXPECT_TRUE(computeMotifComposition(
         locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
 }
@@ -752,8 +788,8 @@ TEST(MotifComposition, CatalogKnownMotifIsMatchedInTheRotationTheReadsShow)
     {
         reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
     }
-    reads.pairs.push_back(makeSpanningRead("alt0", kInterruptedRepeat));
-    reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeat));
+    reads.pairs.push_back(makeSpanningRead("alt0", kInterruptedRepeatSequence));
+    reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeatSequence));
     MotifCompositionLocus locus = makeCagLocus();
     // ACA is CAA written from another starting base; the reads are cut in line with CAG, so they show CAA.
     locus.catalogKnownMotifs = { "ACA" };
@@ -764,7 +800,38 @@ TEST(MotifComposition, CatalogKnownMotifIsMatchedInTheRotationTheReadsShow)
     EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifs.at(2));
 }
 
-TEST(MotifComposition, UnseenCatalogKnownMotifIsNotANonReferenceMotif)
+TEST(MotifComposition, CatalogKnownMotifNextToAnInsertionIsCounted)
+{
+    // Two read pairs carry CAA as the third repeat unit, followed by a 2 bp insertion, so CAA touches a motif on one
+    // side only.
+    ReadSet reads;
+    for (int index = 0; index != 10; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    for (int index = 0; index != 2; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "alt" + std::to_string(index), MateNumber::kFirstMate,
+            kLeftFlank + "CAGCAGCAA" + "GG" + repeatMotif("CAG", 7) + kRightFlank, 80,
+            { cigarOp(29, BAM_CMATCH), cigarOp(2, BAM_CINS), cigarOp(41, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    MotifCompositionLocus locus = makeCagLocus();
+
+    // With CAA listed, the list keeps it as a motif candidate, and it is trusted like any listed motif seen in two read
+    // pairs. Otherwise the anchoring rule would remove it before it could be trusted, since the in-frame test never
+    // keeps a motif candidate below 10 bp.
+    locus.catalogKnownMotifs = { "CAG", "CAA" };
+    const auto composition = computeMotifComposition(
+        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifs.at(2));
+}
+
+TEST(MotifComposition, UnseenCatalogKnownMotifIsNotCounted)
 {
     ReadSet reads;
     for (int index = 0; index != 10; ++index)

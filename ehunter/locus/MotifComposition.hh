@@ -65,24 +65,24 @@ struct MotifComposition
 struct MotifCompositionLocus
 {
     int32_t contigIndex = -1;
-    int64_t referenceRepeatStart = 0; // S
-    int64_t referenceRepeatEnd = 0; // E
+    int64_t locusStart = 0; // S
+    int64_t locusEnd = 0; // E
     std::string catalogMotif; // catalog motif; may contain IUPAC codes (for example AARRG)
     std::string referenceRepeatSequence; // reference sequence of [S, E), upper case
     // Motifs the catalog lists as known at this locus ("KnownMotifs"), as returned by selectCatalogKnownMotifs. They
     // are matched by rotation: since the reads are cut in line with the catalog motif, they show the rotation that
-    // actually occurs. For each listed motif, the candidate new motif among its rotations seen most often is trusted
+    // actually occurs. For each listed motif, the motif candidate among its rotations seen most often is trusted
     // without the error test new motifs need, once it has their minimum read-pair support; its other rotations are
-    // frame shifts and are not counted. A trusted motif counts as a
-    // non-reference motif unless the reference repeat has it. Listed motifs do not otherwise steer the splitter, and
-    // other new motifs are still discovered from the reads.
+    // frame shifts and are not counted. A trusted motif counts as a motif not in the reference repeat sequence unless
+    // the reference repeat sequence has it. The list also replaces the in-frame test of the splitter (see
+    // splitIntoMotifs), and other new motifs are still discovered from the reads.
     std::vector<std::string> catalogKnownMotifs;
     // Up to 30 reference bases just before S and just after E, upper case. Used to find where a read's repeat
     // sequence runs into the flank; empty if unknown.
     std::string leftFlankSequence;
     std::string rightFlankSequence;
     // Mean fragment length at the locus. A mate counts as anchored only if it starts within this distance of the
-    // repeat. 0 means unknown, in which case computeMotifComposition's flankLength is used.
+    // locus. 0 means unknown, in which case computeMotifComposition's flankLength is used.
     int meanFragmentLength = 0;
 };
 
@@ -98,11 +98,11 @@ std::vector<std::string> selectCatalogKnownMotifs(
 
 // Computes the motif composition of one repeat variant from the reads EH holds for its locus. The reads are
 // only read, never modified. When onlyLociWithNonRefMotifs is true, returns boost::none unless some counted motif
-// does not occur in the reference repeat (and is not the catalog motif itself).
+// does not occur in the reference repeat sequence (and is not the catalog motif itself).
 //
-// typicalReadLength is the genome-wide read length probed at startup. flankLength is how far from the repeat the
+// typicalReadLength is the genome-wide read length probed at startup. flankLength is how far from the locus the
 // locus's reads were collected (--region-extension-length): a read BWA placed confidently within this distance of
-// the repeat, but not in it, is never an in-repeat read.
+// the locus, but not in it, is never an in-repeat read.
 boost::optional<MotifComposition> computeMotifComposition(
     const MotifCompositionLocus& locus, int typicalReadLength, int flankLength,
     const std::vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
@@ -123,7 +123,7 @@ bool passesPeriodTest(const std::string& sequence, int motifSize, double minScor
 // The offset in [0, motif length) at which tiling the motif over the sequence gives the most exactly matching
 // windows, then the fewest mismatches over the other windows (ties: smallest offset). Every offset is scored over
 // the same number of whole motif-sized windows.
-int computeReferenceRepeatFrame(const std::string& sequence, const std::string& motif);
+int computeReferenceRepeatSequenceFrame(const std::string& sequence, const std::string& motif);
 
 // Number of soft-clipped bases to keep as repeat sequence, walking away from the aligned part. `sequence` is
 // the read, the clip is [clipStart, clipEnd), and the aligned repeat bases next to it are [tractStart, clipStart)
@@ -136,10 +136,11 @@ int computeSoftClipBasesToKeep(
 
 enum class SequenceSubstringType
 {
-    kKnownMotif, // a motif from the list of known motifs
-    kCatalogMotifMatch, // matches the catalog motif via IUPAC codes, but is not on the list of known motifs
+    kAcceptedMotif, // a motif from the list of accepted motifs
+    kCatalogMotifMatch, // matches the catalog motif via IUPAC codes, but is not on the list of accepted motifs
     kNewMotifCandidate, // matches neither; a possible new motif
-    kGap // bases that do not form a motif-sized substring (an indel, a partial unit, or a rejected candidate)
+    kGap // bases that do not form a motif-sized substring (an indel, a partial repeat unit, or a rejected motif
+         // candidate)
 };
 
 struct SequenceSubstring
@@ -149,23 +150,27 @@ struct SequenceSubstring
     SequenceSubstringType type;
 };
 
-// Splits a tract into motif-sized substrings and gaps. knownMotifs are concrete upper-case motifs of the catalog
+// Splits a tract into motif-sized substrings and gaps. acceptedMotifs are concrete upper-case motifs of the catalog
 // motif's length (std::logic_error otherwise), ordered most common first; the shift search compares against the
-// catalog motif and all of them. startOffset is where the first substring starts. Candidate new motifs that do not
-// touch another substring or a trusted end of the tract on both sides are turned into gaps, unless they look like an
-// in-frame variant unit: compared position by position with the catalog motif and the known motifs, they differ from
-// the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other rotation
-// of those motifs. Below 10 bp that allows no mismatch, so the exception never applies there.
+// catalog motif and all of them. startOffset is where the first substring starts. Motif candidates that do not touch
+// another substring or a trusted end of the tract on both sides are turned into gaps, unless they look like an in-frame
+// variant repeat unit: compared position by position with the catalog motif and the accepted motifs, they differ from
+// the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other rotation of
+// those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. catalogKnownMotifs are the
+// catalog's KnownMotifs for the locus, as returned by selectCatalogKnownMotifs; when there are any, they replace that
+// exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them.
 //
-// Whether an end is trusted: startsAtRepeatEdge / endsAtRepeatEdge mean the read's alignment placed that end of the
-// tract exactly at the repeat's edge in the reference. referenceEndPartial is the reference repeat's partial last
-// unit (possibly empty); at an end placed at the repeat's edge the tract must end with a partial unit of the same
-// length that resembles it (an empty one means the last substring must end exactly at the tract end). Pass
-// boost::none when the tract is the reference repeat itself, whose end needs no check.
+// Whether an end is trusted: startsAtEdgeOfRepeatSequence / endsAtEdgeOfRepeatSequence mean the read's alignment placed
+// that end of the tract exactly at the edge of the repeat sequence in the reference. referenceEndPartialRepeatUnit is
+// the reference repeat sequence's partial last repeat unit (possibly empty); at an end placed at the edge of the repeat
+// sequence the tract must end with a partial repeat unit of the same length that resembles it (an empty one means the
+// last substring must end exactly at the tract end). Pass boost::none when the tract is the reference repeat sequence
+// itself, whose end needs no check.
 std::vector<SequenceSubstring> splitIntoMotifs(
-    const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& knownMotifs,
-    int startOffset, bool startsAtRepeatEdge, bool endsAtRepeatEdge,
-    const boost::optional<std::string>& referenceEndPartial);
+    const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& acceptedMotifs,
+    int startOffset, bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
+    const boost::optional<std::string>& referenceEndPartialRepeatUnit,
+    const std::vector<std::string>& catalogKnownMotifs = { });
 
 // P(X >= count) for X ~ Poisson(mean).
 double computePoissonUpperTail(double mean, int count);

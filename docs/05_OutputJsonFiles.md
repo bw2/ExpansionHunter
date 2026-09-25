@@ -241,9 +241,9 @@ overlapping each locus. For example:
 * `Motifs` Keys are `"<id>:<motif>"`. Motif IDs are numbered from 1, sorted by how frequently they
   were observed.
 * `MotifPairs` Keys are `"[<id>][<id>]"`. They represent consecutive motif pairs observed within
-  the read sequences. Pairs are counted only between neighboring motifs with nothing in between
-  them, so two repeats separated by an indel are not counted as a pair (though they could be added
-  to the individual observed motif counts). For example, if a read contains a
+  the read sequences. Pairs are counted only between neighboring repeat units with nothing in
+  between them, so two repeat units separated by an indel are not counted as a pair (though they
+  could be added to the individual observed motif counts). For example, if a read contains a
   `CAG.CAG.CAA.CAA.CAG.CAG.CAG` sequence at a `CAG` repeat locus, it would add the following counts
   to the output:
 
@@ -270,11 +270,14 @@ How it works, in brief:
 * Reads are parsed using their original BAM/CRAM alignments rather than their alignments to the
   locus graph. A read made of a different motif than the catalog motif usually fails graph
   alignment, but it is kept here.
-* The bases aligned between the two edges of a repeat locus are extracted, along with in-repeat
-  reads.
-* The repeat sequence is split into motif-sized substrings. Where a substring does not match a
-  known motif, the splitter looks ahead up to one motif length so that an indel or a partial motif
-  does not disrupt every subsequent substring. Bases skipped this way are not counted.
+* The bases aligned between the two edges of the reference repeat sequence are extracted, along
+  with in-repeat reads.
+* The repeat sequence is split into motif-sized substrings. Where a substring does not match an
+  accepted motif, the splitter looks ahead up to one motif length so that an indel or a partial
+  repeat unit does not disrupt every subsequent substring. Bases skipped this way are not counted.
+  The accepted motifs are the catalog motif and the repeat units from the reference repeat sequence,
+  plus the motifs listed in `KnownMotifs` (see below) that the reads confirm and the new motifs
+  that pass the tests below.
 * A homopolymer substring (such as `GGG` at a CAG locus) is never counted as a new motif.
 * A motif that is not in the reference repeat sequence (a new motif) is counted only if it is seen
   in at least 2 read pairs, in at least 0.5% of the read pairs at the locus, and in enough reads
@@ -285,12 +288,19 @@ How it works, in brief:
   show most often is counted without the sequencing-error part of the new-motif test above (it
   still needs the same minimum number of read pairs); its other rotations are treated as frame
   shifts and not counted.
+* A possible new motif that an indel or a read end cuts off from the neighboring repeat units is
+  usually a window shifted out of frame by the indel, so it is dropped. The exception is a motif of
+  at least 10 bp that differs from the catalog motif or an accepted motif at no more than 10% of
+  its bases, compared position by position, and matches it better than any shifted copy of those
+  motifs. At a locus with `KnownMotifs`, the list decides instead, at any motif length: such a
+  substring is kept if and only if it is a rotation of a listed motif. A kept substring still has to
+  pass the tests above to be counted.
 
 Limitations:
 
 * Only `--analysis-mode optimized-streaming` and `low-mem-streaming` are supported.
-* Motif units whose length differs from the catalog motif (for example 29 or 31 bp units in a
-  30 bp-motif VNTR) are not counted, even when listed in `KnownMotifs`.
+* Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units
+  in a 30 bp-motif VNTR) are not counted, even when listed in `KnownMotifs`.
 
 ## Catalog field passthrough
 
