@@ -42,7 +42,7 @@ RegionCatalog convertLocusDescriptionsToLocusSpecs(
 
 // The optional "KnownMotifs" field of a catalog locus record: motifs to treat as known at this locus in
 // --output-motif-composition, as written in the catalog (empty if the field is absent). Entries the motif composition
-// calculation cannot use are skipped there, with a warning (see selectCatalogKnownMotifs). Throws if the field is
+// calculation cannot use are skipped there, with a warning (see validateKnownMotifs). Throws if the field is
 // not an array of strings.
 std::vector<std::string> decodeKnownMotifs(const nlohmann::json& locusJson, const std::string& locusId);
 

@@ -69,14 +69,14 @@ struct MotifCompositionLocus
     int64_t locusEnd = 0; // E
     std::string catalogMotif; // catalog motif; may contain IUPAC codes (for example AARRG)
     std::string referenceRepeatSequence; // reference sequence of [S, E), upper case
-    // Motifs the catalog lists as known at this locus ("KnownMotifs"), as returned by selectCatalogKnownMotifs. They
+    // Motifs the catalog lists as known at this locus ("KnownMotifs"), as returned by validateKnownMotifs. They
     // are matched by rotation: since the reads are cut in line with the catalog motif, they show the rotation that
     // actually occurs. For each listed motif, the motif candidate among its rotations seen most often is trusted
     // without the error test new motifs need, once it has their minimum read-pair support; its other rotations are
     // frame shifts and are not counted. A trusted motif counts as a motif not in the reference repeat sequence unless
     // the reference repeat sequence has it. The list also replaces the in-frame test of the splitter (see
     // splitIntoMotifs), and other new motifs are still discovered from the reads.
-    std::vector<std::string> catalogKnownMotifs;
+    std::vector<std::string> knownMotifs;
     // Up to 30 reference bases just before S and just after E, upper case. Used to find where a read's repeat
     // sequence runs into the flank; empty if unknown.
     std::string leftFlankSequence;
@@ -93,18 +93,17 @@ bool isEligibleForMotifComposition(int motifSize, int typicalReadLength);
 // calculation cannot use: motifs whose length differs from the catalog motif's, motifs with bases other than A, C,
 // G and T, and repeats of an earlier entry, including rotations of it (AAC after CAA). Each dropped entry is logged
 // as a warning that names the locus.
-std::vector<std::string> selectCatalogKnownMotifs(
+std::vector<std::string> validateKnownMotifs(
     const std::vector<std::string>& knownMotifs, int motifSize, const std::string& locusId);
 
 // Computes the motif composition of one repeat variant from the reads EH holds for its locus. The reads are
 // only read, never modified. When onlyLociWithNonRefMotifs is true, returns boost::none unless some counted motif
 // does not occur in the reference repeat sequence (and is not the catalog motif itself).
 //
-// typicalReadLength is the genome-wide read length probed at startup. flankLength is how far from the locus the
-// locus's reads were collected (--region-extension-length): a read BWA placed confidently within this distance of
-// the locus, but not in it, is never an in-repeat read.
+// flankLength is how far from the locus the locus's reads were collected (--region-extension-length): a read BWA
+// placed confidently within this distance of the locus, but not in it, is never an in-repeat read.
 boost::optional<MotifComposition> computeMotifComposition(
-    const MotifCompositionLocus& locus, int typicalReadLength, int flankLength,
+    const MotifCompositionLocus& locus, int flankLength,
     const std::vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
     bool onlyLociWithNonRefMotifs);
 
@@ -156,8 +155,8 @@ struct SequenceSubstring
 // another substring or a trusted end of the tract on both sides are turned into gaps, unless they look like an in-frame
 // variant repeat unit: compared position by position with the catalog motif and the accepted motifs, they differ from
 // the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other rotation of
-// those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. catalogKnownMotifs are the
-// catalog's KnownMotifs for the locus, as returned by selectCatalogKnownMotifs; when there are any, they replace that
+// those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. knownMotifs are the
+// catalog's KnownMotifs for the locus, as returned by validateKnownMotifs; when there are any, they replace that
 // exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them.
 //
 // Whether an end is trusted: startsAtEdgeOfRepeatSequence / endsAtEdgeOfRepeatSequence mean the read's alignment placed
@@ -170,7 +169,7 @@ std::vector<SequenceSubstring> splitIntoMotifs(
     const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& acceptedMotifs,
     int startOffset, bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
     const boost::optional<std::string>& referenceEndPartialRepeatUnit,
-    const std::vector<std::string>& catalogKnownMotifs = { });
+    const std::vector<std::string>& knownMotifs = { });
 
 // P(X >= count) for X ~ Poisson(mean).
 double computePoissonUpperTail(double mean, int count);

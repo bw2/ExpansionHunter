@@ -66,7 +66,11 @@ optional arguments.
   the JSON output: counts of each motif and of each pair of adjacent motifs, for the locus and, when the two alleles differ by at least 2 repeat units, for each allele
   (see [Motif composition](05_OutputJsonFiles.md#motif-composition)). `all-loci` adds it to every
   genotype whose motif size is 2 bp or longer and at most a third of the read length; `loci-with-non-ref-motifs`
-  adds it only where the reads show a motif not present in the reference repeat sequence. This option works with the
+  adds it only where the reads show a motif not present in the reference repeat sequence (a catalog motif made only
+  of A, C, G and T always counts as present, even when the reference repeat sequence lacks it; a catalog motif with
+  other IUPAC codes, such as AARRG, gets no such exemption). Only loci with a single
+  repeat get the record: a locus with more than one repeat, such as HTT (`(CAG)*CAACAG(CCG)*`), gets none, for
+  either repeat. This option works with the
   `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
   default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and

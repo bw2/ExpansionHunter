@@ -1126,8 +1126,8 @@ void addMotifComposition(
     locus.locusEnd = variantSpec.referenceLocus().end();
     locus.catalogMotif = motif;
     locus.referenceRepeatSequence = reference.getSequence(variantSpec.referenceLocus());
-    locus.catalogKnownMotifs
-        = selectCatalogKnownMotifs(locusSpec.knownMotifs(), static_cast<int>(motif.size()), locusSpec.locusId());
+    locus.knownMotifs
+        = validateKnownMotifs(locusSpec.knownMotifs(), static_cast<int>(motif.size()), locusSpec.locusId());
     const int kFlankLength = 30;
     const int64_t contigSize = reference.contigInfo().getContigSize(locus.contigIndex);
     locus.leftFlankSequence = reference.getSequence(GenomicRegion(
@@ -1146,8 +1146,8 @@ void addMotifComposition(
     }
 
     boost::optional<MotifComposition> motifComposition = computeMotifComposition(
-        locus, typicalReadLength, params.heuristics().regionExtensionLength(), readPairPointers,
-        repeatFindings->optionalGenotype(), onlyLociWithNonRefMotifs);
+        locus, params.heuristics().regionExtensionLength(), readPairPointers, repeatFindings->optionalGenotype(),
+        onlyLociWithNonRefMotifs);
     if (motifComposition)
     {
         repeatFindings->setMotifComposition(std::move(*motifComposition));

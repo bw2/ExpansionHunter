@@ -57,7 +57,6 @@ string repeatMotif(const string& motif, int count)
 // A CAG x 10 locus at [100, 130) on contig 0, with non-repetitive flanks.
 const string kLeftFlank = "ATCGATTGCATGCAATGCCG"; // reference [80, 100)
 const string kRightFlank = "TTAGGCTAACGTTGACCTAG"; // reference [130, 150)
-const int kReadLength = 150;
 const int kRegionExtensionLength = 1000;
 
 MotifCompositionLocus makeCagLocus()
@@ -440,7 +439,7 @@ TEST(MotifComposition, ReferenceReadsGiveOneMotif)
         reads.pairs.push_back(makeSpanningRead("read" + std::to_string(index), repeatMotif("CAG", 10)));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(100, 10), composition->locus.motifs.at(1));
@@ -448,7 +447,7 @@ TEST(MotifComposition, ReferenceReadsGiveOneMotif)
     EXPECT_FALSE(composition->hasAlleleBlocks);
 
     EXPECT_FALSE(computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
 }
 
 TEST(MotifComposition, InterruptionSeenInSeveralReadsIsAccepted)
@@ -463,7 +462,7 @@ TEST(MotifComposition, InterruptionSeenInSeveralReadsIsAccepted)
         reads.pairs.push_back(makeSpanningRead("alt" + std::to_string(index), kInterruptedRepeatSequence));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
     EXPECT_EQ(std::make_pair(154, 16), composition->locus.motifs.at(1));
@@ -473,7 +472,7 @@ TEST(MotifComposition, InterruptionSeenInSeveralReadsIsAccepted)
     EXPECT_EQ(std::make_pair(90 + 6 * 7, 16), composition->locus.motifPairs.at({ 1, 1 }));
 
     EXPECT_TRUE(computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
 }
 
 TEST(MotifComposition, SingleReadWithAnInterruptionIsTreatedAsAnError)
@@ -485,7 +484,7 @@ TEST(MotifComposition, SingleReadWithAnInterruptionIsTreatedAsAnError)
     }
     reads.pairs.push_back(makeSpanningRead("alt", kInterruptedRepeatSequence));
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     // The rejected substring becomes a gap: it is not counted as CAG, and it breaks the pairs on both sides.
@@ -507,7 +506,7 @@ TEST(MotifComposition, InterruptionWithALowQualityDistinguishingBaseIsNotCounted
         reads.pairs.push_back(makeSpanningRead("alt" + std::to_string(index), lowQualityInterruption));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 }
@@ -525,7 +524,7 @@ TEST(MotifComposition, HeterozygousAllelesGetTheirOwnCounts)
         reads.pairs.push_back(makeSpanningRead("long" + std::to_string(index), longAllele));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 14 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 14 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
     ASSERT_TRUE(composition->hasAlleleBlocks);
@@ -539,9 +538,33 @@ TEST(MotifComposition, HeterozygousAllelesGetTheirOwnCounts)
 
     // Alleles one repeat unit apart: stutter reads cannot be told apart, so only locus totals are written.
     const auto closeAlleles = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 13, 14 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 13, 14 }), false);
     ASSERT_TRUE(closeAlleles);
     EXPECT_FALSE(closeAlleles->hasAlleleBlocks);
+}
+
+TEST(MotifComposition, InsideReadIsAssignedToAnAlleleByTheRepeatSequenceItKeeps)
+{
+    // Reads of the short allele (10 repeat units), plus a 48-base read mapped inside the locus whose last 30 bases
+    // are soft-clipped flank sequence. Only its 18 aligned bases are repeat sequence, which fit in the short allele
+    // as well as in the long one (60 repeat units), so the read is counted for the locus but for neither allele.
+    ReadSet reads;
+    for (int index = 0; index != 5; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("short" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    FullReadPair pair;
+    pair.firstMate = makeMappedRead(
+        "inside", MateNumber::kFirstMate, repeatMotif("CAG", 6) + "TTAGGCTAACGTTGACCTAGATCGATTGCA", 106,
+        { cigarOp(18, BAM_CMATCH), cigarOp(30, BAM_CSOFT_CLIP) });
+    reads.pairs.push_back(std::move(pair));
+    const auto composition = computeMotifComposition(
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 60 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(std::make_pair(56, 6), composition->locus.motifs.at(1));
+    ASSERT_TRUE(composition->hasAlleleBlocks);
+    EXPECT_EQ(std::make_pair(50, 5), composition->allele1.motifs.at(1));
+    EXPECT_TRUE(composition->allele2.motifs.empty());
 }
 
 TEST(MotifComposition, InrepeatReadTakesItsOrientationFromTheAnchoredMate)
@@ -564,7 +587,7 @@ TEST(MotifComposition, InrepeatReadTakesItsOrientationFromTheAnchoredMate)
         reads.pairs.push_back(std::move(pair));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(4 * 10 + 3 * 20, 7), composition->locus.motifs.at(1));
@@ -578,7 +601,7 @@ TEST(MotifComposition, InrepeatReadTakesItsOrientationFromTheAnchoredMate)
         }
     }
     const auto unanchored = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(unanchored);
     EXPECT_EQ(std::make_pair(4 * 10, 4), unanchored->locus.motifs.at(1));
 }
@@ -604,7 +627,7 @@ TEST(MotifComposition, NoCallInAFlippedInrepeatReadIsNotHighQuality)
         reads.pairs.push_back(std::move(pair));
     }
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 }
@@ -625,7 +648,7 @@ TEST(MotifComposition, ReadConfidentlyPlacedNearTheLocusIsNotAnInrepeatRead)
         "near", MateNumber::kSecondMate, repeatMotif("CAG", 20), 430, { cigarOp(60, BAM_CMATCH) }, true, 60);
     reads.pairs.push_back(std::move(pair));
     auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(40, 4), composition->locus.motifs.at(1));
@@ -633,7 +656,7 @@ TEST(MotifComposition, ReadConfidentlyPlacedNearTheLocusIsNotAnInrepeatRead)
     // With low MAPQ, BWA could not place it, so it is used as an in-repeat read.
     reads.pairs.back().secondMate->s.mapq = 0;
     composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(40 + 20, 5), composition->locus.motifs.at(1));
@@ -654,7 +677,7 @@ TEST(MotifComposition, NewRepeatUnitInsertedAtTheEdgeOfRepeatSequenceIsNotTruste
         insertedAtEdge.pairs.push_back(std::move(pair));
     }
     auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, insertedAtEdge.pointers(), RepeatGenotype(3, { 11, 11 }),
+        makeCagLocus(), kRegionExtensionLength, insertedAtEdge.pointers(), RepeatGenotype(3, { 11, 11 }),
         false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
@@ -668,10 +691,43 @@ TEST(MotifComposition, NewRepeatUnitInsertedAtTheEdgeOfRepeatSequenceIsNotTruste
             makeSpanningRead("sub" + std::to_string(index), repeatMotif("CAG", 9) + "AAG"));
     }
     composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, substitutedLastRepeatUnit.pointers(),
+        makeCagLocus(), kRegionExtensionLength, substitutedLastRepeatUnit.pointers(),
         RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "AAG" }), composition->motifs);
+}
+
+TEST(MotifComposition, EndAtEdgeOfRepeatSequenceIsTrustedPastAnImpurityInTheReferenceRepeatSequence)
+{
+    // The 19-base reference repeat sequence CAG CAG CAG C CAG CAG CAG has an extra C. The splitter shifts its frame by
+    // one base there, so the sequence ends with no partial repeat unit, and so do reads ending at E. Their end is
+    // therefore trusted, and a CAA in their last repeat unit is anchored on both sides.
+    const string referenceRepeatSequence = "CAGCAGCAGCCAGCAGCAG";
+    MotifCompositionLocus locus = makeCagLocus();
+    locus.locusEnd = 119;
+    locus.referenceRepeatSequence = referenceRepeatSequence;
+    ReadSet reads;
+    for (int index = 0; index != 8; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "ref" + std::to_string(index), MateNumber::kFirstMate, kLeftFlank + referenceRepeatSequence + kRightFlank,
+            80, { cigarOp(59, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    for (int index = 0; index != 5; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "alt" + std::to_string(index), MateNumber::kFirstMate, kLeftFlank + "CAGCAGCAGCCAGCAGCAA" + kRightFlank, 80,
+            { cigarOp(59, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(5, 5), composition->locus.motifs.at(2));
 }
 
 TEST(MotifComposition, FlankBasesAlignedOntoTheLocusAreCutAtTheFlankAnchor)
@@ -693,16 +749,61 @@ TEST(MotifComposition, FlankBasesAlignedOntoTheLocusAreCutAtTheFlankAnchor)
     locus.leftFlankSequence = kLeftFlank;
     locus.rightFlankSequence = repeatLikeRightFlank;
     auto composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(48, 8), composition->locus.motifs.at(1));
 
     // Without the flanks, the flank bases are split into motif-sized substrings and reported as new motifs.
     composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
     ASSERT_TRUE(composition);
     EXPECT_GT(composition->motifs.size(), 1u);
+}
+
+TEST(MotifComposition, RepeatUnitsNextToARepeatLikeFlankAreNotCutOff)
+{
+    // A GATC locus (GATC GATC GATC T) whose right flank is ATCT repeats. Every 12-mer of that flank also occurs one
+    // period closer to the locus, across the junction with the reference repeat sequence, so the flank gives no
+    // anchor. Otherwise ATCTATCTATCT would be the anchor: reads with GATC GATC TATC T come within one mismatch of it
+    // inside their repeat sequence, and reads with 8 extra bases at E (GATC GATC GATC TATC TATC T) match it exactly
+    // inside their third GATC. All of their GATC repeat units are kept.
+    const string referenceRepeatSequence = "GATCGATCGATCT";
+    const string rightFlank = repeatMotif("ATCT", 7) + "AT";
+    MotifCompositionLocus locus;
+    locus.contigIndex = 0;
+    locus.locusStart = 100;
+    locus.locusEnd = 113;
+    locus.catalogMotif = "GATC";
+    locus.referenceRepeatSequence = referenceRepeatSequence;
+    locus.leftFlankSequence = kLeftFlank;
+    locus.rightFlankSequence = rightFlank;
+    locus.meanFragmentLength = 300;
+    ReadSet reads;
+    for (int index = 0; index != 12; ++index)
+    {
+        const string repeatSequence = index < 6 ? referenceRepeatSequence : "GATCGATCTATCT";
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "read" + std::to_string(index), MateNumber::kFirstMate,
+            kLeftFlank + repeatSequence + rightFlank.substr(0, 20), 80, { cigarOp(53, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    for (int index = 0; index != 6; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "insertion" + std::to_string(index), MateNumber::kFirstMate,
+            kLeftFlank + "GATCGATCGATCTATCTATCT" + rightFlank.substr(0, 20), 80,
+            { cigarOp(33, BAM_CMATCH), cigarOp(8, BAM_CINS), cigarOp(20, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(4, { 3, 3 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "GATC", "TATC" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(6 * 3 + 6 * 2 + 6 * 3, 18), composition->locus.motifs.at(1));
+    EXPECT_EQ(std::make_pair(6 + 6 * 2, 12), composition->locus.motifs.at(2));
 }
 
 TEST(MotifComposition, SoftClippedRepeatSequenceExtendsAFlankingRead)
@@ -715,7 +816,7 @@ TEST(MotifComposition, SoftClippedRepeatSequenceExtendsAFlankingRead)
         { cigarOp(35, BAM_CMATCH), cigarOp(15, BAM_CSOFT_CLIP) });
     reads.pairs.push_back(std::move(pair));
     const auto composition = computeMotifComposition(
-        makeCagLocus(), kReadLength, kRegionExtensionLength, reads.pointers(), boost::none, false);
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), boost::none, false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(std::make_pair(10, 1), composition->locus.motifs.at(1));
 }
@@ -723,7 +824,7 @@ TEST(MotifComposition, SoftClippedRepeatSequenceExtendsAFlankingRead)
 TEST(MotifComposition, NoReadsGiveAnEmptyComposition)
 {
     const auto composition
-        = computeMotifComposition(makeCagLocus(), kReadLength, kRegionExtensionLength, { }, boost::none, false);
+        = computeMotifComposition(makeCagLocus(), kRegionExtensionLength, { }, boost::none, false);
     ASSERT_TRUE(composition);
     EXPECT_TRUE(composition->motifs.empty());
     EXPECT_TRUE(composition->locus.motifs.empty());
@@ -733,10 +834,10 @@ TEST(MotifCompositionCatalogKnownMotifs, UnusableEntriesAreSkipped)
 {
     EXPECT_EQ(
         vector<string>({ "CAA", "CAG", "CCG" }),
-        selectCatalogKnownMotifs({ "caa", "CAG", "CAGG", "CNG", "CAA", "CcG", "" }, 3, "locus"));
-    EXPECT_TRUE(selectCatalogKnownMotifs({}, 3, "locus").empty());
+        validateKnownMotifs({ "caa", "CAG", "CAGG", "CNG", "CAA", "CcG", "" }, 3, "locus"));
+    EXPECT_TRUE(validateKnownMotifs({}, 3, "locus").empty());
     // AAC and ACA are CAA written from other starting bases, so they repeat it.
-    EXPECT_EQ(vector<string>({ "AAC", "GCA" }), selectCatalogKnownMotifs({ "AAC", "GCA", "ACA", "CAA" }, 3, "locus"));
+    EXPECT_EQ(vector<string>({ "AAC", "GCA" }), validateKnownMotifs({ "AAC", "GCA", "ACA", "CAA" }, 3, "locus"));
 }
 
 TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
@@ -749,25 +850,25 @@ TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
     reads.pairs.push_back(makeSpanningRead("alt0", kInterruptedRepeatSequence));
     MotifCompositionLocus locus = makeCagLocus();
     // CAT is never seen, so it gets no ID.
-    locus.catalogKnownMotifs = { "CAG", "CAA", "CAT" };
+    locus.knownMotifs = { "CAG", "CAA", "CAT" };
 
     // One read pair is not enough, even for a listed motif: it could be a sequencing error.
     auto composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 
     // Two are: without the catalog list, two CAA read pairs among ten CAG ones still fail the error test.
     reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeatSequence));
-    locus.catalogKnownMotifs.clear();
+    locus.knownMotifs.clear();
     composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 
-    locus.catalogKnownMotifs = { "CAG", "CAA", "CAT" };
+    locus.knownMotifs = { "CAG", "CAA", "CAT" };
     composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
     EXPECT_EQ(std::make_pair(118, 12), composition->locus.motifs.at(1));
@@ -778,7 +879,7 @@ TEST(MotifComposition, CatalogKnownMotifInTwoReadPairsIsCounted)
 
     // CAA is not in the reference repeat sequence, so it counts as a motif not in the reference repeat sequence.
     EXPECT_TRUE(computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
 }
 
 TEST(MotifComposition, CatalogKnownMotifIsMatchedInTheRotationTheReadsShow)
@@ -792,9 +893,9 @@ TEST(MotifComposition, CatalogKnownMotifIsMatchedInTheRotationTheReadsShow)
     reads.pairs.push_back(makeSpanningRead("alt1", kInterruptedRepeatSequence));
     MotifCompositionLocus locus = makeCagLocus();
     // ACA is CAA written from another starting base; the reads are cut in line with CAG, so they show CAA.
-    locus.catalogKnownMotifs = { "ACA" };
+    locus.knownMotifs = { "ACA" };
     const auto composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
     EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifs.at(2));
@@ -823,9 +924,9 @@ TEST(MotifComposition, CatalogKnownMotifNextToAnInsertionIsCounted)
     // With CAA listed, the list keeps it as a motif candidate, and it is trusted like any listed motif seen in two read
     // pairs. Otherwise the anchoring rule would remove it before it could be trusted, since the in-frame test never
     // keeps a motif candidate below 10 bp.
-    locus.catalogKnownMotifs = { "CAG", "CAA" };
+    locus.knownMotifs = { "CAG", "CAA" };
     const auto composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG", "CAA" }), composition->motifs);
     EXPECT_EQ(std::make_pair(2, 2), composition->locus.motifs.at(2));
@@ -839,12 +940,12 @@ TEST(MotifComposition, UnseenCatalogKnownMotifIsNotCounted)
         reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
     }
     MotifCompositionLocus locus = makeCagLocus();
-    locus.catalogKnownMotifs = { "CAA" };
+    locus.knownMotifs = { "CAA" };
     const auto composition = computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 
     EXPECT_FALSE(computeMotifComposition(
-        locus, kReadLength, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), true));
 }
