@@ -290,8 +290,6 @@ overlapping each locus. For example:
   flanking or in-repeat read) is assigned to the long allele. Reads that cannot be assigned count
   only toward the locus totals, so the two allele sections can add up to less than the locus
   totals.
-* A section with no counted motif is written as `{}`: the whole record at a locus without usable
-  reads (for example a zero-coverage locus), or an allele section to which no read was assigned.
 
 How it works, in brief:
 
