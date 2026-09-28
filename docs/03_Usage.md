@@ -54,9 +54,8 @@ optional arguments.
 * `--genotyping-approach <auto|only-quick|only-full>` In `optimized-streaming` mode, which
   genotyper(s) run on each locus. `auto` (the default) uses the quick spanning-read heuristic
   where it can confidently resolve a locus and the full graph-based genotyper for larger or more
-  complex alleles. `only-quick` runs only the quick heuristic and writes a skipped record (with
-  `Reason` set to `genotyping_approach_only_quick`) for every locus with reads that it cannot resolve
-  (a locus with no reads keeps its usual no-call record); it is provided mainly for benchmarking and
+  complex alleles. `only-quick` runs only the quick heuristic and writes a `skipped` record for every locus that it
+  is unable to genotype using only spanning reads; it is provided mainly for benchmarking and
   debugging. `only-full` runs the full genotyper on every locus (the former `low-mem-streaming`
   analysis mode). See [Optimized-streaming mode](#optimized-streaming-mode) below.
 * `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
