@@ -165,6 +165,37 @@ static string encodeGenotype(const RepeatGenotype& genotype)
     return encoding;
 }
 
+// Motif and motif-pair counts of one group of reads, keyed "<id>:<motif>" and "[<id>][<id>]", with values written
+// as {"count": <occurrences>, "reads": <reads>}. A group with no counted motif is written as {}.
+static Json encodeMotifCompositionCounts(const MotifCompositionCounts& counts, const vector<string>& motifs)
+{
+    if (counts.motifs.empty())
+    {
+        return Json::object();
+    }
+    auto encodeCounts = [](const std::pair<int, int>& occurrencesAndReads) {
+        Json value;
+        value["count"] = occurrencesAndReads.first;
+        value["reads"] = occurrencesAndReads.second;
+        return value;
+    };
+    Json motifCounts = Json::object();
+    for (const auto& idAndCounts : counts.motifs)
+    {
+        motifCounts[to_string(idAndCounts.first) + ":" + motifs[idAndCounts.first - 1]] = encodeCounts(idAndCounts.second);
+    }
+    Json pairCounts = Json::object();
+    for (const auto& pairAndCounts : counts.motifPairs)
+    {
+        const auto& ids = pairAndCounts.first;
+        pairCounts["[" + to_string(ids.first) + "][" + to_string(ids.second) + "]"] = encodeCounts(pairAndCounts.second);
+    }
+    Json record;
+    record["Motifs"] = motifCounts;
+    record["MotifPairs"] = pairCounts;
+    return record;
+}
+
 void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
 {
     assert(variantSpec_.classification().type == VariantType::kRepeat);
@@ -327,6 +358,21 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             }
             record_["ConsensusSequencesReadSupport"] = supportArray;
         }
+    }
+
+    // Only emitted under --output-motif-composition.
+    const auto& motifComposition = repeatFindings.motifComposition();
+    if (motifComposition)
+    {
+        Json motifCompositionRecord = encodeMotifCompositionCounts(motifComposition->locus, motifComposition->motifs);
+        if (motifComposition->hasAlleleBlocks)
+        {
+            motifCompositionRecord["Allele1"]
+                = encodeMotifCompositionCounts(motifComposition->allele1, motifComposition->motifs);
+            motifCompositionRecord["Allele2"]
+                = encodeMotifCompositionCounts(motifComposition->allele2, motifComposition->motifs);
+        }
+        record_["MotifComposition"] = motifCompositionRecord;
     }
 }
 

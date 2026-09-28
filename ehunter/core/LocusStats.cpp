@@ -204,8 +204,21 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
     // contained reads). Low-mem streaming is looser on both sides -- its cache keeps a whole pair when
     // EITHER mate is contained, and genotypeLocusFull's containment test only picks single-ended vs paired
     // routing for NEARBY pairs, so a far-apart pair passes both mates through regardless. Applying the
-    // strict rule here keeps the numerator consistent with the denominator and matches seeking exactly.
+    // strict rule here keeps the numerator consistent with the denominator. It matches seeking except for
+    // reads with a leading soft clip: seeking tests containment from POS, while this tests it from the read's
+    // first base (readStartIncludingSoftClip), so such a read near either edge of the window can be kept by
+    // one and dropped by the other.
     if (alignmentStart < leftFlankStart_ || alignmentEnd > rightFlankEnd_)
+    {
+        return Flank::kNone;
+    }
+
+    // A read whose aligned part begins at or past the repeat start, but whose first base (leading soft clip
+    // included) lies before the repeat end, starts inside the repeat: the clipped bases are repeat sequence
+    // from an allele longer than the reference, however many of them there are. Classifying it by its first
+    // base alone would let a clip longer than the reference repeat walk it across the repeat into the left
+    // flank, where it would be counted.
+    if (read.s.pos >= locusRegion_.start() && alignmentStart < locusRegion_.end())
     {
         return Flank::kNone;
     }
@@ -246,29 +259,6 @@ void LocusStatsCalculatorFromReadAlignments::inspect(const FullReadPair& readPai
     {
         recordFragLen(*readPair.firstMate, *readPair.secondMate);
     }
-
-    // -- RepeatCoverage (disabled) --------------------------------------------------------------------
-    // What this function used to accumulate, kept for reference: the read bases overlapping the repeat
-    // region itself, which estimate() below divided by the repeat region's length. See the header for why
-    // it was replaced by the flank-based figure the full genotyper reports.
-    //
-    // static int64_t readBasesOverlapInterval(const Read& r, const LinearAlignmentStats& a,
-    //                                         const GenomicRegion& region) {
-    //     if (a.chromId != region.contigIndex()) {
-    //         return 0;
-    //     }
-    //     const int64_t readStart = a.pos;
-    //     const int64_t readEnd = a.pos + r.sequence().size();
-    //     return std::max(int64_t(0), std::min(readEnd, region.end()) - std::max(readStart, region.start()));
-    // }
-    //
-    // if (readPair.firstMate && readPair.firstMate->s.isMapped) {
-    //     const int64_t readBasesOverlapLocus
-    //         = readBasesOverlapInterval(readPair.firstMate->r, readPair.firstMate->s, locusRegion_);
-    //     if (readBasesOverlapLocus > 0) {
-    //         basesOverlappingLocus_ += readBasesOverlapLocus;
-    //     }
-    // }
 }
 
 void LocusStatsCalculatorFromReadAlignments::recordReadLen(const Read& read)
@@ -324,15 +314,6 @@ LocusStats LocusStatsCalculatorFromReadAlignments::estimate(Sex sampleSex)
         : 0.0;
 
     return { alleleCount, meanReadLength, meanFragLen, depth };
-
-    // -- RepeatCoverage (disabled) --------------------------------------------------------------------
-    // The depth this function used to return, kept for reference: total read bases overlapping the repeat
-    // region divided by that region's length, guarded against zero-length loci (e.g. a pure-insertion
-    // variant whose ReferenceRegion has start == end).
-    //
-    // const int locusSize = locusRegion_.end() - locusRegion_.start();
-    // const double repeatCoverage
-    //     = (locusSize > 0) ? (basesOverlappingLocus_ / static_cast<double>(locusSize)) : 0.0;
 }
 
 }

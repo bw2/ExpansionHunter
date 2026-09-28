@@ -43,7 +43,7 @@ optional arguments.
    this sets a limit on the number of reads processed per locus using reservoir sampling.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
-   Set to 100 by default; set to 0 to disable the cap.
+   Set to 150 by default (500 when `--output-motif-composition` is used); set to 0 to disable the cap.
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
   path or URL explicitly, instead of auto-detecting it from the `--reads` path.
   This is useful when the index file is in a different location than the reads
@@ -62,6 +62,18 @@ optional arguments.
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to
   annotate results without a separate join step.
+* `--output-motif-composition <all-loci|loci-with-non-ref-motifs|loci-with-known-motifs>` Add a `MotifComposition` record to
+  the JSON output: counts of each motif and of each pair of adjacent motifs, for the locus and, when the two alleles differ by at least 2 repeat units, for each allele
+  (see [Motif composition](05_OutputJsonFiles.md#motif-composition)). `all-loci` adds it to every
+  genotype whose motif size is 2 bp or longer and at most a third of the read length; `loci-with-non-ref-motifs`
+  adds it only where the reads show a motif not present in the reference repeat sequence; `loci-with-known-motifs` adds it only to loci whose
+  input catalog record has a non-empty `KnownMotifs` list (see
+  [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
+  Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
+  `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
+  default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
+  Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
+  file size increases by 5% to 10%.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and
   `low-mem-streaming` analysis modes. See [Resuming an interrupted run](#resuming-an-interrupted-run)
   below.

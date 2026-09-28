@@ -7,6 +7,7 @@ target_sources(ExpansionHunterLib # Requires CMake 3.13 or later
         LocusAnalyzerUtil.hh LocusAnalyzerUtil.cpp
         LocusFindings.hh LocusFindings.cpp
         LocusSpecification.hh LocusSpecification.cpp
+        MotifComposition.hh MotifComposition.cpp
         RepeatAnalyzer.hh RepeatAnalyzer.cpp
         RFC1MotifAnalysis.hh RFC1MotifAnalysis.cpp
         RFC1MotifAnalysisUtil.hh RFC1MotifAnalysisUtil.cpp

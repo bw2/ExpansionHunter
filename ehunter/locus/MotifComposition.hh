@@ -1,0 +1,182 @@
+//
+// Expansion Hunter
+// Copyright 2016-2019 Illumina, Inc.
+// All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//
+
+// Motif composition of a repeat locus (--output-motif-composition): counts of each motif and of each pair of
+// adjacent motifs in the reads' repeat sequence, for the whole locus and, when the two alleles differ enough in
+// length, for each allele. Counting uses the reads' original BAM/CRAM alignments rather than their graph
+// alignments, so reads made of a motif other than the catalog motif are kept.
+
+#pragma once
+
+#include <cstdint>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <boost/optional.hpp>
+
+#include "genotyping/RepeatGenotype.hh"
+
+namespace ehunter
+{
+
+struct FullReadPair;
+
+// Counts for one group of reads (the whole locus, or the reads assigned to one allele). Each value is
+// (occurrences, reads): how many times the motif or the pair was counted, and how many distinct reads hold at
+// least one counted occurrence of it.
+struct MotifCompositionCounts
+{
+    std::map<int, std::pair<int, int>> motifs; // motif ID -> (occurrences, reads)
+    std::map<std::pair<int, int>, std::pair<int, int>> motifPairs; // (motif ID, next motif ID) -> (occurrences, reads)
+};
+
+struct MotifComposition
+{
+    // motifs[i] is the motif with ID i + 1. IDs are shared by every group at the locus and are numbered by
+    // locus-wide occurrences, highest first, with ties broken by motif sequence.
+    std::vector<std::string> motifs;
+    MotifCompositionCounts locus;
+    // Set only for heterozygous calls whose alleles differ by at least 2 repeat units, when at least one read
+    // could be assigned to an allele. allele1 is the shorter allele, as in the Genotype field.
+    bool hasAlleleBlocks = false;
+    MotifCompositionCounts allele1;
+    MotifCompositionCounts allele2;
+};
+
+// Everything the calculation needs to know about one repeat variant. All coordinates are 0-based half-open.
+struct MotifCompositionLocus
+{
+    int32_t contigIndex = -1;
+    int64_t locusStart = 0; // S
+    int64_t locusEnd = 0; // E
+    std::string catalogMotif; // catalog motif; may contain IUPAC codes (for example AARRG)
+    std::string referenceRepeatSequence; // reference sequence of [S, E), upper case
+    // Motifs the catalog lists as known at this locus ("KnownMotifs"), as returned by validateKnownMotifs. They
+    // are matched by rotation: since the reads are cut in line with the catalog motif, they show the rotation that
+    // actually occurs. For each listed motif, the motif candidate among its rotations seen most often is trusted
+    // without the error test new motifs need, once it has their minimum read-pair support; its other rotations are
+    // frame shifts and are not counted. A trusted motif counts as a motif not in the reference repeat sequence unless
+    // the reference repeat sequence has it. The list also replaces the in-frame test of the splitter (see
+    // splitIntoMotifs), and other new motifs are still discovered from the reads.
+    std::vector<std::string> knownMotifs;
+    // Up to 30 reference bases just before S and just after E, upper case. Used to find where a read's repeat
+    // sequence runs into the flank; empty if unknown.
+    std::string leftFlankSequence;
+    std::string rightFlankSequence;
+    // Mean fragment length at the locus. A mate counts as anchored only if it starts within this distance of the
+    // locus. 0 means unknown, in which case computeMotifComposition's flankLength is used.
+    int meanFragmentLength = 0;
+};
+
+// Motif lengths the calculation supports: at least 2, and at most a third of the read length.
+bool isEligibleForMotifComposition(int motifSize, int typicalReadLength);
+
+// The catalog's KnownMotifs for a locus, in upper case and in the catalog's order, without the entries the
+// calculation cannot use: motifs whose length differs from the catalog motif's, motifs with bases other than A, C,
+// G and T, and repeats of an earlier entry, including rotations of it (AAC after CAA). Each dropped entry is logged
+// as a warning that names the locus.
+std::vector<std::string> validateKnownMotifs(
+    const std::vector<std::string>& knownMotifs, int motifSize, const std::string& locusId);
+
+// Computes the motif composition of one repeat variant from the reads EH holds for its locus. The reads are
+// only read, never modified. When onlyLociWithNonRefMotifs is true, returns boost::none unless some counted motif
+// does not occur in the reference repeat sequence (and is not the catalog motif itself).
+//
+// flankLength is how far from the locus the locus's reads were collected (--region-extension-length): a read BWA
+// placed confidently within this distance of the locus, but not in it, is never an in-repeat read.
+boost::optional<MotifComposition> computeMotifComposition(
+    const MotifCompositionLocus& locus, int flankLength,
+    const std::vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
+    bool onlyLociWithNonRefMotifs);
+
+// The building blocks below are exposed for unit testing.
+namespace motifcomposition
+{
+
+// Fraction of positions whose base equals the base `lag` positions earlier (case-insensitive; N never matches).
+double computePeriodScore(const std::string& sequence, int lag);
+
+// True if the sequence repeats with period motifSize: its period score at lag motifSize is at least
+// minScore, and beats the score at every proper divisor of motifSize (including 1) by at least 0.1, so that
+// homopolymers and repeats of a shorter period are rejected.
+bool passesPeriodTest(const std::string& sequence, int motifSize, double minScore);
+
+// The offset in [0, motif length) at which tiling the motif over the sequence gives the most exactly matching
+// windows, then the fewest mismatches over the other windows (ties: smallest offset). Every offset is scored over
+// the same number of whole motif-sized windows.
+int computeReferenceRepeatSequenceFrame(const std::string& sequence, const std::string& motif);
+
+// Number of soft-clipped bases to keep as repeat sequence, walking away from the aligned part. `sequence` is
+// the read, the clip is [clipStart, clipEnd), and the aligned repeat bases next to it are [tractStart, clipStart)
+// for a clip on the right (clipOnRight) or [clipEnd, tractEnd) for a clip on the left. Bases are kept while the
+// fraction of bases equal to the base one motif length back (toward the aligned part) stays at or above
+// minScore over a window of max(2 * motifSize, 12) comparisons.
+int computeSoftClipBasesToKeep(
+    const std::string& sequence, int tractStart, int clipStart, int clipEnd, int tractEnd, bool clipOnRight,
+    int motifSize, double minScore);
+
+enum class SequenceSubstringType
+{
+    kAcceptedMotif, // a motif from the list of accepted motifs
+    kCatalogMotifMatch, // matches the catalog motif via IUPAC codes, but is not on the list of accepted motifs
+    kNewMotifCandidate, // matches neither; a possible new motif
+    kGap // not a repeat unit: an indel, a partial repeat unit, or a rejected motif candidate
+};
+
+// One motif-sized window of a tract, or the run of bases between two of them (type kGap). Gaps are recorded
+// alongside the repeat units so that the entries for a tract cover it end to end.
+struct SequenceSubstring
+{
+    int offsetWithinRepeatTract;
+    int length;
+    SequenceSubstringType type;
+};
+
+// Splits a tract into repeat units and gaps. acceptedMotifs are concrete upper-case motifs of the catalog motif's
+// length (std::logic_error otherwise), ordered most common first; the shift search compares against the catalog motif
+// and all of them. startOffset is where the first repeat unit starts, unless a window before it matches the catalog
+// motif or an accepted motif exactly, in which case the first repeat unit starts at the first such window (the
+// reference frame's first window can fall inside a repeat unit at the tract's start). Motif candidates that do not
+// touch another repeat unit or a trusted end of the tract on both sides are turned into gaps, unless they look like an
+// in-frame variant repeat unit: compared position by position with the catalog motif and the accepted motifs, they
+// differ from the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other
+// rotation of those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. knownMotifs are
+// the catalog's KnownMotifs for the locus, as returned by validateKnownMotifs; when there are any, they replace that
+// exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them.
+//
+// Whether an end is trusted: startsAtEdgeOfRepeatSequence / endsAtEdgeOfRepeatSequence mean the read's alignment placed
+// that end of the tract exactly at the edge of the repeat sequence in the reference. referenceEndPartialRepeatUnit is
+// the reference repeat sequence's partial last repeat unit (possibly empty); at an end placed at the edge of the repeat
+// sequence the tract must end with a partial repeat unit of the same length that resembles it (an empty one means the
+// last repeat unit must end exactly at the tract end). Pass boost::none when the tract is the reference repeat sequence
+// itself, whose end needs no check.
+std::vector<SequenceSubstring> splitIntoMotifs(
+    const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& acceptedMotifs,
+    int startOffset, bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
+    const boost::optional<std::string>& referenceEndPartialRepeatUnit,
+    const std::vector<std::string>& knownMotifs = { });
+
+// P(X >= count) for X ~ Poisson(mean).
+double computePoissonUpperTail(double mean, int count);
+
+}
+
+}

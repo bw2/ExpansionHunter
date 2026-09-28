@@ -406,7 +406,8 @@ TEST_F(ResumeTest, WritersReportTheirFileSizeAfterFlushing)
     {
         IterativeJsonWriter jsonWriter(sampleParams_, reference_.contigInfo(), jsonPath);
         IterativeVcfWriter vcfWriter(sampleParams_.id(), reference_, headerContigs, vcfPath);
-        EXPECT_EQ(jsonWriter.flushAndGetFileSize(), jsonHeader().size());
+        int json_flushsize=jsonWriter.flushAndGetFileSize();
+        EXPECT_EQ(json_flushsize, jsonHeader().size());
         EXPECT_EQ(vcfWriter.flushAndGetFileSize(), vcfHeader().size());
 
         jsonWriter.addSkippedRecord("L1", "error");
@@ -426,7 +427,8 @@ TEST_F(ResumeTest, WritersReportTheirFileSizeAfterFlushing)
     EXPECT_EQ(vcfWriter.flushAndGetFileSize(), vcfHeader().size());
 
     jsonWriter.addSkippedRecord("L2", "error");
-    EXPECT_EQ(jsonWriter.flushAndGetFileSize(), readFile(jsonPath).size());
+    int json_flushsize_L2_error=jsonWriter.flushAndGetFileSize();
+    EXPECT_EQ(json_flushsize_L2_error, readFile(jsonPath).size());
     EXPECT_NE(readFile(jsonPath).find("}, \n    \"L2\""), std::string::npos);
 }
 

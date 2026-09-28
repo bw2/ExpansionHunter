@@ -113,8 +113,9 @@ AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex);
 // What is NOT mirrored, so the two will not agree read-for-read: LocusStatsCalculator only ever sees
 // reads the graph aligner accepted (LocusAnalyzer::processOntargetMates skips a mate whose alignment came
 // back empty), while this calculator has no realignment to gate on and counts every mapped in-window read
-// anchored in a flank. It also runs before the fast path's own supplementary/secondary/mapQ screen, which
-// is deliberate: the full genotyper applies no such screen to its stats either.
+// anchored in a flank. It also runs before the fast path's own mapQ screen, which is deliberate: the full
+// genotyper applies no mapQ screen to its stats either. (Secondary and supplementary alignments never reach
+// either calculator: every read source drops them at the reader, core/HtsHelpers.cpp isPrimaryAlignment.)
 class LocusStatsCalculatorFromReadAlignments
 {
 public:
@@ -156,13 +157,11 @@ private:
     int64_t leftFlankStart_;
     int64_t rightFlankEnd_;
 
-    // -- RepeatCoverage (disabled) --------------------------------------------------------------------
     // The fast path originally reported depth over the REPEAT REGION itself: the read bases overlapping
-    // locusRegion_ divided by that region's length. That is a different quantity from the flank coverage
-    // the full genotyper reports under the same Coverage field, on a denominator of tens of bp rather than
-    // ~2 * regionExtensionLength, so the two branches disagreed systematically. Kept commented out, under
-    // the name it would carry if it were ever emitted alongside the flank-based Coverage.
-    // unsigned int basesOverlappingLocus_;
+    // locusRegion_ divided by that region's length (see origin/master for that implementation). That is a
+    // different quantity from the flank coverage the full genotyper reports under the same Coverage field,
+    // on a denominator of tens of bp rather than ~2 * regionExtensionLength, so the two branches disagreed
+    // systematically.
 };
 
 }

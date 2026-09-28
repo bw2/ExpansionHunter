@@ -57,7 +57,8 @@ LocusSpecification::LocusSpecification(
     graphtools::Graph regionGraph, NodeToRegionAssociation referenceRegions, GenotyperParameters genotyperParams,
     const bool useRFC1MotifAnalysis,
     std::vector<PlotReadVisualization> plotConditions,
-    std::optional<nlohmann::json> extraFields)
+    std::optional<nlohmann::json> extraFields,
+    std::vector<std::string> knownMotifs)
     : locusId_(std::move(locusId))
     , typeOfChromLocusLocatedOn_(typeOfChromLocusLocatedOn)
     , targetReadExtractionRegions_(std::move(targetReadExtractionRegions))
@@ -67,6 +68,7 @@ LocusSpecification::LocusSpecification(
     , useRFC1MotifAnalysis_(useRFC1MotifAnalysis)
     , plotConditions_(std::move(plotConditions))
     , extraFields_(std::move(extraFields))
+    , knownMotifs_(std::move(knownMotifs))
 {
 }
 
@@ -123,7 +125,8 @@ LocusDescription::LocusDescription(
     std::optional<double> errorRate, std::optional<double> likelihoodRatioThreshold,
     std::optional<double> minLocusCoverage,
     std::vector<PlotReadVisualization> plotConditions,
-    std::optional<nlohmann::json> extraFields)
+    std::optional<nlohmann::json> extraFields,
+    std::vector<std::string> knownMotifs)
     : locusId_(std::move(locusId))
     , chromType_(chromType)
     , locusStructure_(std::move(locusStructure))
@@ -143,6 +146,7 @@ LocusDescription::LocusDescription(
     , minLocusCoverage_(minLocusCoverage)
     , plotConditions_(std::move(plotConditions))
     , extraFields_(std::move(extraFields))
+    , knownMotifs_(std::move(knownMotifs))
 {
 }
 

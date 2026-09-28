@@ -259,7 +259,7 @@ bool readIsContainedInAnyExtractionRegion(
 LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& reference, unsigned locusIndex,
                   const LocusDescription& locusDescription,
                   const std::vector<shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled,
-                  graphtools::AlignerSelector& alignerSelector,
+                  int typicalReadLength, graphtools::AlignerSelector& alignerSelector,
                   BamletWriterPtr bamletWriter) {
 
     LocusOutput out;
@@ -389,6 +389,12 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
             ? LocusOutput::Kind::kFilteredOut
             : LocusOutput::Kind::kGenotyped;
+
+        // Add the MotifComposition field to the locus's JSON record. It is extra output and does not change the
+        // genotype, so it is skipped for filtered-out loci, which write no record.
+        if (out.kind == LocusOutput::Kind::kGenotyped) {
+            addMotifComposition(params, reference, out.analyzer->locusSpec(), out.findings, readPairs, typicalReadLength);
+        }
     } catch (const std::exception& e) {
         out.kind = LocusOutput::Kind::kError;
         out.message = e.what();
@@ -714,7 +720,7 @@ void doTheAnalysis(
         switch (out.kind) {
             case LocusOutput::Kind::kNoCoverage:
                 zeroCoverageCount++;
-                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], jsonWriter, vcfWriter);
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], typicalReadLength, jsonWriter, vcfWriter);
                 break;
             case LocusOutput::Kind::kHeuristicOnlySkip:
                 skippedCount++;
@@ -748,7 +754,7 @@ void doTheAnalysis(
                 // Locus has zero coverage; emit a no-call record identical to seeking/streaming mode (see
                 // writeZeroCoverageRecord) so the output is consistent across analysis modes.
                 zeroCoverageCount++;
-                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], jsonWriter, vcfWriter);
+                writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[locusIndex], typicalReadLength, jsonWriter, vcfWriter);
                 checkpointLocus(locusDescriptionCatalog[locusIndex].locusId());
                 continue;
             }
@@ -766,7 +772,7 @@ void doTheAnalysis(
             if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
                 const bool doneGenotyping = processLocusFast(params, reference,
                     locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
-                    jsonWriter, vcfWriter);
+                    typicalReadLength, jsonWriter, vcfWriter);
 
                 needToProcessSlowly = !doneGenotyping;
                 if (doneGenotyping) {
@@ -783,7 +789,7 @@ void doTheAnalysis(
                 } else {
                     LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
                         locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
-                        alignerSelector, bamletWriter);
+                        typicalReadLength, alignerSelector, bamletWriter);
                     writeOutput(out);
                 }
             }

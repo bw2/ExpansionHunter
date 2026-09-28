@@ -1,0 +1,2044 @@
+//
+// Expansion Hunter
+// Copyright 2016-2019 Illumina, Inc.
+// All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//
+
+#include "locus/MotifComposition.hh"
+
+#include <algorithm>
+#include <cctype>
+#include <climits>
+#include <cmath>
+#include <cstdlib>
+#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
+
+#include <htslib/sam.h>
+
+#include "core/Common.hh"
+#include "core/Read.hh"
+#include "graphutils/BaseMatching.hh"
+#include "graphutils/SequenceOperations.hh"
+#include "spdlog/spdlog.h"
+
+using std::string;
+using std::vector;
+
+namespace ehunter
+{
+
+bool isEligibleForMotifComposition(int motifSize, int typicalReadLength)
+{
+    return motifSize >= 2 && 3 * motifSize <= typicalReadLength;
+}
+
+namespace motifcomposition
+{
+
+namespace
+{
+
+// Per-base error rate of high-quality bases, used to predict how often a sequencing error turns a
+// common motif into a one-base variant of it.
+const double kMotifCompositionBaseErrorRate = 0.001;
+// Target chance that sequencing errors alone add a false motif at a locus.
+const double kMotifCompositionLocusFalsePositiveRate = 1e-4;
+// A new motif must be seen in at least this many read pairs, and in at least this fraction of the read pairs that
+// have any repeat unit at the locus.
+const int kMotifCompositionMinReadPairs = 2;
+const double kMotifCompositionMinReadPairFraction = 0.005;
+// A read counts as spanning only with at least this many aligned bases on each side of the locus.
+const int kMotifCompositionMinFlankBases = 10;
+// Minimum fraction of bases that equal the base one motif length earlier, for a read to count as an in-repeat read,
+// and for a soft clip to be kept as repeat sequence.
+const double kMotifCompositionMinInrepeatReadPeriodScore = 0.75;
+const double kMotifCompositionMinSoftClipPeriodScore = 0.75;
+// A motif candidate passes the in-frame test (see passesInFrameTest) only if at most this fraction of its bases,
+// rounded down, differ from the closest motif it is compared with in frame.
+const double kMotifCompositionInFrameMaxMismatchFraction = 0.10;
+
+// Bases with quality <= 20 are stored in lower case (see htshelpers::decodeRead). A no-call is never high quality,
+// whatever its case: reverse-complementing a read turns a low-quality 'n' into 'N'.
+inline bool isHighQualityBase(char base) { return base < 'a' && base != 'N'; }
+
+inline char toUpperBase(char base) { return (base >= 'a' && base <= 'z') ? static_cast<char>(base - 'a' + 'A') : base; }
+
+inline bool basesMatch(char left, char right)
+{
+    left = toUpperBase(left);
+    return left == toUpperBase(right) && left != 'N';
+}
+
+string toUpperSequence(const string& sequence)
+{
+    string upper(sequence);
+    std::transform(upper.begin(), upper.end(), upper.begin(), toUpperBase);
+    return upper;
+}
+
+// Mismatches between the window starting at `window` and `motif`, which may contain IUPAC codes. Counting stops
+// once it exceeds `limit`.
+int countMismatches(const char* window, const string& motif, int limit)
+{
+    int mismatches = 0;
+    for (size_t index = 0; index != motif.size(); ++index)
+    {
+        if (!graphtools::checkIfReferenceBaseMatchesQueryBase(motif[index], window[index]) && ++mismatches > limit)
+        {
+            break;
+        }
+    }
+    return mismatches;
+}
+
+int countFewestMismatches(
+    const char* window, const string& catalogMotif, const vector<string>& acceptedMotifs, int limit)
+{
+    int fewest = countMismatches(window, catalogMotif, limit);
+    for (size_t index = 0; index != acceptedMotifs.size() && fewest > 0; ++index)
+    {
+        fewest = std::min(fewest, countMismatches(window, acceptedMotifs[index], fewest - 1));
+    }
+    return fewest;
+}
+
+// True if the upper-case window matches the catalog motif (IUPAC codes allowed) or any accepted motif exactly.
+bool matchesMotifExactly(const char* window, const string& catalogMotif, const vector<string>& acceptedMotifs)
+{
+    const size_t motifSize = catalogMotif.size();
+    return countMismatches(window, catalogMotif, 0) == 0
+        || std::any_of(
+               acceptedMotifs.begin(), acceptedMotifs.end(),
+               [&](const string& motif) { return motif.compare(0, motifSize, window, motifSize) == 0; });
+}
+
+// Offset in [0, k) at which to tile motifs over the upper-case sequence: the offset with the most windows that match
+// a motif exactly, then the fewest mismatches over the other windows (against the catalog motif and every accepted
+// motif), then the smallest offset. Every offset is scored over the same number of whole windows.
+int computeRepeatFrameWithinSequence(
+    const string& sequence, const string& catalogMotif, const vector<string>& acceptedMotifs)
+{
+    const int motifSize = catalogMotif.size();
+    const int length = sequence.size();
+    if (length < motifSize)
+    {
+        return 0;
+    }
+    const int windowCount = std::max(1, (length - motifSize + 1) / motifSize);
+    const int lastOffset = std::min(motifSize - 1, length - windowCount * motifSize);
+    int bestOffset = 0;
+    int bestExactWindows = -1;
+    int bestMismatches = INT_MAX;
+    for (int offset = 0; offset <= lastOffset; ++offset)
+    {
+        int exactWindows = 0;
+        int mismatches = 0;
+        for (int window = 0; window != windowCount; ++window)
+        {
+            const char* windowStart = sequence.data() + offset + window * motifSize;
+            if (matchesMotifExactly(windowStart, catalogMotif, acceptedMotifs))
+            {
+                ++exactWindows;
+            }
+            else
+            {
+                mismatches += countFewestMismatches(windowStart, catalogMotif, acceptedMotifs, motifSize);
+            }
+        }
+        if (exactWindows > bestExactWindows || (exactWindows == bestExactWindows && mismatches < bestMismatches))
+        {
+            bestExactWindows = exactWindows;
+            bestMismatches = mismatches;
+            bestOffset = offset;
+        }
+    }
+    return bestOffset;
+}
+
+// Checks whether a partial repeat unit at the beginning or end of a sequence matches the repeat unit(s) before or
+// after it.
+// - A partial repeat unit at the end of a sequence (isMotifPrefix true) is compared with the first
+//   `partialRepeatUnitLength` bases of a whole motif; a partial repeat unit at the beginning of a sequence
+//   (isMotifPrefix false) is compared with the last `partialRepeatUnitLength` bases of a whole motif.
+// - It passes if it matches the catalog motif (IUPAC codes allowed) or any of the accepted motifs.
+// - It must have at least min(4, motifSize - 1) bases and fewer than motifSize. Shorter partial repeat units say
+//   too little to count. For example, at a 3 bp motif only a 2-base partial repeat unit is judged.
+// - It may have one mismatch if it has 6 or more bases; a shorter one must match exactly. By chance, random bases
+//   pass about 0.4% of the time at 4 bases with no mismatch and at 6 bases with one.
+// Example: at a CAG locus, "CA" after the last CAG passes, and "TG" does not.
+bool partialRepeatUnitMatchesMotif(
+    const char* partialRepeatUnit, int partialRepeatUnitLength, bool isMotifPrefix, const string& catalogMotif,
+    const vector<string>& acceptedMotifs)
+{
+    const int motifSize = catalogMotif.size();
+    if (partialRepeatUnitLength <= 0 || partialRepeatUnitLength >= motifSize
+        || partialRepeatUnitLength < std::min(4, motifSize - 1))
+    {
+        return false;
+    }
+    const int allowedMismatches = partialRepeatUnitLength >= 6 ? 1 : 0;
+    const int motifOffset = isMotifPrefix ? 0 : motifSize - partialRepeatUnitLength;
+    auto matches = [&](const string& motif)
+    {
+        int mismatches = 0;
+        for (int index = 0; index != partialRepeatUnitLength && mismatches <= allowedMismatches; ++index)
+        {
+            mismatches += !graphtools::checkIfReferenceBaseMatchesQueryBase(
+                motif[motifOffset + index], partialRepeatUnit[index]);
+        }
+        return mismatches <= allowedMismatches;
+    };
+    if (matches(catalogMotif))
+    {
+        return true;
+    }
+    return std::any_of(acceptedMotifs.begin(), acceptedMotifs.end(), matches);
+}
+
+// Motif list with fast membership test. List the motifs from most common to rarest when the counts are known: the
+// order does not change any result, but the mismatch counting stops as soon as a window matches a motif exactly, so
+// putting the motifs most windows match first speeds it up. Every motif must have the catalog motif's length: the
+// mismatch counting reads that many bases from each window, so a longer motif would read past the end of the sequence.
+class MotifList
+{
+public:
+    MotifList(vector<string> motifs, size_t motifSize)
+        : motifs_(std::move(motifs))
+    {
+        for (const string& motif : motifs_)
+        {
+            if (motif.size() != motifSize)
+            {
+                throw std::logic_error(
+                    "Motif " + motif + " does not have the catalog motif's length " + std::to_string(motifSize));
+            }
+            members_.insert(motif);
+        }
+    }
+
+    const vector<string>& motifs() const { return motifs_; }
+    bool contains(const string& motif) const { return members_.count(motif) != 0; }
+
+private:
+    vector<string> motifs_;
+    std::unordered_set<string> members_;
+};
+
+// True if sequence[start, start + motifSize) is a single base repeated.
+bool isHomopolymer(const string& upperSequence, int start, int motifSize)
+{
+    for (int index = 1; index != motifSize; ++index)
+    {
+        if (upperSequence[start + index] != upperSequence[start])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// True if the upper-case, motif-sized window looks like an in-frame variant of a motif rather than an out-of-frame
+// window that an indel created. Compared position by position with the catalog motif and each accepted motif, its
+// fewest mismatches must be at most kMotifCompositionInFrameMaxMismatchFraction of the motif size (rounded down), and
+// fewer than its fewest mismatches against any non-zero rotation of those same motifs. Example: at the motif
+// ACGTTGCAAG, ACGTTGCAAT passes (1 mismatch in frame, at least 7 against every rotation), while at AGAGAGAGAC,
+// AGAGAGAGAG fails, since the rotation AGAGAGACAG is also 1 mismatch away.
+bool passesInFrameTest(const char* window, const string& catalogMotif, const vector<string>& acceptedMotifs)
+{
+    const int motifSize = catalogMotif.size();
+    // The small tolerance keeps a product that should be a whole number from rounding to just below it.
+    const int maxMismatches
+        = static_cast<int>(std::floor(kMotifCompositionInFrameMaxMismatchFraction * motifSize + 1e-9));
+    const int inFrameMismatches = countFewestMismatches(window, catalogMotif, acceptedMotifs, maxMismatches);
+    if (inFrameMismatches > maxMismatches)
+    {
+        return false;
+    }
+    auto rotationIsAsClose = [&](const string& motif)
+    {
+        for (int shift = 1; shift != motifSize; ++shift)
+        {
+            int mismatches = 0;
+            for (int index = 0; index != motifSize && mismatches <= inFrameMismatches; ++index)
+            {
+                mismatches += !graphtools::checkIfReferenceBaseMatchesQueryBase(
+                    motif[(shift + index) % motifSize], window[index]);
+            }
+            if (mismatches <= inFrameMismatches)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    return !rotationIsAsClose(catalogMotif)
+        && std::none_of(acceptedMotifs.begin(), acceptedMotifs.end(), rotationIsAsClose);
+}
+
+void mergeAdjacentGaps(vector<SequenceSubstring>& sequenceSubstrings)
+{
+    vector<SequenceSubstring> merged;
+    merged.reserve(sequenceSubstrings.size());
+    for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+    {
+        if (sequenceSubstring.type == SequenceSubstringType::kGap && !merged.empty()
+            && merged.back().type == SequenceSubstringType::kGap)
+        {
+            merged.back().length += sequenceSubstring.length;
+        }
+        else
+        {
+            merged.push_back(sequenceSubstring);
+        }
+    }
+    sequenceSubstrings.swap(merged);
+}
+
+string computeCanonicalRotation(const string& motif)
+{
+    string best = motif;
+    for (size_t shift = 1; shift < motif.size(); ++shift)
+    {
+        string rotation = motif.substr(shift) + motif.substr(0, shift);
+        if (rotation < best)
+        {
+            best = std::move(rotation);
+        }
+    }
+    return best;
+}
+
+std::unordered_set<string> computeCanonicalRotations(const vector<string>& motifs)
+{
+    std::unordered_set<string> canonicalRotations;
+    for (const string& motif : motifs)
+    {
+        canonicalRotations.insert(computeCanonicalRotation(motif));
+    }
+    return canonicalRotations;
+}
+
+// See splitIntoMotifs for the arguments. `tractUpperCased` is `tract` in upper case; `tract` keeps the
+// case that marks base quality. knownMotifRotations holds the canonical rotations of the catalog's KnownMotifs.
+// Returns the length of the partial repeat unit at the end of the tract.
+int splitTract(
+    const string& tract, const string& tractUpperCased, const string& catalogMotif, const MotifList& acceptedMotifs,
+    const std::unordered_set<string>& knownMotifRotations, int startOffset, bool startsAtEdgeOfRepeatSequence,
+    bool endsAtEdgeOfRepeatSequence, const boost::optional<string>& referenceEndPartialRepeatUnit,
+    vector<SequenceSubstring>& sequenceSubstrings)
+{
+    sequenceSubstrings.clear();
+    const int motifSize = catalogMotif.size();
+    const int length = tract.size();
+    const vector<string>& orderedMotifs = acceptedMotifs.motifs();
+
+    // The first repeat unit starts at startOffset, or at an exact repeat unit ahead of it. The reference frame is
+    // the best fixed-stride tiling of the reference repeat sequence, and an impurity there can put its first window
+    // inside a unit the tract begins with (chr22:16261470-16261537, TGATTCCATT x 6.7 with a 3-base shift after its
+    // second unit, has its frame at offset 3): a split that only ever moves forward would never count that unit.
+    string window;
+    int leadingPartialRepeatUnitLength = std::min(std::max(startOffset, 0), length);
+    for (int candidate = 0; candidate < leadingPartialRepeatUnitLength && candidate + motifSize <= length; ++candidate)
+    {
+        window.assign(tractUpperCased, candidate, motifSize);
+        if (acceptedMotifs.contains(window) || countMismatches(tract.data() + candidate, catalogMotif, 0) == 0)
+        {
+            leadingPartialRepeatUnitLength = candidate;
+            break;
+        }
+    }
+    int position = leadingPartialRepeatUnitLength;
+    if (position > 0)
+    {
+        sequenceSubstrings.push_back({ 0, position, SequenceSubstringType::kGap });
+    }
+
+    while (position + motifSize <= length)
+    {
+        window.assign(tractUpperCased, position, motifSize);
+        if (acceptedMotifs.contains(window))
+        {
+            sequenceSubstrings.push_back({ position, motifSize, SequenceSubstringType::kAcceptedMotif });
+            position += motifSize;
+            continue;
+        }
+        const char* windowStart = tract.data() + position;
+        if (countMismatches(windowStart, catalogMotif, 0) == 0)
+        {
+            sequenceSubstrings.push_back({ position, motifSize, SequenceSubstringType::kCatalogMotifMatch });
+            position += motifSize;
+            continue;
+        }
+
+        // Look up to one motif length ahead for where the frame resumes, so an indel or a partial repeat unit does not
+        // throw off every later repeat unit: the nearest shift whose window matches an accepted motif or the catalog
+        // motif exactly, or, when there is none, the shift whose window has the fewest mismatches. The fallback keeps
+        // the frame at loci whose repeat units often differ from every accepted motif by a base or two, such as VNTRs.
+        const int maxShift = std::min(motifSize - 1, length - position - motifSize);
+        int bestShift = 0;
+        for (int shift = 1; shift <= maxShift && bestShift == 0; ++shift)
+        {
+            window.assign(tractUpperCased, position + shift, motifSize);
+            if (acceptedMotifs.contains(window) || countMismatches(windowStart + shift, catalogMotif, 0) == 0)
+            {
+                bestShift = shift;
+            }
+        }
+        if (bestShift == 0)
+        {
+            int bestScore = countFewestMismatches(windowStart, catalogMotif, orderedMotifs, motifSize);
+            for (int shift = 1; shift <= maxShift && bestScore > 0; ++shift)
+            {
+                const int score
+                    = countFewestMismatches(windowStart + shift, catalogMotif, orderedMotifs, bestScore - 1);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestShift = shift;
+                }
+            }
+        }
+
+        if (bestShift == 0)
+        {
+            // A repeat unit made of a single base (such as GGG at a CAG locus) is never a new motif: on NovaSeq data,
+            // reads with no signal read as runs of G. One made of a shorter repeated unit (such as ATAT at an ATCT
+            // locus) can be one.
+            const SequenceSubstringType type = isHomopolymer(tractUpperCased, position, motifSize)
+                ? SequenceSubstringType::kGap
+                : SequenceSubstringType::kNewMotifCandidate;
+            sequenceSubstrings.push_back({ position, motifSize, type });
+            position += motifSize;
+        }
+        else
+        {
+            sequenceSubstrings.push_back({ position, bestShift, SequenceSubstringType::kGap });
+            position += bestShift;
+        }
+    }
+    const int trailingPartialRepeatUnitStart = position;
+    const int trailingPartialRepeatUnitLength = length - position;
+    if (trailingPartialRepeatUnitLength > 0)
+    {
+        sequenceSubstrings.push_back({ position, trailingPartialRepeatUnitLength, SequenceSubstringType::kGap });
+    }
+
+    // Is the tract start (with the leading partial repeat unit) a trusted edge?
+    const bool startIsAtTrustedEdge = startsAtEdgeOfRepeatSequence
+        || partialRepeatUnitMatchesMotif(
+                                    tract.data(), leadingPartialRepeatUnitLength, false, catalogMotif, orderedMotifs);
+
+    // Is the tract end (with the trailing partial repeat unit) a trusted edge? At an end the alignment
+    // placed at the edge of the repeat sequence, the partial repeat unit must be the reference repeat sequence's own
+    // partial last repeat unit: at most loci the length of the reference repeat sequence is not a multiple of the motif
+    // length, so a partial repeat unit there is normal, while one of any other length shows that an indel shifted the
+    // frame.
+    bool endIsAtTrustedEdge;
+    if (!referenceEndPartialRepeatUnit)
+    {
+        endIsAtTrustedEdge = true;
+    }
+    else if (endsAtEdgeOfRepeatSequence)
+    {
+        endIsAtTrustedEdge = trailingPartialRepeatUnitLength == static_cast<int>(referenceEndPartialRepeatUnit->size());
+        if (endIsAtTrustedEdge && trailingPartialRepeatUnitLength > 0)
+        {
+            const char* partial = tract.data() + trailingPartialRepeatUnitStart;
+            const int mismatchesVsCatalogMotif = [&]
+            {
+                int mismatches = 0;
+                for (int index = 0; index != trailingPartialRepeatUnitLength; ++index)
+                {
+                    mismatches
+                        += !graphtools::checkIfReferenceBaseMatchesQueryBase(catalogMotif[index], partial[index]);
+                }
+                return mismatches;
+            }();
+            int mismatchesVsReference = 0;
+            for (int index = 0; index != trailingPartialRepeatUnitLength; ++index)
+            {
+                mismatchesVsReference += !basesMatch((*referenceEndPartialRepeatUnit)[index], partial[index]);
+            }
+            endIsAtTrustedEdge = std::min(mismatchesVsCatalogMotif, mismatchesVsReference) <= 1;
+        }
+    }
+    else
+    {
+        endIsAtTrustedEdge = partialRepeatUnitMatchesMotif(
+            tract.data() + trailingPartialRepeatUnitStart, trailingPartialRepeatUnitLength, true, catalogMotif,
+            orderedMotifs);
+    }
+
+    // A possible new motif is kept if, on each side, it touches another repeat unit or a trusted edge (the anchoring
+    // rule), or else if it passes the in-frame test (passesInFrameTest). The anchoring rule stands in for the question
+    // the in-frame test asks of the motif candidate's own bases: is it an in-frame variant repeat unit, or an
+    // out-of-frame window that an indel created? The test runs only on motif candidates the anchoring rule would
+    // remove. Its mismatch limit, kMotifCompositionInFrameMaxMismatchFraction (0.10) times the motif size rounded down,
+    // is 0 below 10 bp, and a motif candidate always differs from every motif it is compared with, so motifs shorter
+    // than 10 bp keep the plain anchoring rule. At a locus whose catalog entry lists KnownMotifs, the list replaces the
+    // in-frame test: a motif candidate the anchoring rule would remove is kept only if it is a rotation of a listed
+    // motif, at any motif size. A motif candidate kept either way stays a motif candidate, so it anchors its neighbors
+    // like any other repeat unit. Loop until nothing changes, since removing a motif candidate can leave its neighbor
+    // unanchored.
+    auto isNotAGap = [](SequenceSubstringType type) { return type != SequenceSubstringType::kGap; };
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        for (size_t index = 0; index != sequenceSubstrings.size(); ++index)
+        {
+            SequenceSubstring& sequenceSubstring = sequenceSubstrings[index];
+            if (sequenceSubstring.type != SequenceSubstringType::kNewMotifCandidate)
+            {
+                continue;
+            }
+            const bool leftSideIsAnchored = (index > 0 && isNotAGap(sequenceSubstrings[index - 1].type))
+                || (sequenceSubstring.offsetWithinRepeatTract == leadingPartialRepeatUnitLength
+                    && startIsAtTrustedEdge);
+            const bool rightSideIsAnchored
+                = (index + 1 < sequenceSubstrings.size() && isNotAGap(sequenceSubstrings[index + 1].type))
+                || (sequenceSubstring.offsetWithinRepeatTract + sequenceSubstring.length
+                        == trailingPartialRepeatUnitStart
+                    && endIsAtTrustedEdge);
+            if (leftSideIsAnchored && rightSideIsAnchored)
+            {
+                continue;
+            }
+            const char* motifCandidateStart = tractUpperCased.data() + sequenceSubstring.offsetWithinRepeatTract;
+            const bool isKept = knownMotifRotations.empty()
+                ? passesInFrameTest(motifCandidateStart, catalogMotif, orderedMotifs)
+                : knownMotifRotations.count(computeCanonicalRotation(string(motifCandidateStart, motifSize))) != 0;
+            if (!isKept)
+            {
+                sequenceSubstring.type = SequenceSubstringType::kGap;
+                changed = true;
+            }
+        }
+    }
+
+    mergeAdjacentGaps(sequenceSubstrings);
+    return trailingPartialRepeatUnitLength;
+}
+
+int countDifferences(const string& left, const string& right)
+{
+    int differences = 0;
+    for (size_t index = 0; index != left.size(); ++index)
+    {
+        differences += left[index] != right[index];
+    }
+    return differences;
+}
+
+// ------------------------------------------------------------------------------------------------------------
+// Reads and their repeat tracts
+// ------------------------------------------------------------------------------------------------------------
+
+struct RepeatTract
+{
+    string bases; // reference orientation; lower case marks low-quality bases
+    int readPairIndex; // the read pair's position in computeMotifComposition's readPairs list
+    // Judged from the read's BAM/CRAM alignment, not its graph alignment. kRepeat covers both reads mapped inside the
+    // locus, reaching neither edge of the repeat sequence, and in-repeat reads (IRRs) placed elsewhere with a mate
+    // anchored next to the locus. kOther marks a read not classified yet; no kept tract has it.
+    ReadType readType;
+    // Repeat length in bp used to assign the read to an allele: for a spanning read, the allele length it shows; for a
+    // flanking read, the repeat bases it shows, a lower bound on the allele length; not used for kRepeat reads.
+    int alleleLengthSupportedByThisRead;
+    bool startsAtEdgeOfRepeatSequence;
+    bool endsAtEdgeOfRepeatSequence;
+    int startOffset; // frame offset of the first repeat unit; -1 when it has to be found from the sequence
+};
+
+// What the read's CIGAR string says about where it sits relative to the locus [S, E).
+struct AlignmentRelativeToLocus
+{
+    int64_t referenceStart = 0;
+    int64_t referenceEnd = 0;
+    int leftClipLength = 0;
+    int rightClipLength = 0;
+    // Read position of the tract start placed by the alignment at S, and the reference position its first base
+    // stands for (S, the first position after a deletion that contains S, or S minus a whole-motif insertion at
+    // S). -1 if the alignment does not reach S.
+    int readPositionAtStart = -1;
+    int64_t referencePositionAtStart = 0;
+    // Read position just past the tract end placed by the alignment at E. -1 if the alignment does not reach E.
+    int readPositionAtEnd = -1;
+    // True when the tract starts with, or ends with, a whole-motif insertion the aligner put exactly on the edge.
+    // The aligner's choice of that spot does not show whether the inserted bases belong to the locus or to the
+    // flank next to it, so such an end is not trusted to anchor a new motif.
+    bool startsWithEdgeInsertion = false;
+    bool endsWithEdgeInsertion = false;
+    int flankBasesBefore = 0;
+    int flankBasesAfter = 0;
+    // Aligned bases inside [S, E) plus whole-motif insertions near the locus, computed the way the fast path
+    // computes its size vote (processRead in sample/HtsLowMemStreamingHelpers.cpp).
+    int alleleLengthSupportedByThisRead = 0;
+};
+
+int64_t countOverlap(int64_t start, int64_t end, int64_t otherStart, int64_t otherEnd)
+{
+    return std::max<int64_t>(0, std::min(end, otherEnd) - std::max(start, otherStart));
+}
+
+AlignmentRelativeToLocus summarizeAlignment(const FullRead& read, int64_t locusStart, int64_t locusEnd, int motifSize)
+{
+    AlignmentRelativeToLocus summary;
+    int64_t referencePosition = read.s.pos;
+    int readPosition = 0;
+    bool reachedAlignedPart = false;
+    for (const uint32_t cigarOperation : read.s.cigar)
+    {
+        const int operation = cigarOperation & BAM_CIGAR_MASK;
+        const int length = cigarOperation >> BAM_CIGAR_SHIFT;
+        switch (operation)
+        {
+        case BAM_CSOFT_CLIP:
+            (reachedAlignedPart ? summary.rightClipLength : summary.leftClipLength) += length;
+            readPosition += length;
+            break;
+        case BAM_CMATCH:
+        case BAM_CEQUAL:
+        case BAM_CDIFF:
+        {
+            reachedAlignedPart = true;
+            const int64_t operationEnd = referencePosition + length;
+            summary.flankBasesBefore += countOverlap(referencePosition, operationEnd, INT64_MIN, locusStart);
+            summary.flankBasesAfter += countOverlap(referencePosition, operationEnd, locusEnd, INT64_MAX);
+            summary.alleleLengthSupportedByThisRead
+                += countOverlap(referencePosition, operationEnd, locusStart, locusEnd);
+            if (summary.readPositionAtStart == -1 && referencePosition <= locusStart && locusStart < operationEnd)
+            {
+                summary.readPositionAtStart = readPosition + (locusStart - referencePosition);
+                summary.referencePositionAtStart = locusStart;
+            }
+            if (summary.readPositionAtEnd == -1 && referencePosition <= locusEnd && locusEnd <= operationEnd)
+            {
+                summary.readPositionAtEnd = readPosition + (locusEnd - referencePosition);
+            }
+            referencePosition = operationEnd;
+            readPosition += length;
+            break;
+        }
+        case BAM_CINS:
+            // A whole-motif insertion is a change in repeat length. As in the fast path, it counts toward the
+            // assignment length when it lies in [S - k - 1, E + k], and it belongs to the tract when it sits
+            // exactly on an edge. An insertion the aligner placed a few bases further out is separated from the
+            // tract by aligned flank bases; taking it in as well is left to a later milestone.
+            if (length % motifSize == 0)
+            {
+                if (referencePosition >= locusStart - motifSize - 1 && referencePosition <= locusEnd + motifSize)
+                {
+                    summary.alleleLengthSupportedByThisRead += length;
+                }
+                if (summary.readPositionAtStart == -1 && referencePosition == locusStart)
+                {
+                    summary.readPositionAtStart = readPosition;
+                    summary.referencePositionAtStart = locusStart - length;
+                    summary.startsWithEdgeInsertion = true;
+                }
+                if (referencePosition == locusEnd && summary.readPositionAtEnd == readPosition)
+                {
+                    summary.readPositionAtEnd += length;
+                    summary.endsWithEdgeInsertion = true;
+                }
+            }
+            readPosition += length;
+            break;
+        case BAM_CDEL:
+        case BAM_CREF_SKIP:
+        {
+            reachedAlignedPart = true;
+            const int64_t operationEnd = referencePosition + length;
+            if (summary.readPositionAtStart == -1 && referencePosition <= locusStart && locusStart < operationEnd)
+            {
+                summary.readPositionAtStart = readPosition;
+                summary.referencePositionAtStart = operationEnd;
+            }
+            if (summary.readPositionAtEnd == -1 && referencePosition <= locusEnd && locusEnd < operationEnd)
+            {
+                summary.readPositionAtEnd = readPosition;
+            }
+            referencePosition = operationEnd;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    summary.referenceStart = read.s.pos;
+    summary.referenceEnd = referencePosition;
+    return summary;
+}
+
+int64_t computeAlignedEnd(const FullRead& read)
+{
+    int64_t end = read.s.pos;
+    for (const uint32_t cigarOperation : read.s.cigar)
+    {
+        const int operation = cigarOperation & BAM_CIGAR_MASK;
+        if (operation == BAM_CMATCH || operation == BAM_CEQUAL || operation == BAM_CDIFF || operation == BAM_CDEL
+            || operation == BAM_CREF_SKIP)
+        {
+            end += cigarOperation >> BAM_CIGAR_SHIFT;
+        }
+    }
+    return end;
+}
+
+bool isUsableAlignment(const FullRead& read)
+{
+    return !read.s.isSecondaryAlignment && !read.s.isSupplementaryAlignment;
+}
+
+// The fast path's rule: ignore reads with MAPQ <= 3 at loci whose reads usually map well.
+bool hasUnusuallyLowMapq(const FullRead& read, double averageMapq) { return read.s.mapq <= 3 && averageMapq >= 20; }
+
+// Frame offset, in the tract, of the first repeat unit of a tract whose first base stands for `referencePosition`,
+// given that repeat units start at S + f + j * k in the reference.
+int computeOffsetFromReferenceFrame(int64_t referencePosition, const MotifCompositionLocus& locus, int frameOffset)
+{
+    const int64_t motifSize = locus.catalogMotif.size();
+    const int64_t offset = (locus.locusStart + frameOffset - referencePosition) % motifSize;
+    return static_cast<int>(offset < 0 ? offset + motifSize : offset);
+}
+
+// A 12-mer of reference flank close to the locus that differs from the repeat sequence, used to find where a read's
+// repeat sequence ends and the flank begins.
+struct FlankAnchorSequence
+{
+    string sequence;
+    int distanceFromLocus; // flank bases between the edge of the repeat sequence and the anchor
+};
+
+const int kFlankAnchorLength = 12;
+
+// True if the anchor matches the sequence at `position` with at most maxMismatches mismatches.
+bool matchesAnchorAt(const string& sequence, int position, const FlankAnchorSequence& anchor, int maxMismatches)
+{
+    int mismatches = 0;
+    for (int index = 0; index != kFlankAnchorLength && mismatches <= maxMismatches; ++index)
+    {
+        mismatches += !basesMatch(sequence[position + index], anchor.sequence[index]);
+    }
+    return mismatches <= maxMismatches;
+}
+
+// Picks the anchor from the reference flank next to the locus (flankReferenceSequence is read away from the locus
+// when isRightFlank, toward it otherwise): the 12-mer closest to the locus, within its first 30 bases, that has at
+// least 3 mismatches against every rotation of the catalog motif and of the given accepted motifs, and that the
+// reference does not also match closer to the locus. Requiring the anchor to differ from the repeat sequence keeps it
+// from matching inside real repeat sequence.
+boost::optional<FlankAnchorSequence> findFlankAnchorSequence(
+    const string& flankReferenceSequence, bool isRightFlank, const string& catalogMotif,
+    const vector<string>& acceptedMotifs, const string& referenceRepeatSequence)
+{
+    const int kMaxAnchorDistance = 30 - kFlankAnchorLength;
+    const int kMinMismatchesVsMotifRotations = 3;
+    vector<const string*> motifs = { &catalogMotif };
+    for (const string& acceptedMotif : acceptedMotifs)
+    {
+        motifs.push_back(&acceptedMotif);
+    }
+    const int flankLength = flankReferenceSequence.size();
+    for (int distance = 0; distance <= std::min(kMaxAnchorDistance, flankLength - kFlankAnchorLength); ++distance)
+    {
+        const int start = isRightFlank ? distance : flankLength - kFlankAnchorLength - distance;
+        const string window = flankReferenceSequence.substr(start, kFlankAnchorLength);
+        if (window.find('N') != string::npos)
+        {
+            continue;
+        }
+        bool differsFromMotifRotations = true;
+        for (const string* motif : motifs)
+        {
+            const int motifSize = motif->size();
+            for (int rotation = 0; rotation != motifSize && differsFromMotifRotations; ++rotation)
+            {
+                int mismatches = 0;
+                for (int index = 0; index != kFlankAnchorLength; ++index)
+                {
+                    mismatches += !graphtools::checkIfReferenceBaseMatchesQueryBase(
+                        (*motif)[(rotation + index) % motifSize], window[index]);
+                }
+                differsFromMotifRotations = mismatches >= kMinMismatchesVsMotifRotations;
+            }
+            if (!differsFromMotifRotations)
+            {
+                break;
+            }
+        }
+        if (!differsFromMotifRotations)
+        {
+            continue;
+        }
+        // Nor may it match, even with one mismatch, anywhere in the reference closer to the locus than its own place:
+        // inside the reference repeat sequence, across its junction with the flank, or in the flank bases in between.
+        // Reads of the reference allele would be cut there. A periodic flank matches itself one period closer (ATCT
+        // repeats next to a GATC repeat), so it gives no anchor.
+        const FlankAnchorSequence anchor { window, distance };
+        const string reference = isRightFlank ? referenceRepeatSequence + flankReferenceSequence
+                                              : flankReferenceSequence + referenceRepeatSequence;
+        const int ownPosition = isRightFlank ? static_cast<int>(referenceRepeatSequence.size()) + start : start;
+        bool matchesCloserToLocus = false;
+        for (int position = 0; position + kFlankAnchorLength <= static_cast<int>(reference.size()); ++position)
+        {
+            const bool isCloserToLocus = isRightFlank ? position < ownPosition : position > ownPosition;
+            if (isCloserToLocus && matchesAnchorAt(reference, position, anchor, 1))
+            {
+                matchesCloserToLocus = true;
+                break;
+            }
+        }
+        if (!matchesCloserToLocus)
+        {
+            return anchor;
+        }
+    }
+    return boost::none;
+}
+
+// The cuts below need an exact anchor match: next to a repeat-like flank, a variant repeat unit in the read can come
+// within one mismatch of the anchor (a TATC in a GATC repeat followed by ATCT units), and a cut there would drop real
+// repeat units.
+//
+// They also take the anchor match nearest the tract's edge, not the first one found. The anchor is only known to be
+// absent from the REFERENCE repeat sequence; an allele that differs from the reference can contain it (HG002's 47bp
+// allele at chr22:16261470-16261537 holds the right anchor AATGATGATTCC 21 bases in, ahead of two more repeat units),
+// and a cut at that inner match would drop real repeat units. The search runs past the tract's edge by the anchor's
+// distance from the locus, so a tract that the alignment already ends exactly where the flank begins finds its anchor
+// just past its end. Such a match, lying entirely outside the tract, leaves the tract as it is: the edge it would
+// imply, up to distanceFromLocus bases inside the tract, is off by any indel the read carries between the locus and
+// the anchor (HG002 reads at chr22:15864961-15864977 delete 4 of the 9 flank bases before the left anchor), and the
+// alignment has already placed that edge. The search runs no further out than that: a match further out says nothing
+// about where the flank begins and would hide a match that does.
+
+// New end of the tract [start, end) of `sequence`: where the right flank begins, if its anchor is found.
+int cutAtRightAnchor(const string& sequence, int start, int end, const FlankAnchorSequence& anchor)
+{
+    const int lastPosition
+        = std::min(end + anchor.distanceFromLocus, static_cast<int>(sequence.size()) - kFlankAnchorLength);
+    for (int position = lastPosition; position >= start; --position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return position >= end ? end : std::max(start, position - anchor.distanceFromLocus);
+        }
+    }
+    return end;
+}
+
+// New start of the tract [start, end) of `sequence`: just past the left flank, if its anchor is found.
+int cutAtLeftAnchor(const string& sequence, int start, int end, const FlankAnchorSequence& anchor)
+{
+    const int firstPosition = std::max(0, start - kFlankAnchorLength - anchor.distanceFromLocus);
+    for (int position = firstPosition; position + kFlankAnchorLength <= end; ++position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return position + kFlankAnchorLength <= start
+                ? start
+                : std::min(end, position + kFlankAnchorLength + anchor.distanceFromLocus);
+        }
+    }
+    return start;
+}
+
+// The same cuts for an in-repeat read, whose tract is the whole read and has no alignment-placed edge to defer to.
+// They take the anchor match nearest the middle of the read instead: the read is expected to be repeat sequence with
+// at most some flank at either end, and where the locus sits in a tandem array of larger units (AC and AG repeats
+// 100bp apart inside a 120bp unit at chr22:23881827), the flank recurs one unit away, so the outermost match would
+// keep a whole array unit, neighbouring repeat included.
+int cutAtRightAnchorInnermost(const string& sequence, const FlankAnchorSequence& anchor)
+{
+    const int end = sequence.size();
+    for (int position = 0; position + kFlankAnchorLength <= end; ++position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return std::max(0, position - anchor.distanceFromLocus);
+        }
+    }
+    return end;
+}
+
+int cutAtLeftAnchorInnermost(const string& sequence, int end, const FlankAnchorSequence& anchor)
+{
+    for (int position = end - kFlankAnchorLength; position >= 0; --position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return std::min(end, position + kFlankAnchorLength + anchor.distanceFromLocus);
+        }
+    }
+    return 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------
+// Acceptance of new motifs
+// ------------------------------------------------------------------------------------------------------------
+
+struct MotifStats
+{
+    int occurrences = 0;
+    vector<int> highQualityBaseCounts; // for each position in the motif, observations with a high-quality base there
+};
+
+struct RepeatUnitLocation
+{
+    int tractIndex;
+    int offsetWithinRepeatTract;
+};
+
+// Accepted motifs ordered most common first (ties: motif sequence), which is the order the shift search uses.
+vector<string> orderByOccurrences(const std::unordered_map<string, MotifStats>& stats)
+{
+    vector<string> motifs;
+    motifs.reserve(stats.size());
+    for (const auto& motifAndStats : stats)
+    {
+        motifs.push_back(motifAndStats.first);
+    }
+    std::sort(
+        motifs.begin(), motifs.end(),
+        [&](const string& left, const string& right)
+        {
+            const int leftCount = stats.at(left).occurrences;
+            const int rightCount = stats.at(right).occurrences;
+            return leftCount != rightCount ? leftCount > rightCount : left < right;
+        });
+    return motifs;
+}
+
+bool isMoreCommon(int occurrences, const string& motif, int otherOccurrences, const string& otherMotif)
+{
+    return otherOccurrences != occurrences ? otherOccurrences > occurrences : otherMotif < motif;
+}
+
+// Positions where `motif` differs from its nearest more common motifs: every one that differs from it at exactly
+// one position, or, if there are none, those with the fewest differences. A base there has to be high quality
+// for an observation of the motif to count, since a low-quality error at exactly that position would turn the
+// more common motif into this one.
+vector<int> findDistinguishingPositions(
+    const string& motif, int occurrences, const std::unordered_map<string, MotifStats>& statsForAcceptedMotifs)
+{
+    int fewestDifferences = INT_MAX;
+    vector<const string*> nearest;
+    for (const auto& otherAndStats : statsForAcceptedMotifs)
+    {
+        const string& other = otherAndStats.first;
+        if (other == motif || !isMoreCommon(occurrences, motif, otherAndStats.second.occurrences, other))
+        {
+            continue;
+        }
+        const int differences = countDifferences(motif, other);
+        if (differences < fewestDifferences)
+        {
+            fewestDifferences = differences;
+            nearest.clear();
+        }
+        if (differences == fewestDifferences)
+        {
+            nearest.push_back(&other);
+        }
+    }
+    vector<char> isDistinguishing(motif.size(), false);
+    for (const string* other : nearest)
+    {
+        for (size_t index = 0; index != motif.size(); ++index)
+        {
+            isDistinguishing[index] = isDistinguishing[index] || motif[index] != (*other)[index];
+        }
+    }
+    vector<int> positions;
+    for (size_t index = 0; index != motif.size(); ++index)
+    {
+        if (isDistinguishing[index])
+        {
+            positions.push_back(index);
+        }
+    }
+    return positions;
+}
+
+bool hasHighQualityBasesAt(const string& bases, int start, const vector<int>& positions)
+{
+    return std::all_of(
+        positions.begin(), positions.end(), [&](int position) { return isHighQualityBase(bases[start + position]); });
+}
+
+struct AcceptanceTest
+{
+    double errorRate;
+    double pValueThreshold; // alpha_locus / n
+    int minReadPairs; // max(minReadPairs, ceil(minReadPairFraction * N))
+};
+
+// The occurrences of a motif seen at `locations`, and for each of its positions how many of them have a high-quality
+// base there.
+MotifStats tallyLocations(
+    const vector<RepeatUnitLocation>& locations, const vector<RepeatTract>& tracts, int motifSize)
+{
+    MotifStats stats;
+    stats.occurrences = locations.size();
+    stats.highQualityBaseCounts.assign(motifSize, 0);
+    for (const RepeatUnitLocation& location : locations)
+    {
+        const string& bases = tracts[location.tractIndex].bases;
+        for (int index = 0; index != motifSize; ++index)
+        {
+            stats.highQualityBaseCounts[index] += isHighQualityBase(bases[location.offsetWithinRepeatTract + index]);
+        }
+    }
+    return stats;
+}
+
+// The number of distinct read pairs that show `motif` at `locations` with high-quality bases at every position where it
+// differs from its nearest more common accepted motifs.
+int countSupportingReadPairs(
+    const string& motif, const vector<RepeatUnitLocation>& locations,
+    const std::unordered_map<string, MotifStats>& statsForAcceptedMotifs, const vector<RepeatTract>& tracts)
+{
+    const vector<int> distinguishingPositions
+        = findDistinguishingPositions(motif, locations.size(), statsForAcceptedMotifs);
+    std::unordered_set<int> readPairs;
+    for (const RepeatUnitLocation& location : locations)
+    {
+        const RepeatTract& tract = tracts[location.tractIndex];
+        if (hasHighQualityBasesAt(tract.bases, location.offsetWithinRepeatTract, distinguishingPositions))
+        {
+            readPairs.insert(tract.readPairIndex);
+        }
+    }
+    return readPairs.size();
+}
+
+// Tests motif candidates in decreasing order of occurrences and adds the accepted ones to statsForAcceptedMotifs.
+vector<string> acceptNewMotifs(
+    const std::unordered_map<string, vector<RepeatUnitLocation>>& motifCandidates,
+    std::unordered_map<string, MotifStats>& statsForAcceptedMotifs, const vector<RepeatTract>& tracts,
+    const AcceptanceTest& test)
+{
+    vector<const string*> order;
+    for (const auto& motifAndLocations : motifCandidates)
+    {
+        if (static_cast<int>(motifAndLocations.second.size()) >= test.minReadPairs
+            && statsForAcceptedMotifs.count(motifAndLocations.first) == 0)
+        {
+            order.push_back(&motifAndLocations.first);
+        }
+    }
+    std::sort(
+        order.begin(), order.end(),
+        [&](const string* left, const string* right)
+        {
+            const size_t leftCount = motifCandidates.at(*left).size();
+            const size_t rightCount = motifCandidates.at(*right).size();
+            return leftCount != rightCount ? leftCount > rightCount : *left < *right;
+        });
+
+    vector<string> accepted;
+    for (const string* motifCandidate : order)
+    {
+        const vector<RepeatUnitLocation>& locations = motifCandidates.at(*motifCandidate);
+        const int count = countSupportingReadPairs(*motifCandidate, locations, statsForAcceptedMotifs, tracts);
+        if (count < test.minReadPairs)
+        {
+            continue;
+        }
+
+        // Expected number of read pairs showing this motif candidate through a single high-quality sequencing error of
+        // an accepted motif one base away from it.
+        double expectedErrors = 0;
+        for (const auto& acceptedMotifAndStats : statsForAcceptedMotifs)
+        {
+            const string& acceptedMotif = acceptedMotifAndStats.first;
+            if (countDifferences(*motifCandidate, acceptedMotif) != 1)
+            {
+                continue;
+            }
+            for (size_t index = 0; index != acceptedMotif.size(); ++index)
+            {
+                if (acceptedMotif[index] != (*motifCandidate)[index])
+                {
+                    expectedErrors += test.errorRate / 3 * acceptedMotifAndStats.second.highQualityBaseCounts[index];
+                }
+            }
+        }
+        if (computePoissonUpperTail(expectedErrors, count) >= test.pValueThreshold)
+        {
+            continue;
+        }
+
+        statsForAcceptedMotifs.emplace(*motifCandidate, tallyLocations(locations, tracts, motifCandidate->size()));
+        accepted.push_back(*motifCandidate);
+    }
+    return accepted;
+}
+
+// ------------------------------------------------------------------------------------------------------------
+// Counting
+// ------------------------------------------------------------------------------------------------------------
+
+struct Tally
+{
+    int occurrences = 0;
+    int reads = 0;
+    int lastTractIndex = -1;
+
+    void add(int tractIndex)
+    {
+        ++occurrences;
+        if (lastTractIndex != tractIndex)
+        {
+            ++reads;
+            lastTractIndex = tractIndex;
+        }
+    }
+};
+
+struct GroupTallies
+{
+    explicit GroupTallies(size_t motifCount)
+        : motifs(motifCount)
+    {
+    }
+
+    vector<Tally> motifs; // indexed by position in the final motif list
+    std::map<std::pair<int, int>, Tally> motifPairs;
+};
+
+MotifCompositionCounts encodeCounts(const GroupTallies& tallies, const vector<int>& motifIds)
+{
+    MotifCompositionCounts counts;
+    for (size_t index = 0; index != tallies.motifs.size(); ++index)
+    {
+        const Tally& tally = tallies.motifs[index];
+        if (tally.occurrences > 0)
+        {
+            counts.motifs[motifIds[index]] = { tally.occurrences, tally.reads };
+        }
+    }
+    for (const auto& pairAndTally : tallies.motifPairs)
+    {
+        const auto& pair = pairAndTally.first;
+        counts.motifPairs[{ motifIds[pair.first], motifIds[pair.second] }]
+            = { pairAndTally.second.occurrences, pairAndTally.second.reads };
+    }
+    return counts;
+}
+
+// 0 = not assigned, 1 = shorter allele, 2 = longer allele.
+int assignToAllele(const RepeatTract& tract, int shortAllele, int longAllele, int motifSize)
+{
+    switch (tract.readType)
+    {
+    case ReadType::kSpanning:
+    {
+        const int units = tract.alleleLengthSupportedByThisRead / motifSize;
+        const int distanceToShort = std::abs(units - shortAllele);
+        const int distanceToLong = std::abs(units - longAllele);
+        if (distanceToShort < distanceToLong && distanceToShort <= std::max(1.0, 0.1 * shortAllele))
+        {
+            return 1;
+        }
+        if (distanceToLong < distanceToShort && distanceToLong <= std::max(1.0, 0.1 * longAllele))
+        {
+            return 2;
+        }
+        return 0;
+    }
+    case ReadType::kFlanking:
+    {
+        const int units = tract.alleleLengthSupportedByThisRead / motifSize;
+        return units > shortAllele + std::max(1.0, 0.1 * shortAllele) ? 2 : 0;
+    }
+    case ReadType::kRepeat:
+    {
+        // All of the read's repeat sequence lies inside one allele, so a tract longer than the short allele comes
+        // from the long one. The tract, not the read, is what counts: soft clips and flank are trimmed from it.
+        const int tractLength = tract.bases.size();
+        return (longAllele * motifSize >= tractLength && shortAllele * motifSize < tractLength) ? 2 : 0;
+    }
+    case ReadType::kOther:
+        break;
+    }
+    return 0;
+}
+
+} // namespace
+
+double computePeriodScore(const string& sequence, int lag)
+{
+    if (lag <= 0 || static_cast<int>(sequence.size()) <= lag)
+    {
+        return 0.0;
+    }
+    int matches = 0;
+    for (size_t index = lag; index != sequence.size(); ++index)
+    {
+        matches += basesMatch(sequence[index], sequence[index - lag]);
+    }
+    return static_cast<double>(matches) / (sequence.size() - lag);
+}
+
+bool passesPeriodTest(const string& sequence, int motifSize, double minScore)
+{
+    const double score = computePeriodScore(sequence, motifSize);
+    if (score < minScore)
+    {
+        return false;
+    }
+    // The small tolerance keeps a margin of exactly 0.1 from failing on rounding.
+    const double kMinMarginOverDivisors = 0.1 - 1e-9;
+    for (int divisor = 1; divisor < motifSize; ++divisor)
+    {
+        if (motifSize % divisor == 0 && score - computePeriodScore(sequence, divisor) < kMinMarginOverDivisors)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+int computeReferenceRepeatSequenceFrame(const string& sequence, const string& motif)
+{
+    return computeRepeatFrameWithinSequence(sequence, motif, {});
+}
+
+int computeSoftClipBasesToKeep(
+    const string& sequence, int tractStart, int clipStart, int clipEnd, int tractEnd, bool clipOnRight, int motifSize,
+    double minScore)
+{
+    const int clipLength = clipEnd - clipStart;
+    if (clipLength <= 0)
+    {
+        return 0;
+    }
+    const int windowSize = std::max(2 * motifSize, 12);
+    vector<char> window(windowSize, 0);
+    int windowHead = 0;
+    int comparisons = 0;
+    int matchesInWindow = 0;
+    int basesThroughLastMatch = 0;
+    for (int step = 0; step != clipLength; ++step)
+    {
+        const int position = clipOnRight ? clipStart + step : clipEnd - 1 - step;
+        const int earlierPosition = clipOnRight ? position - motifSize : position + motifSize;
+        const bool isComparable = clipOnRight ? earlierPosition >= tractStart : earlierPosition < tractEnd;
+        if (!isComparable)
+        {
+            continue;
+        }
+        const bool isMatch = basesMatch(sequence[position], sequence[earlierPosition]);
+        if (comparisons == windowSize)
+        {
+            matchesInWindow -= window[windowHead];
+        }
+        else
+        {
+            ++comparisons;
+        }
+        window[windowHead] = isMatch;
+        matchesInWindow += isMatch;
+        windowHead = (windowHead + 1) % windowSize;
+        if (isMatch)
+        {
+            basesThroughLastMatch = step + 1;
+        }
+        if (comparisons == windowSize && matchesInWindow < minScore * windowSize)
+        {
+            return basesThroughLastMatch;
+        }
+    }
+    // A clip too short to fill the window: drop trailing bases that do not continue the repeat sequence.
+    if (comparisons > 0 && matchesInWindow < minScore * comparisons)
+    {
+        return basesThroughLastMatch;
+    }
+    return clipLength;
+}
+
+vector<SequenceSubstring> splitIntoMotifs(
+    const string& tract, const string& catalogMotif, const vector<string>& acceptedMotifs, int startOffset,
+    bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
+    const boost::optional<string>& referenceEndPartialRepeatUnit, const vector<string>& knownMotifs)
+{
+    vector<SequenceSubstring> sequenceSubstrings;
+    splitTract(
+        tract, toUpperSequence(tract), catalogMotif, MotifList(acceptedMotifs, catalogMotif.size()),
+        computeCanonicalRotations(knownMotifs), startOffset, startsAtEdgeOfRepeatSequence,
+        endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+    return sequenceSubstrings;
+}
+
+double computePoissonUpperTail(double mean, int count)
+{
+    if (count <= 0)
+    {
+        return 1.0;
+    }
+    if (mean <= 0.0)
+    {
+        return 0.0;
+    }
+    // Sum the tail from `count` up; terms shrink geometrically once past the mean.
+    double term = std::exp(-mean + count * std::log(mean) - std::lgamma(count + 1.0));
+    double sum = 0.0;
+    for (int value = count; value < count + 100000; ++value)
+    {
+        sum += term;
+        term *= mean / (value + 1);
+        if (value > mean && term < sum * 1e-15)
+        {
+            break;
+        }
+    }
+    return std::min(1.0, sum);
+}
+
+} // namespace motifcomposition
+
+using namespace motifcomposition;
+
+vector<string> validateKnownMotifs(const vector<string>& knownMotifs, int motifSize, const string& locusId)
+{
+    vector<string> selected;
+    std::unordered_map<string, string> selectedRotations; // canonical rotation -> the entry as written in the catalog
+    for (const string& knownMotif : knownMotifs)
+    {
+        string motif(knownMotif);
+        std::transform(
+            motif.begin(), motif.end(), motif.begin(),
+            [](unsigned char base) { return static_cast<char>(std::toupper(base)); });
+        string problem;
+        if (static_cast<int>(motif.size()) != motifSize)
+        {
+            problem = "its length differs from the LocusStructure motif's";
+        }
+        else if (motif.find_first_not_of("ACGT") != string::npos)
+        {
+            problem = "it has bases other than A, C, G and T";
+        }
+        else
+        {
+            const auto inserted = selectedRotations.emplace(computeCanonicalRotation(motif), knownMotif);
+            if (!inserted.second)
+            {
+                problem = "it's already listed as '" + inserted.first->second + "'";
+            }
+        }
+        if (!problem.empty())
+        {
+            spdlog::warn("Skipping KnownMotifs entry '{}' of locus {} because {}", knownMotif, locusId, problem);
+            continue;
+        }
+        selected.push_back(std::move(motif));
+    }
+    return selected;
+}
+
+boost::optional<MotifComposition> computeMotifComposition(
+    const MotifCompositionLocus& locus, int flankLength,
+    const vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
+    bool onlyLociWithNonRefMotifs)
+{
+    const string& catalogMotif = locus.catalogMotif;
+    const int motifSize = catalogMotif.size();
+    const int64_t locusStart = locus.locusStart;
+    const int64_t locusEnd = locus.locusEnd;
+    const bool catalogMotifIsConcrete = graphtools::checkIfNucleotideReferenceSequence(catalogMotif);
+    const std::unordered_set<string> knownMotifRotations = computeCanonicalRotations(locus.knownMotifs);
+
+    // --- Motifs from the reference repeat sequence: parse the reference repeat sequence, both of whose ends
+    // are trusted.
+    const int frameOffset = computeReferenceRepeatSequenceFrame(locus.referenceRepeatSequence, catalogMotif);
+    std::unordered_map<string, MotifStats> statsForAcceptedMotifs;
+    {
+        const vector<string> seedMotifs = catalogMotifIsConcrete ? vector<string> { catalogMotif } : vector<string> {};
+        vector<SequenceSubstring> sequenceSubstrings;
+        splitTract(
+            locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif,
+            MotifList(seedMotifs, motifSize), knownMotifRotations, frameOffset, true, true, boost::none,
+            sequenceSubstrings);
+        for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+        {
+            if (sequenceSubstring.type != SequenceSubstringType::kGap)
+            {
+                ++statsForAcceptedMotifs[locus.referenceRepeatSequence.substr(
+                                 sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length)]
+                      .occurrences;
+            }
+        }
+        if (catalogMotifIsConcrete)
+        {
+            statsForAcceptedMotifs[catalogMotif];
+        }
+    }
+    // The set R' of motifs from the reference repeat sequence, and the same motifs sorted by how often the
+    // reference repeat sequence has them, most common first. Those counts only set the order; the counts used by the
+    // acceptance test come from the reads, so they are reset here.
+    std::unordered_set<string> motifsFromReferenceRepeatSequence;
+    const vector<string> referenceMotifsSortedByFrequency = orderByOccurrences(statsForAcceptedMotifs);
+    for (auto& motifAndStats : statsForAcceptedMotifs)
+    {
+        motifsFromReferenceRepeatSequence.insert(motifAndStats.first);
+        motifAndStats.second.occurrences = 0;
+        motifAndStats.second.highQualityBaseCounts.assign(motifSize, 0);
+    }
+
+    const boost::optional<FlankAnchorSequence> leftAnchor = findFlankAnchorSequence(
+        locus.leftFlankSequence, false, catalogMotif, referenceMotifsSortedByFrequency,
+        locus.referenceRepeatSequence);
+    const boost::optional<FlankAnchorSequence> rightAnchor = findFlankAnchorSequence(
+        locus.rightFlankSequence, true, catalogMotif, referenceMotifsSortedByFrequency,
+        locus.referenceRepeatSequence);
+
+    // The partial repeat unit the reference repeat sequence ends with when split with the given list of accepted
+    // motifs, which a read's tract ending at E should also end with. It comes from the split itself, not from the
+    // frame offset: the splitter shifts its frame past an impurity in the reference repeat sequence whose length is not
+    // a multiple of the motif length, and a read of the reference allele split with the same list does the same.
+    auto computeReferenceEndPartialRepeatUnit = [&](const MotifList& acceptedMotifs)
+    {
+        vector<SequenceSubstring> referenceRepeatUnits;
+        const int partialRepeatUnitLength = splitTract(
+            locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, acceptedMotifs,
+            knownMotifRotations, frameOffset, true, true, boost::none, referenceRepeatUnits);
+        return boost::optional<string>(locus.referenceRepeatSequence.substr(
+            locus.referenceRepeatSequence.size() - partialRepeatUnitLength));
+    };
+
+    // --- Collect the tracts: reads mapped to the locus first, then in-repeat reads.
+    double averageMapq = 0;
+    int mappedReadCount = 0;
+    for (const FullReadPair* readPair : readPairs)
+    {
+        for (const std::optional<FullRead>* mate : { &readPair->firstMate, &readPair->secondMate })
+        {
+            if (*mate && (*mate)->s.isMapped)
+            {
+                averageMapq += (*mate)->s.mapq;
+                ++mappedReadCount;
+            }
+        }
+    }
+    if (mappedReadCount > 0)
+    {
+        averageMapq /= mappedReadCount;
+    }
+
+    const int64_t anchorDistance = locus.meanFragmentLength > 0 ? locus.meanFragmentLength : flankLength;
+    // True if the mate is on the forward strand and starts in the left flank, or on the reverse strand and ends in
+    // the right flank, within anchorDistance of the locus, so that the pair's other read lies over the locus.
+    auto isMateInFlankWithPartnerOverLocus = [&](const FullRead& mate)
+    {
+        if (!mate.s.isMapped || mate.s.chromId != locus.contigIndex || !isUsableAlignment(mate))
+        {
+            return false;
+        }
+        const int64_t mateStart = mate.s.pos;
+        const int64_t mateEnd = computeAlignedEnd(mate);
+        if (!mate.r.isReversed())
+        {
+            return mateStart < locusStart && mateEnd <= locusEnd && locusStart - mateStart <= anchorDistance;
+        }
+        return mateEnd > locusEnd && mateStart >= locusStart && mateEnd - locusEnd <= anchorDistance;
+    };
+
+    vector<RepeatTract> tracts;
+    vector<RepeatTract> inrepeatTracts;
+    for (size_t pairIndex = 0; pairIndex != readPairs.size(); ++pairIndex)
+    {
+        const FullReadPair& readPair = *readPairs[pairIndex];
+        const FullRead* firstMate = readPair.firstMate ? &*readPair.firstMate : nullptr;
+        const FullRead* secondMate = readPair.secondMate ? &*readPair.secondMate : nullptr;
+        for (const auto& [read, mate] : { std::pair(firstMate, secondMate), std::pair(secondMate, firstMate) })
+        {
+            if (read == nullptr || !isUsableAlignment(*read))
+            {
+                continue;
+            }
+            const string& bases = read->r.sequence();
+            const int readLength = bases.size();
+            const bool mateIsAnchored = mate != nullptr && isMateInFlankWithPartnerOverLocus(*mate);
+
+            RepeatTract tract;
+            tract.readPairIndex = static_cast<int>(pairIndex);
+            tract.readType = ReadType::kOther;
+            tract.alleleLengthSupportedByThisRead = 0;
+            tract.startsAtEdgeOfRepeatSequence = false;
+            tract.endsAtEdgeOfRepeatSequence = false;
+            tract.startOffset = -1;
+            int tractStart = 0;
+            int tractEnd = 0;
+            // True for a read that overlaps the locus or is soft-clipped toward it; such a read is never an
+            // in-repeat read, even if it holds no repeat bases.
+            bool isPlacedAtLocus = false;
+
+            if (read->s.isMapped && read->s.chromId == locus.contigIndex && !read->s.cigar.empty())
+            {
+                const AlignmentRelativeToLocus alignment = summarizeAlignment(*read, locusStart, locusEnd, motifSize);
+                const bool overlapsLocus
+                    = alignment.referenceStart < locusEnd && alignment.referenceEnd > locusStart;
+                if (overlapsLocus)
+                {
+                    isPlacedAtLocus = true;
+                    const bool leftClipMayBeRepeatSequence
+                        = alignment.leftClipLength > 0 && alignment.referenceStart >= locusStart;
+                    const bool rightClipMayBeRepeatSequence
+                        = alignment.rightClipLength > 0 && alignment.referenceEnd <= locusEnd;
+                    if (!leftClipMayBeRepeatSequence && alignment.readPositionAtStart >= 0)
+                    {
+                        tractStart = alignment.readPositionAtStart;
+                        tract.startsAtEdgeOfRepeatSequence = !alignment.startsWithEdgeInsertion;
+                        tract.startOffset
+                            = computeOffsetFromReferenceFrame(alignment.referencePositionAtStart, locus, frameOffset);
+                    }
+                    else
+                    {
+                        tractStart = alignment.leftClipLength;
+                    }
+                    if (!rightClipMayBeRepeatSequence && alignment.readPositionAtEnd >= 0)
+                    {
+                        tractEnd = alignment.readPositionAtEnd;
+                        tract.endsAtEdgeOfRepeatSequence = !alignment.endsWithEdgeInsertion;
+                    }
+                    else
+                    {
+                        tractEnd = readLength - alignment.rightClipLength;
+                    }
+                    if (leftClipMayBeRepeatSequence)
+                    {
+                        tractStart -= computeSoftClipBasesToKeep(
+                            bases, 0, 0, alignment.leftClipLength, tractEnd, false, motifSize,
+                            kMotifCompositionMinSoftClipPeriodScore);
+                    }
+                    if (rightClipMayBeRepeatSequence)
+                    {
+                        tractEnd += computeSoftClipBasesToKeep(
+                            bases, tractStart, tractEnd, readLength, 0, true, motifSize,
+                            kMotifCompositionMinSoftClipPeriodScore);
+                    }
+
+                    const bool isSpanning = alignment.flankBasesBefore >= kMotifCompositionMinFlankBases
+                        && alignment.flankBasesAfter >= kMotifCompositionMinFlankBases;
+                    const bool isInside
+                        = alignment.referenceStart >= locusStart && alignment.referenceEnd <= locusEnd;
+                    tract.readType
+                        = isSpanning ? ReadType::kSpanning : (isInside ? ReadType::kRepeat : ReadType::kFlanking);
+                    tract.alleleLengthSupportedByThisRead
+                        = isSpanning ? alignment.alleleLengthSupportedByThisRead : std::max(0, tractEnd - tractStart);
+                }
+                else if (
+                    alignment.rightClipLength > 0 && alignment.referenceEnd <= locusStart
+                    && alignment.referenceEnd > locusStart - motifSize)
+                {
+                    // Aligned part ends in the left flank within k bases of the locus and is followed by a soft
+                    // clip: skip the clip bases that stand for the rest of the flank, so the tract starts at S.
+                    isPlacedAtLocus = true;
+                    tractStart = readLength - alignment.rightClipLength
+                        + static_cast<int>(locusStart - alignment.referenceEnd);
+                    if (tractStart < readLength)
+                    {
+                        tractEnd = tractStart
+                            + computeSoftClipBasesToKeep(
+                                       bases, tractStart, tractStart, readLength, 0, true, motifSize,
+                                       kMotifCompositionMinSoftClipPeriodScore);
+                        tract.startsAtEdgeOfRepeatSequence = true;
+                        tract.startOffset = frameOffset;
+                        tract.readType = ReadType::kFlanking;
+                        tract.alleleLengthSupportedByThisRead = tractEnd - tractStart;
+                    }
+                }
+                else if (
+                    alignment.leftClipLength > 0 && alignment.referenceStart >= locusEnd
+                    && alignment.referenceStart < locusEnd + motifSize)
+                {
+                    // The mirror image: aligned part starts in the right flank within k bases of E.
+                    isPlacedAtLocus = true;
+                    tractEnd = alignment.leftClipLength - static_cast<int>(alignment.referenceStart - locusEnd);
+                    if (tractEnd > 0)
+                    {
+                        tractStart = tractEnd
+                            - computeSoftClipBasesToKeep(
+                                         bases, 0, 0, tractEnd, tractEnd, false, motifSize,
+                                         kMotifCompositionMinSoftClipPeriodScore);
+                        tract.endsAtEdgeOfRepeatSequence = true;
+                        tract.readType = ReadType::kFlanking;
+                        tract.alleleLengthSupportedByThisRead = tractEnd - tractStart;
+                    }
+                }
+            }
+
+            if (isPlacedAtLocus)
+            {
+                // A tract can run past the locus into the flank: a soft clip that continues the repeat sequence's
+                // period, or flank bases the aligner placed on the locus (as in reads from an allele shorter than the
+                // reference repeat sequence). Cut it where the flank's anchor appears; the cut is not a trusted edge.
+                if (rightAnchor && tractEnd > tractStart)
+                {
+                    const int cutEnd = cutAtRightAnchor(bases, tractStart, tractEnd, *rightAnchor);
+                    if (cutEnd != tractEnd)
+                    {
+                        tractEnd = cutEnd;
+                        tract.endsAtEdgeOfRepeatSequence = false;
+                    }
+                }
+                if (leftAnchor && tractEnd > tractStart)
+                {
+                    const int cutStart = cutAtLeftAnchor(bases, tractStart, tractEnd, *leftAnchor);
+                    if (cutStart != tractStart)
+                    {
+                        tractStart = cutStart;
+                        tract.startsAtEdgeOfRepeatSequence = false;
+                        tract.startOffset = -1;
+                    }
+                }
+                if (tract.readType == ReadType::kFlanking)
+                {
+                    tract.alleleLengthSupportedByThisRead = std::max(0, tractEnd - tractStart);
+                }
+                if (tractEnd <= tractStart)
+                {
+                    continue; // no repeat bases, for example an alignment that deletes the whole locus
+                }
+                // Low MAPQ is judged on the read itself, except for reads mapped inside the locus, whose placement
+                // is ambiguous by nature: for those it is judged on an anchored mate, if there is one.
+                const FullRead* mapqRead
+                    = tract.readType == ReadType::kRepeat ? (mateIsAnchored ? mate : nullptr) : read;
+                if (mapqRead != nullptr && hasUnusuallyLowMapq(*mapqRead, averageMapq))
+                {
+                    continue;
+                }
+                tract.bases = bases.substr(tractStart, tractEnd - tractStart);
+                tracts.push_back(std::move(tract));
+                continue;
+            }
+
+            // A read that BWA placed confidently near the locus, but not in it, came from where it was placed, for
+            // example a neighbouring locus of the same period or a repetitive flank; it is not an in-repeat read of
+            // this locus. (Telling apart the in-repeat reads of an expansion that BWA placed in a neighbouring locus
+            // of the same motif needs a comparison between neighbouring loci, not yet implemented.)
+            if (read->s.isMapped && read->s.chromId == locus.contigIndex && read->s.mapq > 3
+                && read->s.pos < locusEnd + flankLength && computeAlignedEnd(*read) > locusStart - flankLength)
+            {
+                continue;
+            }
+
+            // In-repeat read: made of repeat sequence and placed anywhere else. Its orientation comes from the
+            // anchored mate: in a forward-reverse pair it comes from the strand opposite the mate.
+            if (!mateIsAnchored || hasUnusuallyLowMapq(*mate, averageMapq)
+                || !passesPeriodTest(bases, motifSize, kMotifCompositionMinInrepeatReadPeriodScore))
+            {
+                continue;
+            }
+            tract.readType = ReadType::kRepeat;
+            tract.bases = mate->r.isReversed() == read->r.isReversed() ? graphtools::reverseComplement(bases) : bases;
+            {
+                // An in-repeat read can still hold some flank at either end.
+                int start = 0;
+                int end = tract.bases.size();
+                if (rightAnchor)
+                {
+                    end = cutAtRightAnchorInnermost(tract.bases, *rightAnchor);
+                }
+                if (leftAnchor && end > start)
+                {
+                    start = cutAtLeftAnchorInnermost(tract.bases, end, *leftAnchor);
+                }
+                if (end <= start)
+                {
+                    continue;
+                }
+                tract.bases = tract.bases.substr(start, end - start);
+            }
+            inrepeatTracts.push_back(std::move(tract));
+        }
+    }
+    const size_t mappedTractCount = tracts.size();
+    for (RepeatTract& tract : inrepeatTracts)
+    {
+        tracts.push_back(std::move(tract));
+    }
+    inrepeatTracts.clear();
+
+    const bool isHeterozygousWithDistinctAlleles = genotype && genotype->numAlleles() == 2
+        && genotype->longAlleleSizeInUnits() - genotype->shortAlleleSizeInUnits() >= 2;
+
+    // --- Parse with a given motif list and collect motif candidates.
+    vector<string> tractsUpperCased(tracts.size());
+    for (size_t index = 0; index != tracts.size(); ++index)
+    {
+        tractsUpperCased[index] = toUpperSequence(tracts[index].bases);
+    }
+    auto startOffsetOf = [&](size_t tractIndex, const vector<string>& motifs)
+    {
+        const RepeatTract& tract = tracts[tractIndex];
+        return tract.startOffset >= 0
+            ? tract.startOffset
+            : computeRepeatFrameWithinSequence(tractsUpperCased[tractIndex], catalogMotif, motifs);
+    };
+
+    std::unordered_map<string, vector<RepeatUnitLocation>> motifCandidates;
+    vector<char> readPairHasRepeatUnits(readPairs.size(), false);
+    int readPairsWithRepeatUnits = 0;
+    vector<SequenceSubstring> sequenceSubstrings;
+    auto parseForDiscovery = [&](size_t firstTract, size_t lastTract, const MotifList& motifList)
+    {
+        const boost::optional<string> referenceEndPartialRepeatUnit = computeReferenceEndPartialRepeatUnit(motifList);
+        for (size_t tractIndex = firstTract; tractIndex != lastTract; ++tractIndex)
+        {
+            const RepeatTract& tract = tracts[tractIndex];
+            splitTract(
+                tract.bases, tractsUpperCased[tractIndex], catalogMotif, motifList, knownMotifRotations,
+                startOffsetOf(tractIndex, motifList.motifs()), tract.startsAtEdgeOfRepeatSequence,
+                tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+            for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+            {
+                if (sequenceSubstring.type == SequenceSubstringType::kGap)
+                {
+                    continue;
+                }
+                if (!readPairHasRepeatUnits[tract.readPairIndex])
+                {
+                    readPairHasRepeatUnits[tract.readPairIndex] = true;
+                    ++readPairsWithRepeatUnits;
+                }
+                const string motif = tractsUpperCased[tractIndex].substr(
+                    sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length);
+                if (sequenceSubstring.type == SequenceSubstringType::kAcceptedMotif)
+                {
+                    MotifStats& stats = statsForAcceptedMotifs[motif];
+                    ++stats.occurrences;
+                    for (int index = 0; index != motifSize; ++index)
+                    {
+                        stats.highQualityBaseCounts[index]
+                            += isHighQualityBase(tract.bases[sequenceSubstring.offsetWithinRepeatTract + index]);
+                    }
+                }
+                else
+                {
+                    motifCandidates[motif].push_back(
+                        { static_cast<int>(tractIndex), sequenceSubstring.offsetWithinRepeatTract });
+                }
+            }
+        }
+    };
+
+    // The catalog's KnownMotifs are matched by rotation, since the reads, cut in line with the catalog motif, show
+    // which rotation actually occurs. A listed motif is found once one of its rotations is accepted: a motif from
+    // the reference repeat sequence, or a motif candidate trusted here. For a listed motif not yet found, the motif
+    // candidate among its rotations seen most often (ties: alphabetically first) is trusted without the error test of
+    // acceptNewMotifs, provided it has the same minimum read-pair support a new motif needs (so a single sequencing
+    // error does not report it); its other rotations are frame shifts and stay ordinary motif candidates.
+    std::unordered_set<string> canonicalRotationsOfNotYetSeenKnownMotifs = knownMotifRotations;
+    for (const string& motif : motifsFromReferenceRepeatSequence)
+    {
+        canonicalRotationsOfNotYetSeenKnownMotifs.erase(computeCanonicalRotation(motif));
+    }
+
+    // Bonferroni correction over a family fixed before looking at the reads: the one-base variants of the motifs
+    // from the reference repeat sequence and of the listed motifs that are not rotations of one.
+    const int motifCountForBonferroniCorrection = std::max<int>(
+        1, motifsFromReferenceRepeatSequence.size() + canonicalRotationsOfNotYetSeenKnownMotifs.size());
+    auto makeAcceptanceTest = [&]()
+    {
+        AcceptanceTest test;
+        test.errorRate = kMotifCompositionBaseErrorRate;
+        test.pValueThreshold
+            = kMotifCompositionLocusFalsePositiveRate / (3.0 * motifSize * motifCountForBonferroniCorrection);
+        test.minReadPairs = std::max(
+            kMotifCompositionMinReadPairs,
+            static_cast<int>(std::ceil(kMotifCompositionMinReadPairFraction * readPairsWithRepeatUnits)));
+        return test;
+    };
+
+    std::unordered_set<string> knownMotifsInReads;
+    auto trustMotifCandidatesThatMatchKnownMotifs = [&]()
+    {
+        std::map<string, string> best; // canonical rotation -> motif candidate
+        for (const auto& motifAndLocations : motifCandidates)
+        {
+            const string& motif = motifAndLocations.first;
+            const string canonical = computeCanonicalRotation(motif);
+            if (canonicalRotationsOfNotYetSeenKnownMotifs.count(canonical) == 0)
+            {
+                continue;
+            }
+            auto it = best.find(canonical);
+            if (it == best.end())
+            {
+                best.emplace(canonical, motif);
+                continue;
+            }
+            const size_t count = motifAndLocations.second.size();
+            const size_t bestCount = motifCandidates.at(it->second).size();
+            if (count > bestCount || (count == bestCount && motif < it->second))
+            {
+                it->second = motif;
+            }
+        }
+        const int minReadPairs = makeAcceptanceTest().minReadPairs;
+        for (const auto& canonicalAndMotif : best)
+        {
+            const string& motif = canonicalAndMotif.second;
+            if (countSupportingReadPairs(motif, motifCandidates.at(motif), statsForAcceptedMotifs, tracts)
+                < minReadPairs)
+            {
+                continue;
+            }
+            statsForAcceptedMotifs.emplace(motif, tallyLocations(motifCandidates.at(motif), tracts, motifSize));
+            knownMotifsInReads.insert(motif);
+            canonicalRotationsOfNotYetSeenKnownMotifs.erase(canonicalAndMotif.first);
+            motifCandidates.erase(motif);
+        }
+    };
+
+    // Pass 1: reads mapped to the locus, with the motifs from the reference repeat sequence as the list of
+    // accepted motifs.
+    parseForDiscovery(0, mappedTractCount, MotifList(referenceMotifsSortedByFrequency, motifSize));
+    trustMotifCandidatesThatMatchKnownMotifs();
+    if (onlyLociWithNonRefMotifs && motifCandidates.empty() && knownMotifsInReads.empty()
+        && mappedTractCount == tracts.size())
+    {
+        return boost::none; // every repeat unit is a motif from the reference repeat sequence and there are no
+                            // in-repeat reads
+    }
+    vector<string> newMotifs = acceptNewMotifs(motifCandidates, statsForAcceptedMotifs, tracts, makeAcceptanceTest());
+
+    // In-repeat reads, parsed with the motifs accepted so far; their motif candidates are pooled with pass 1's.
+    if (mappedTractCount != tracts.size())
+    {
+        parseForDiscovery(
+            mappedTractCount, tracts.size(), MotifList(orderByOccurrences(statsForAcceptedMotifs), motifSize));
+        trustMotifCandidatesThatMatchKnownMotifs();
+        const vector<string> moreNewMotifs
+            = acceptNewMotifs(motifCandidates, statsForAcceptedMotifs, tracts, makeAcceptanceTest());
+        newMotifs.insert(newMotifs.end(), moreNewMotifs.begin(), moreNewMotifs.end());
+    }
+    motifCandidates.clear();
+
+    // --- Final motif list: merge the rotations of each new motif into the one closest to the catalog
+    // motif, and drop new motifs that are rotations of a motif from the reference repeat sequence or of a known
+    // motif found in the reads.
+    {
+        std::unordered_set<string> rotationsOfAcceptedMotifs;
+        for (const std::unordered_set<string>* motifs :
+             { &motifsFromReferenceRepeatSequence, &knownMotifsInReads })
+        {
+            for (const string& motif : *motifs)
+            {
+                rotationsOfAcceptedMotifs.insert(computeCanonicalRotation(motif));
+            }
+        }
+        std::map<string, string> keptRotation; // canonical rotation -> kept new motif
+        for (const string& motif : newMotifs)
+        {
+            const string canonical = computeCanonicalRotation(motif);
+            if (rotationsOfAcceptedMotifs.count(canonical) != 0)
+            {
+                continue;
+            }
+            auto kept = keptRotation.find(canonical);
+            if (kept == keptRotation.end())
+            {
+                keptRotation.emplace(canonical, motif);
+                continue;
+            }
+            const int mismatches = countMismatches(motif.data(), catalogMotif, motifSize);
+            const int keptMismatches = countMismatches(kept->second.data(), catalogMotif, motifSize);
+            if (mismatches < keptMismatches || (mismatches == keptMismatches && motif < kept->second))
+            {
+                kept->second = motif;
+            }
+        }
+        std::unordered_set<string> keptNewMotifs;
+        for (const auto& canonicalAndMotif : keptRotation)
+        {
+            keptNewMotifs.insert(canonicalAndMotif.second);
+        }
+        for (auto it = statsForAcceptedMotifs.begin(); it != statsForAcceptedMotifs.end();)
+        {
+            const bool keep = motifsFromReferenceRepeatSequence.count(it->first) != 0
+                || knownMotifsInReads.count(it->first) != 0 || keptNewMotifs.count(it->first) != 0;
+            it = keep ? std::next(it) : statsForAcceptedMotifs.erase(it);
+        }
+        if (onlyLociWithNonRefMotifs && keptNewMotifs.empty() && knownMotifsInReads.empty())
+        {
+            return boost::none;
+        }
+    }
+
+    const vector<string> finalMotifs = orderByOccurrences(statsForAcceptedMotifs);
+    const MotifList finalMotifList(finalMotifs, motifSize);
+    std::unordered_map<string, int> finalMotifIndex;
+    vector<vector<int>> distinguishingPositions(finalMotifs.size());
+    for (size_t index = 0; index != finalMotifs.size(); ++index)
+    {
+        finalMotifIndex.emplace(finalMotifs[index], index);
+        distinguishingPositions[index] = findDistinguishingPositions(
+            finalMotifs[index], statsForAcceptedMotifs.at(finalMotifs[index]).occurrences, statsForAcceptedMotifs);
+    }
+
+    // --- Final parse and counting. A repeat unit counts only if it is on the final list and its bases
+    // are high quality where it differs from its nearest more common motifs; anything else becomes a gap, which
+    // breaks pairs.
+    GroupTallies locusTallies(finalMotifs.size());
+    GroupTallies allele1Tallies(finalMotifs.size());
+    GroupTallies allele2Tallies(finalMotifs.size());
+    bool anyReadAssigned = false;
+    const boost::optional<string> referenceEndPartialRepeatUnit = computeReferenceEndPartialRepeatUnit(finalMotifList);
+    for (size_t tractIndex = 0; tractIndex != tracts.size(); ++tractIndex)
+    {
+        const RepeatTract& tract = tracts[tractIndex];
+        splitTract(
+            tract.bases, tractsUpperCased[tractIndex], catalogMotif, finalMotifList, knownMotifRotations,
+            startOffsetOf(tractIndex, finalMotifs), tract.startsAtEdgeOfRepeatSequence,
+            tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+
+        int allele = 0;
+        if (isHeterozygousWithDistinctAlleles)
+        {
+            allele = assignToAllele(
+                tract, genotype->shortAlleleSizeInUnits(), genotype->longAlleleSizeInUnits(), motifSize);
+            anyReadAssigned = anyReadAssigned || allele != 0;
+        }
+        GroupTallies* alleleTallies = allele == 1 ? &allele1Tallies : (allele == 2 ? &allele2Tallies : nullptr);
+        if (spdlog::should_log(spdlog::level::debug))
+        {
+            // In-repeat reads come after the reads mapped to the locus.
+            const char* kindName = tract.readType == ReadType::kSpanning
+                ? "spanning"
+                : (tract.readType == ReadType::kFlanking ? "flanking"
+                                                         : (tractIndex < mappedTractCount ? "inside" : "inrepeat"));
+            string encoding;
+            for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+            {
+                encoding
+                    += (sequenceSubstring.type == SequenceSubstringType::kAcceptedMotif
+                            ? tract.bases.substr(sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length)
+                            : "("
+                                + tract.bases.substr(
+                                    sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length)
+                                + ")")
+                    + " ";
+            }
+            spdlog::debug(
+                "MotifComposition {}:{}-{} read pair {} {} allele {}: {}", locus.contigIndex, locusStart, locusEnd,
+                tract.readPairIndex, kindName, allele, encoding);
+        }
+
+        int previousMotif = -1;
+        for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+        {
+            int motif = -1;
+            if (sequenceSubstring.type == SequenceSubstringType::kAcceptedMotif)
+            {
+                motif = finalMotifIndex.at(
+                    tractsUpperCased[tractIndex].substr(
+                        sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length));
+                if (!hasHighQualityBasesAt(
+                        tract.bases, sequenceSubstring.offsetWithinRepeatTract, distinguishingPositions[motif]))
+                {
+                    motif = -1;
+                }
+            }
+            if (motif == -1)
+            {
+                previousMotif = -1;
+                continue;
+            }
+            for (GroupTallies* tallies : { &locusTallies, alleleTallies })
+            {
+                if (tallies == nullptr)
+                {
+                    continue;
+                }
+                tallies->motifs[motif].add(tractIndex);
+                if (previousMotif != -1)
+                {
+                    tallies->motifPairs[{ previousMotif, motif }].add(tractIndex);
+                }
+            }
+            previousMotif = motif;
+        }
+    }
+
+    // --- Motif IDs: numbered from 1 by locus-wide occurrences, highest first (ties: motif sequence). Motifs never
+    // counted get no ID.
+    vector<int> countedMotifs;
+    for (size_t index = 0; index != finalMotifs.size(); ++index)
+    {
+        if (locusTallies.motifs[index].occurrences > 0)
+        {
+            countedMotifs.push_back(index);
+        }
+    }
+    std::sort(
+        countedMotifs.begin(), countedMotifs.end(),
+        [&](int left, int right)
+        {
+            const int leftCount = locusTallies.motifs[left].occurrences;
+            const int rightCount = locusTallies.motifs[right].occurrences;
+            return leftCount != rightCount ? leftCount > rightCount : finalMotifs[left] < finalMotifs[right];
+        });
+
+    // Which motifs the reference repeat sequence has depends on the list of accepted motifs the splitter uses (it
+    // decides where to shift), so split the reference repeat sequence again with the final list: a motif found there
+    // is a motif from the reference repeat sequence, not a new motif.
+    {
+        splitTract(
+            locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, finalMotifList,
+            knownMotifRotations, frameOffset, true, true, boost::none, sequenceSubstrings);
+        for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
+        {
+            if (sequenceSubstring.type != SequenceSubstringType::kGap)
+            {
+                motifsFromReferenceRepeatSequence.insert(locus.referenceRepeatSequence.substr(
+                    sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length));
+            }
+        }
+    }
+
+    MotifComposition composition;
+    vector<int> motifIds(finalMotifs.size(), 0);
+    bool hasRepeatUnitNotInReferenceRepeatSequence = false;
+    for (size_t rank = 0; rank != countedMotifs.size(); ++rank)
+    {
+        const string& motif = finalMotifs[countedMotifs[rank]];
+        motifIds[countedMotifs[rank]] = rank + 1;
+        composition.motifs.push_back(motif);
+        hasRepeatUnitNotInReferenceRepeatSequence
+            = hasRepeatUnitNotInReferenceRepeatSequence || motifsFromReferenceRepeatSequence.count(motif) == 0;
+    }
+    if (onlyLociWithNonRefMotifs && !hasRepeatUnitNotInReferenceRepeatSequence)
+    {
+        return boost::none;
+    }
+
+    composition.locus = encodeCounts(locusTallies, motifIds);
+    if (isHeterozygousWithDistinctAlleles && anyReadAssigned)
+    {
+        composition.hasAlleleBlocks = true;
+        composition.allele1 = encodeCounts(allele1Tallies, motifIds);
+        composition.allele2 = encodeCounts(allele2Tallies, motifIds);
+    }
+    return composition;
+}
+
+}
