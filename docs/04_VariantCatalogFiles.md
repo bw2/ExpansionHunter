@@ -134,7 +134,7 @@ itself.
   [Read Visualization Conditions](#read-visualization-conditions) below.
 
 * `KnownMotifs` Optional array of motifs that `--output-motif-composition`
-  treats as known at this locus (for example
+  treats as expected at this locus (for example
   `"KnownMotifs": ["CAG", "CAA", "CCG"]`). The order of the entries does not
   matter, and each can be written in any rotation. Entries must have the same
   length as the `LocusStructure` motif, and must consist of A, C, G or T bases
