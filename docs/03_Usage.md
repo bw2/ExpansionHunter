@@ -52,7 +52,7 @@ optional arguments.
   `streaming`, or `optimized-streaming`. The default mode
   is `seeking`. See further description of analysis modes below.
 * `--genotyping-approach <auto|only-quick|only-full>` In `optimized-streaming` mode, which
-  genotyper(s) to run on each locus. `auto` (the default) uses the quick spanning-read heuristic
+  genotyper(s) run on each locus. `auto` (the default) uses the quick spanning-read heuristic
   where it can confidently resolve a locus and the full graph-based genotyper for larger or more
   complex alleles. `only-quick` runs only the quick heuristic and writes a skipped record (with
   `Reason` set to `genotyping_approach_only_quick`) for every locus with reads that it cannot resolve
