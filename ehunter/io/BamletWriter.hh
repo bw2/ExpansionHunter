@@ -102,7 +102,7 @@ private:
 
     std::unordered_map<std::string, graphtools::GraphReferenceMapping> graphReferenceMappings_;
     // Guards graphReferenceMappings_ so initLocusSpec() and write() can run from multiple worker threads
-    // (low-mem-streaming builds LocusAnalyzers, and thus calls initLocusSpec, on worker threads). Modes
+    // (optimized-streaming builds LocusAnalyzers, and thus calls initLocusSpec, on worker threads). Modes
     // that pre-build all analyzers serially leave this uncontended.
     std::mutex graphReferenceMappingsMutex_;
 

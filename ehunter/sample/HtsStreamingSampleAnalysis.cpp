@@ -271,7 +271,7 @@ SampleFindings htsStreamingSampleAnalysis(
         // coordinate-sorted stream: such a mate is either absent or sits in the trailing unmapped block
         // (contig -1), which ends streaming (HtsFileStreamer::isStreamingAlignedReads). Parking the read in
         // unpairedReads to await a mate that never arrives would silently drop it, so analyze it single-ended
-        // now, mirroring low-mem streaming (isMateMapped = currentMateContigId() >= 0) and seeking mode's
+        // now, mirroring optimized-streaming mode (isMateMapped = currentMateContigId() >= 0) and seeking mode's
         // processMates(read, nullptr).
         //
         // A placed-unmapped mate (BAM_FUNMAP but mtid >= 0, as BWA-MEM/DRAGEN emit) is intentionally NOT

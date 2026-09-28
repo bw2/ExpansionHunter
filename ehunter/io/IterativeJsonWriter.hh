@@ -58,7 +58,8 @@ public:
 		const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0,
 		int threadCount = 1, AnalysisMode analysisMode = AnalysisMode::kSeeking,
 		const std::string& commandLine = "", JsonOutputMode outputMode = JsonOutputMode::kTruncate,
-		bool hasExistingRecords = false);
+		bool hasExistingRecords = false,
+		OptimizedStreamingGenotypingApproach genotypingApproach = OptimizedStreamingGenotypingApproach::kAuto);
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
@@ -84,6 +85,7 @@ private:
     std::time_t startedEpoch_;
     int threadCount_;
     AnalysisMode analysisMode_;
+    OptimizedStreamingGenotypingApproach genotypingApproach_; // written to RunInfo in optimized-streaming mode only
     std::string commandLine_;
     bool closed_ = false;
 };

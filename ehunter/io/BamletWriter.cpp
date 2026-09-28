@@ -85,7 +85,7 @@ BamletWriterImpl::BamletWriterImpl(
     // Force htslib to build the header's name->tid dictionary (bamHeader_->hrecs) now, on this single
     // constructing thread. bam_hdr_write above serializes the manually-built header without hrecs, so the
     // first bam_name2id() in write() would otherwise lazily populate hrecs and mutate the shared header —
-    // a data race once multiple worker threads call write() concurrently (parallel low-mem-streaming
+    // a data race once multiple worker threads call write() concurrently (parallel optimized-streaming
     // genotyping). After this warm-up, every later bam_name2id() is a read-only dictionary lookup.
     if (contigInfo_.numContigs() > 0)
     {

@@ -1,0 +1,32 @@
+[
+    {
+        "LocusId": "CHR1_CAG",
+        "LocusStructure": "(CAG)*",
+        "ReferenceRegion": "chr1:1500-1545",
+        "VariantType": "Repeat"
+    },
+    {
+        "LocusId": "CHR2_CCG",
+        "LocusStructure": "(CCG)*",
+        "ReferenceRegion": "chr2:1200-1236",
+        "VariantType": "Repeat"
+    },
+    {
+        "LocusId": "CHR3_GAA",
+        "LocusStructure": "(GAA)*",
+        "ReferenceRegion": "chr3:1200-1230",
+        "VariantType": "Repeat"
+    },
+    {
+        "LocusId": "CHR4_MULTI",
+        "LocusStructure": "(A|T)CCCC(ATTCT)*",
+        "ReferenceRegion": [
+            "chr4:1400-1401",
+            "chr4:1405-1475"
+        ],
+        "VariantType": [
+            "SmallVariant",
+            "Repeat"
+        ]
+    }
+]

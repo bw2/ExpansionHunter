@@ -314,7 +314,7 @@ How it works, in brief:
 
 Limitations:
 
-* Only `--analysis-mode optimized-streaming` and `low-mem-streaming` are supported.
+* Only `--analysis-mode optimized-streaming` is supported.
 * Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not
   supported.
 * Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units
