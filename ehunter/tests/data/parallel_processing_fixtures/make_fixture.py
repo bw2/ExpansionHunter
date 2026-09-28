@@ -32,7 +32,7 @@ built"):
          depth = readLen * readCount / (2*1000 - readLen)
      and we need enough read pairs per locus (~90) to clear depth >= 10. The
      optimized-streaming fast path does not apply this filter, but seeking and
-     low-mem-streaming full genotyping do.
+     the full genotyper (optimized-streaming --genotyping-approach only-full) do.
 
 Everything is seeded so the output bytes are identical on every run.
 """

@@ -3,15 +3,17 @@
 Two things are checked against the simulated read sets in
 ``../PolymorphicTandemRepeatFinder/simulated_data``:
 
-1. ``seeking``, ``streaming`` and ``low-mem-streaming`` modes must produce
-   identical genotype calls (GT / REPCN / REPCI) for every sample. These three
-   modes share the genotyping core and are expected to agree exactly.
+1. ``seeking`` and ``streaming`` modes must produce identical genotype calls
+   (GT / REPCN / REPCI) for every sample. These two modes share the genotyping
+   core and are expected to agree exactly.
 
-2. The accuracy of ``seeking`` vs ``optimized-streaming`` is compared against the
+2. The accuracy of ``seeking`` vs ``optimized-streaming`` (with the default
+   ``--genotyping-approach auto`` and with ``only-full``) is compared against the
    known true allele sizes. ``optimized-streaming`` uses a faster, heuristic
-   genotyping path (incl. the post-call STR over-call correction) so it is NOT
-   expected to match the other modes; this test quantifies how its accuracy
-   differs from the exact ``seeking`` path.
+   genotyping path (incl. the post-call STR over-call correction) and caps the
+   repeat tract at one read length in the full genotyper's allele mixing weight,
+   so it is NOT expected to match the other modes; this test quantifies how its
+   accuracy differs from the exact ``seeking`` path.
 
 Each simulated ``sim_<N>x__10_150_450_50.bam`` holds reads from a single allele
 with N repeats. A diploid sample with truth N1/N2 is built by merging two such
@@ -45,11 +47,19 @@ REFERENCE_CANDIDATES = [
 ]
 MERGED_BAM_CACHE_DIR = os.path.join(REPO_DIR, ".merged_bam_cache")
 
+# Each mode is a name and the command line arguments that select it.
+MODES = {
+    "seeking": ["--analysis-mode", "seeking"],
+    "streaming": ["--analysis-mode", "streaming"],
+    "optimized-streaming": ["--analysis-mode", "optimized-streaming"],
+    "optimized-streaming-only-full": [
+        "--analysis-mode", "optimized-streaming", "--genotyping-approach", "only-full"],
+}
 # Modes expected to be byte-for-byte equivalent at the genotype level.
-IDENTICAL_MODES = ["seeking", "streaming", "low-mem-streaming"]
+IDENTICAL_MODES = ["seeking", "streaming"]
 # Modes compared for accuracy against the known truth.
-ACCURACY_MODES = ["seeking", "optimized-streaming"]
-ALL_MODES = ["seeking", "streaming", "low-mem-streaming", "optimized-streaming"]
+ACCURACY_MODES = ["seeking", "optimized-streaming", "optimized-streaming-only-full"]
+ALL_MODES = list(MODES)
 
 # How many representative (N1, N2) pairs to test per locus.
 MAX_PAIRS_PER_LOCUS = 7
@@ -168,7 +178,7 @@ def run_expansion_hunter(reads_bam, reference, catalog, output_prefix, mode):
     subprocess.run(
         [EH_BINARY, "--reads", reads_bam, "--reference", reference,
          "--variant-catalog", catalog, "--output-prefix", output_prefix,
-         "--analysis-mode", mode, "--sort-catalog-by", "position"],
+         *MODES[mode], "--sort-catalog-by", "position"],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     with open(output_prefix + ".vcf") as f:
         for line in f:
@@ -277,8 +287,8 @@ class ModeConsistencyAndAccuracyTest(unittest.TestCase):
         if not self.RESULTS:
             self.skipTest("no simulated samples were genotyped")
 
-    def test_seeking_streaming_lowmem_produce_identical_calls(self):
-        """seeking, streaming and low-mem-streaming must agree on GT/REPCN/REPCI per locus."""
+    def test_seeking_and_streaming_produce_identical_calls(self):
+        """seeking and streaming must agree on GT/REPCN/REPCI per locus."""
         mismatches = 0
         for key in sorted(self.RESULTS):
             locus_id, n1, n2 = key
@@ -324,11 +334,11 @@ class ModeConsistencyAndAccuracyTest(unittest.TestCase):
                     (locus_id, f"{n1}/{n2}", self.RESULTS[key]["optimized-streaming"]["REPCN"]))
 
         print("\n=== Accuracy vs known truth (seeking vs optimized-streaming) ===")
-        print(f"{'mode':<20} {'N':>4} {'exact_GT':>12} {'allele_acc':>12} "
+        print(f"{'mode':<30} {'N':>4} {'exact_GT':>12} {'allele_acc':>12} "
               f"{'within±1':>12} {'no_call':>9}")
         for mode in ACCURACY_MODES:
             s = stats[mode]
-            print(f"{mode:<20} {s['n']:>4} "
+            print(f"{mode:<30} {s['n']:>4} "
                   f"{s['exact']:>6} ({100*s['exact']/s['n']:4.0f}%) "
                   f"{100*s['alleles_matched']/(2*s['n']):>10.0f}% "
                   f"{s['within1']:>6} ({100*s['within1']/s['n']:4.0f}%) "

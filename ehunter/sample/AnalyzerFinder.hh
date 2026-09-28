@@ -60,7 +60,7 @@ struct AnalyzerBundle
 
 // Two mates are classified as "nearby" (rather than far-apart) when they map to the same contig and
 // their start positions are within this many bases. Shared by AnalyzerFinder (seeking/streaming) and the
-// low-mem-streaming / optimized-streaming full-genotyping path so that the two read-pair routing
+// optimized-streaming full-genotyping path so that the two read-pair routing
 // implementations cannot drift apart.
 constexpr int kMaxMateDistance = 1000;
 

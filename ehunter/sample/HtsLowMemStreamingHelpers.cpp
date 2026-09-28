@@ -528,10 +528,10 @@ bool processLocusFast(
     // realignment, so it can neither render an image nor compute the graph-based metrics REViewer needs;
     // decline up front so the full genotyper handles (and plots) this locus. (--plot-all and
     // --disable-all-plots are mutually exclusive, so the guard is belt-and-suspenders.)
-    // Skip this when --quick-heuristic-genotyping-only is set: full genotyping is disabled in that mode,
-    // so declining would only drop the locus to a skipped record (no genotype, no plot) -- keep the fast
-    // genotype instead.
-    if (params.plotAll() && !params.disableAllPlots() && !params.heuristicGenotypingOnly()) {
+    // Skip this under --genotyping-approach only-quick: full genotyping is disabled then, so declining would
+    // only drop the locus to a skipped record (no genotype, no plot) -- keep the fast genotype instead.
+    const bool onlyQuick = params.genotypingApproach() == OptimizedStreamingGenotypingApproach::kOnlyQuick;
+    if (params.plotAll() && !params.disableAllPlots() && !onlyQuick) {
         return false;
     }
 
@@ -1047,9 +1047,9 @@ bool processLocusFast(
 	// catalog plot conditions against these findings. If any fires, this locus needs a REViewer image,
 	// which the fast path can't render (no graph realignment) -- decline so the full genotyper re-runs
 	// and plots it. (Respects --disable-all-plots; the --plot-all case was handled at function entry.)
-	// As above, skip when --quick-heuristic-genotyping-only is set: declining would only drop the locus
+	// As above, skip under --genotyping-approach only-quick: declining would only drop the locus
 	// to a skipped record instead of running full genotyping, so keep the fast genotype.
-	if (!params.disableAllPlots() && !params.heuristicGenotypingOnly()
+	if (!params.disableAllPlots() && !onlyQuick
 		&& reviewer::shouldPlotReadVisualization(locusSpec, locusFindings)) {
 		return false;
 	}

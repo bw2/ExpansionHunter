@@ -201,7 +201,7 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
     // that: its denominator drops one read length precisely because a read starting near the far edge of
     // the right flank runs past the window and is dropped. Seeking and streaming enforce exactly this rule
     // before a read reaches the full genotyper's stats calculator (AnalyzerFinder::query admits only
-    // contained reads). Low-mem streaming is looser on both sides -- its cache keeps a whole pair when
+    // contained reads). Optimized-streaming mode is looser on both sides -- its cache keeps a whole pair when
     // EITHER mate is contained, and genotypeLocusFull's containment test only picks single-ended vs paired
     // routing for NEARBY pairs, so a far-apart pair passes both mates through regardless. Applying the
     // strict rule here keeps the numerator consistent with the denominator. It matches seeking except for

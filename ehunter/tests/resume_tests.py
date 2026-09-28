@@ -189,10 +189,11 @@ class ResumeTest(unittest.TestCase):
         self.assert_matches_baseline(prefix, ["--threads", "2", "-z"])
         self.assert_no_leftover_files(prefix)
 
-    def test_resume_in_low_mem_streaming_mode(self):
-        prefix = os.path.join(self.work_dir, "lowmem")
-        self.interrupt_and_resume(prefix, 2, ["--threads", "2", "--analysis-mode", "low-mem-streaming"])
-        self.assert_matches_baseline(prefix, ["--threads", "2", "--analysis-mode", "low-mem-streaming"])
+    def test_resume_with_only_full_genotyping_approach(self):
+        prefix = os.path.join(self.work_dir, "onlyfull")
+        args = ["--threads", "2", "--genotyping-approach", "only-full"]
+        self.interrupt_and_resume(prefix, 2, args)
+        self.assert_matches_baseline(prefix, args)
 
     def test_resume_keeps_loci_that_produced_no_record(self):
         # --skip-hom-ref genotypes a locus and then emits nothing for it. Those loci have to be
@@ -350,7 +351,7 @@ class ResumeTest(unittest.TestCase):
                 result = self.run_eh(prefix, ["--analysis-mode", mode, "--resume"], expect_success=False)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
-                    f"--resume only works in optimized-streaming and low-mem-streaming modes, not in {mode} mode",
+                    f"--resume only works in optimized-streaming mode, not in {mode} mode",
                     result.stdout + result.stderr)
                 self.assertEqual(glob.glob(prefix + "*"), [], "a rejected run must not write anything")
 

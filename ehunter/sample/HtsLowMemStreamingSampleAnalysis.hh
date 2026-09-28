@@ -40,7 +40,7 @@ void htsLowMemStreamingSampleAnalysis(LocusDescriptionCatalog& locusDescriptionC
 
 // Genome-wide typical read length: the max sequence length over the first ~1000 primary aligned reads
 // (fallback 150 bp if none are found). Computed once at startup and reused for read-length-dependent
-// catalog filtering as well as the low-mem-streaming far-away-mate window.
+// catalog filtering as well as the optimized-streaming far-away-mate window.
 int probeTypicalReadLength(const InputPaths& inputPaths);
 
 }

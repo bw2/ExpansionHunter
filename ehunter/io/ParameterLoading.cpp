@@ -83,7 +83,7 @@ struct UserParameters
     bool copyCatalogFields = false;
     bool skipHomRef = false;
     bool skipMissingGenotypes = false;
-    bool heuristicGenotypingOnly = false;
+    string genotypingApproach;
     int maxDepth = 150;
     bool outputGenotypeTiming = false;
     std::string genotypeQualityModelPath;
@@ -120,7 +120,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
         ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
         ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
-        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in optimized-streaming and low-mem-streaming modes, and only for loci with a single repeat. Raises the default --max-depth to 500.")
+        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in optimized-streaming mode, and only for loci with a single repeat. Raises the default --max-depth to 500.")
     ;
     // clang-format on
 
@@ -130,18 +130,18 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("region-extension-length", po::value<int>(&params.regionExtensionLength)->default_value(1000), "How far from on/off-target regions to search for informative reads")
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
-        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', 'low-mem-streaming', or 'optimized-streaming')")
+        ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', or 'optimized-streaming')")
         ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
         ("dont-output-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
         ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
-        ("quick-heuristic-genotyping-only", po::bool_switch(&params.heuristicGenotypingOnly), "In optimized-streaming mode, genotype only loci resolvable from spanning-read heuristics and skip full genotyping for larger/more complex alleles")
-        ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In low-mem-streaming/optimized-streaming modes, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
-        ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to low-mem-streaming and optimized-streaming modes.")
+        ("genotyping-approach", po::value<string>(&params.genotypingApproach)->default_value("auto"), "In optimized-streaming mode, which genotyper(s) to run on each locus. 'auto': the quick spanning-read heuristic where it can confidently resolve the locus, and the full graph-based genotyper for larger or more complex alleles. 'only-quick': the quick heuristic only; loci with reads that it cannot resolve get a skipped record (mainly for benchmarking and debugging). 'only-full': the full genotyper on every locus (the former low-mem-streaming analysis mode)")
+        ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In optimized-streaming mode, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
+        ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to optimized-streaming mode.")
         ("genotype-quality-model", po::value<string>(&params.genotypeQualityModelPath), "Path to a genotype-quality model (.json or .json.gz) used to add per-allele PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong fields. Overrides the model compiled into the binary.")
-        ("resume", po::bool_switch(&params.resume), "Make an interrupted run restartable: keep the per-contig temp output files (<output-prefix>.contig<N>.{json,vcf}) and a list of finished loci (<output-prefix>.processed_loci.txt) up to date as the run proceeds, and, if they are already present from an interrupted run, skip the loci the list names and continue from there. These files are deleted once the final output files have been written. Only works in optimized-streaming and low-mem-streaming modes.")
+        ("resume", po::bool_switch(&params.resume), "Make an interrupted run restartable: keep the per-contig temp output files (<output-prefix>.contig<N>.{json,vcf}) and a list of finished loci (<output-prefix>.processed_loci.txt) up to date as the run proceeds, and, if they are already present from an interrupted run, skip the loci the list names and continue from there. These files are deleted once the final output files have been written. Only works in optimized-streaming mode.")
     ;
     // clang-format on
 
@@ -276,21 +276,40 @@ void assertValidity(const UserParameters& userParameters)
     }
 
     // Validate analysis Mode:
+    if (userParameters.analysisMode == "low-mem-streaming")
+    {
+        throw std::invalid_argument(
+            "low-mem-streaming is no longer a separate analysis mode: use '--analysis-mode optimized-streaming "
+            "--genotyping-approach only-full' instead");
+    }
     if ((userParameters.analysisMode != "seeking")
-        and (userParameters.analysisMode != "low-mem-streaming")
         and (userParameters.analysisMode != "optimized-streaming")
         and (userParameters.analysisMode != "streaming"))
     {
         throw std::invalid_argument(userParameters.analysisMode + " is not a valid analysis mode");
     }
 
-    // seeking and streaming modes keep every result in memory and write the output only once all loci
-    // have been genotyped, so an interrupted run leaves nothing to resume from.
-    if (userParameters.resume && userParameters.analysisMode != "low-mem-streaming"
-        && userParameters.analysisMode != "optimized-streaming")
+    if (userParameters.genotypingApproach != "auto" && userParameters.genotypingApproach != "only-quick"
+        && userParameters.genotypingApproach != "only-full")
     {
         throw std::invalid_argument(
-            "--resume only works in optimized-streaming and low-mem-streaming modes, not in "
+            "--genotyping-approach must be set to auto, only-quick or only-full, not '"
+            + userParameters.genotypingApproach + "'");
+    }
+    // The other analysis modes have no quick heuristic path: they always run the full genotyper.
+    if (userParameters.genotypingApproach != "auto" && userParameters.analysisMode != "optimized-streaming")
+    {
+        throw std::invalid_argument(
+            "--genotyping-approach only applies to optimized-streaming mode, not to " + userParameters.analysisMode
+            + " mode");
+    }
+
+    // seeking and streaming modes keep every result in memory and write the output only once all loci
+    // have been genotyped, so an interrupted run leaves nothing to resume from.
+    if (userParameters.resume && userParameters.analysisMode != "optimized-streaming")
+    {
+        throw std::invalid_argument(
+            "--resume only works in optimized-streaming mode, not in "
             + userParameters.analysisMode + " mode, which writes its output only once all loci have been genotyped");
     }
 
@@ -317,10 +336,10 @@ void assertValidity(const UserParameters& userParameters)
         }
         // Motif composition is counted from each read's original alignment (its CIGAR string). Streaming mode does
         // not keep it, and seeking mode is not supported yet.
-        if (userParameters.analysisMode != "low-mem-streaming" && userParameters.analysisMode != "optimized-streaming")
+        if (userParameters.analysisMode != "optimized-streaming")
         {
             throw std::invalid_argument(
-                "--output-motif-composition only works in optimized-streaming and low-mem-streaming modes, not in "
+                "--output-motif-composition only works in optimized-streaming mode, not in "
                 + userParameters.analysisMode + " mode");
         }
     }
@@ -340,8 +359,7 @@ void assertValidity(const UserParameters& userParameters)
         assertPathToExistingFile(userParameters.htsIndexPath);
     }
 
-    if ((userParameters.analysisMode == "low-mem-streaming" || userParameters.analysisMode == "optimized-streaming")
-        and (userParameters.sortCatalogBy != "position"))
+    if (userParameters.analysisMode == "optimized-streaming" and userParameters.sortCatalogBy != "position")
     {
         throw std::invalid_argument("--sort-catalog-by position must be specified when --analysis-mode is set to '" + userParameters.analysisMode);
     }
@@ -427,10 +445,6 @@ AnalysisMode decodeAnalysisMode(const string& encoding)
     {
         return AnalysisMode::kStreaming;
     }
-    else if (encoding == "low-mem-streaming")
-    {
-        return AnalysisMode::kLowMemStreaming;
-    }
     else if (encoding == "optimized-streaming")
     {
         return AnalysisMode::kOptimizedStreaming;
@@ -438,6 +452,26 @@ AnalysisMode decodeAnalysisMode(const string& encoding)
     else
     {
         throw std::logic_error("Invalid encoding of data input mode '" + encoding + "'");
+    }
+}
+
+static OptimizedStreamingGenotypingApproach decodeOptimizedStreamingGenotypingApproach(const string& encoding)
+{
+    if (encoding == "auto")
+    {
+        return OptimizedStreamingGenotypingApproach::kAuto;
+    }
+    else if (encoding == "only-quick")
+    {
+        return OptimizedStreamingGenotypingApproach::kOnlyQuick;
+    }
+    else if (encoding == "only-full")
+    {
+        return OptimizedStreamingGenotypingApproach::kOnlyFull;
+    }
+    else
+    {
+        throw std::logic_error(encoding + " is not a valid genotyping approach");
     }
 }
 
@@ -577,7 +611,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
     }
     catch (std::logic_error&)
     {
-        const string message = "Analysis mode must be set to one of: seeking, streaming, low-mem-streaming, optimized-streaming";
+        const string message = "Analysis mode must be set to one of: seeking, streaming, optimized-streaming";
         throw std::invalid_argument(message);
     }
 
@@ -632,7 +666,8 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.region, userParams.startWith, userParams.nLoci, userParams.compressOutputFiles,
         userParams.plotAll, userParams.disableAllPlots, logLevel, userParams.threadCount, userParams.enableBamletOutput,
         userParams.cacheMates, !userParams.disableQualityMetrics, userParams.copyCatalogFields, userParams.skipHomRef,
-        userParams.skipMissingGenotypes, userParams.heuristicGenotypingOnly, !userParams.disableConsensusSequences,
+        userParams.skipMissingGenotypes, decodeOptimizedStreamingGenotypingApproach(userParams.genotypingApproach),
+        !userParams.disableConsensusSequences,
         maxDepth, userParams.outputGenotypeTiming, userParams.resume, userParams.abortAfterLoci,
         motifCompositionMode);
     programParameters.setGenotypeQualityModel(std::move(genotypeQualityModel));

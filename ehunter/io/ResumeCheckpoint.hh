@@ -20,8 +20,8 @@
 // --resume support.
 //
 // An interrupted ExpansionHunter run leaves nothing usable behind by default: seeking/streaming modes write
-// their output only at the end, and low-mem/optimized streaming genotypes into per-contig temp files
-// (<prefix>.contig<N>.json / .vcf) that are deleted on any exit. With --resume, low-mem/optimized streaming
+// their output only at the end, and optimized-streaming mode genotypes into per-contig temp files
+// (<prefix>.contig<N>.json / .vcf) that are deleted on any exit. With --resume, optimized-streaming mode
 // always genotypes through those per-contig temp files (at --threads 1 as well, with a single worker),
 // flushes them after every locus, keeps them when the run fails, and maintains one more file beside them:
 //

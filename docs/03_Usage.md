@@ -39,7 +39,7 @@ optional arguments.
    coverage falls below this value. Set to 10 by default.
 * `--region-extension-length <int>` Specifies how far from on/off-target regions
    to search for informative reads. Set to 1000 by default.
-* `--max-depth <int>` In `low-mem-streaming` and `optimized-streaming` modes,
+* `--max-depth <int>` In `optimized-streaming` mode,
    this sets a limit on the number of reads processed per locus using reservoir sampling.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
@@ -49,8 +49,16 @@ optional arguments.
   This is useful when the index file is in a different location than the reads
   file, or when using cloud URLs where auto-detection may not work.
 * `--analysis-mode <mode>` Specify analysis mode, which can be `seeking`,
-  `streaming`, `low-mem-streaming`, or `optimized-streaming`. The default mode
+  `streaming`, or `optimized-streaming`. The default mode
   is `seeking`. See further description of analysis modes below.
+* `--genotyping-approach <auto|only-quick|only-full>` In `optimized-streaming` mode, which
+  genotyper(s) to run on each locus. `auto` (the default) uses the quick spanning-read heuristic
+  where it can confidently resolve a locus and the full graph-based genotyper for larger or more
+  complex alleles. `only-quick` runs only the quick heuristic and writes a skipped record (with
+  `Reason` set to `genotyping_approach_only_quick`) for every locus with reads that it cannot resolve
+  (a locus with no reads keeps its usual no-call record); it is provided mainly for benchmarking and
+  debugging. `only-full` runs the full genotyper on every locus (the former `low-mem-streaming`
+  analysis mode). See [Optimized-streaming mode](#optimized-streaming-mode) below.
 * `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
   etc.) for each allele and outputs them in the JSON file. Use this flag to skip
@@ -70,12 +78,12 @@ optional arguments.
   input catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
   Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
-  `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
+  `optimized-streaming` analysis mode. When this flag is used and `--max-depth` is not specified, the
   default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
   Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
   file size increases by 5% to 10%.
-* `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and
-  `low-mem-streaming` analysis modes. See [Resuming an interrupted run](#resuming-an-interrupted-run)
+* `--resume` Make an interrupted run restartable. Works with the `optimized-streaming`
+  analysis mode. See [Resuming an interrupted run](#resuming-an-interrupted-run)
   below.
 
 
@@ -104,22 +112,22 @@ analyzed during this reading operation. Streaming mode is recommended for the an
 of large catalogs, but does require more memory as a funciton of catalog size. This mode
 does not require that the BAM or CRAM file is sorted or indexed.
 
-#### Low-mem-streaming mode
-
-Changes how data is read from the input BAM or CRAM file in order to keep memory usage (typically < 10 GB) and is independent of catalog size.
-The output stays nearly identical to `streaming` mode.
-
 #### Optimized-streaming mode
 
-`optimized-streaming` mode uses a fast heuristic genotyper to identify loci that can be quickly genotyped using spanning reads. It then runs the full graph-based genotyper
-only on the subset of loci that appear to have larger expansions. This significantly speeds up analysis of large
-catalogs (> ~10k loci) since the majority of loci can be genotyped using only spanning reads. Memory usage is similar to `low-mem-streaming` mode.
+`optimized-streaming` mode changes how data is read from the input BAM or CRAM file in order to keep memory usage
+low (typically < 10 GB) and independent of catalog size. It also uses a fast heuristic genotyper to identify loci
+that can be quickly genotyped using spanning reads, and then runs the full graph-based genotyper only on the subset
+of loci that appear to have larger expansions. This significantly speeds up analysis of large catalogs
+(> ~10k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
+selects which of the two genotypers run: `auto` (the default) as just described, `only-quick` for the heuristic
+alone, or `only-full` to run the full genotyper on every locus (the former `low-mem-streaming` analysis mode). This mode
+requires that the input BAM or CRAM file is sorted and indexed.
 
 ### Resuming an interrupted run
 
 A run that is killed part way through (an out-of-memory kill, a preempted machine, Ctrl-C, a crash)
 normally has to be started over from the first locus. Adding `--resume` makes it restartable.
-`--resume` works with `--analysis-mode optimized-streaming` and `--analysis-mode low-mem-streaming`:
+`--resume` works with `--analysis-mode optimized-streaming`:
 
 ```bash
 ExpansionHunter --reads sample.cram --reference reference.fa --catalog catalog.json \
@@ -167,13 +175,13 @@ Things worth knowing:
   on every run and carries no record of which loci it covers, so a resumed run would replace it with
   one holding only the loci that run genotyped.
 
-#### Known limitations of `low-mem-streaming` and `optimized-streaming`
+#### Known limitations of `optimized-streaming`
 
-These two newer modes ignore `OfftargetRegions` entries in the variant catalog. This can affect loci that do
+This newer mode ignores `OfftargetRegions` entries in the variant catalog. This can affect loci that do
 explicitly list off-target regions in the catalog, such as **C9ORF72**, **FMR1**. For these loci,
 `--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
 
-Their VCF output is not always sorted by position within a chromosome. Loci are written in the order
+Its VCF output is not always sorted by position within a chromosome. Loci are written in the order
 they finish. `bcftools index` and `tabix` require sorted input, so sort the VCF before indexing it:
 
 ```bash

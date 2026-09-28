@@ -220,7 +220,7 @@ using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 // LocusAnalyzer is kept alive via shared_ptr so its locusSpec() backs the json/vcf writes without
 // copying the heavy graph-bearing LocusSpecification across the thread boundary.
 struct LocusOutput {
-    enum class Kind { kGenotyped, kFilteredOut, kNoCoverage, kHeuristicOnlySkip, kError };
+    enum class Kind { kGenotyped, kFilteredOut, kNoCoverage, kError };
 
     unsigned locusIndex = 0;
     Kind kind = Kind::kNoCoverage;
@@ -293,7 +293,7 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         // the per-locus assignment loop in `doTheAnalysis` only checks reads against
         // locusAndFlanksStart()/End() — never against locusDescription.offtargetRegions().
         // As a result, IRRs that mismap to off-target regions (e.g. C9ORF72, FMR1) are not
-        // routed to the RepeatAnalyzer in low-mem-streaming / optimized-streaming. Users
+        // routed to the RepeatAnalyzer in optimized-streaming mode. Users
         // needing accurate calls at off-target-dependent loci should currently use seeking
         // or streaming mode. See docs/03_Usage.md "Known limitations" section.
         // Heap-allocate the analyzer and keep it alive in the result so its locusSpec() backs the
@@ -722,10 +722,6 @@ void doTheAnalysis(
                 zeroCoverageCount++;
                 writeZeroCoverageRecord(params, reference, locusDescriptionCatalog[out.locusIndex], typicalReadLength, jsonWriter, vcfWriter);
                 break;
-            case LocusOutput::Kind::kHeuristicOnlySkip:
-                skippedCount++;
-                jsonWriter.addSkippedRecord(out.locusId, "heuristic_only_mode");
-                break;
             case LocusOutput::Kind::kError:
                 fullGenotypedCount++;
                 spdlog::error("Error while processing {}: {}", out.locusId, out.message);
@@ -769,7 +765,7 @@ void doTheAnalysis(
 
             // TODO check if # of reads >= minLocusCoverage and skip locus if not
             bool needToProcessSlowly = true;
-            if (params.analysisMode() == AnalysisMode::kOptimizedStreaming) {
+            if (params.genotypingApproach() != OptimizedStreamingGenotypingApproach::kOnlyFull) {
                 const bool doneGenotyping = processLocusFast(params, reference,
                     locusDescriptionCatalog[locusIndex], locusCache->readPairs, locusCache->reservoirSampled(),
                     typicalReadLength, jsonWriter, vcfWriter);
@@ -782,9 +778,10 @@ void doTheAnalysis(
             }
 
             if (needToProcessSlowly) {
-                if (params.heuristicGenotypingOnly()) {
+                if (params.genotypingApproach() == OptimizedStreamingGenotypingApproach::kOnlyQuick) {
                     skippedCount++;
-                    jsonWriter.addSkippedRecord(locusDescriptionCatalog[locusIndex].locusId(), "heuristic_only_mode");
+                    jsonWriter.addSkippedRecord(
+                        locusDescriptionCatalog[locusIndex].locusId(), "genotyping_approach_only_quick");
                     checkpointLocus(locusDescriptionCatalog[locusIndex].locusId());
                 } else {
                     LocusOutput out = genotypeLocusFull(params, reference, locusIndex,
@@ -1162,6 +1159,10 @@ std::string buildRunInfoJson(
     runInfoRecord["Source"] = kSourceUrl;
     runInfoRecord["Version"] = kCommitSha;
     runInfoRecord["AnalysisMode"] = analysisModeToString(programParams.analysisMode());
+    // Only optimized-streaming runs reach this writer, and --genotyping-approach changes what it does at every
+    // locus (only-full writes no QuickGenotype fields), so the approach is recorded next to the mode.
+    runInfoRecord["GenotypingApproach"]
+        = optimizedStreamingGenotypingApproachToString(programParams.genotypingApproach());
     runInfoRecord["Threads"] = threadCount;
     runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
     runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
@@ -1291,7 +1292,7 @@ void htsLowMemStreamingSampleAnalysis(
                      typicalReadLength, {});
         spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
 
-        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(), commandLine);
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(), commandLine, JsonOutputMode::kTruncate, false, programParams.genotypingApproach());
         IterativeVcfWriter vcfWriter(
             programParams.sample().id(), reference, vcfHeaderContigs, programParams.outputPaths().vcf());
         GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
@@ -1469,7 +1470,8 @@ void htsLowMemStreamingSampleAnalysis(
                         programParams.genotypeQualityModel().get(), startedEpoch, threadCount,
                         programParams.analysisMode(), commandLine,
                         appendToResumedContig ? JsonOutputMode::kAppendAfterHeader : JsonOutputMode::kTruncate,
-                        appendToResumedContig && resumedContig->second.hasJsonRecords);
+                        appendToResumedContig && resumedContig->second.hasJsonRecords,
+                        programParams.genotypingApproach());
                     IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfHeaderContigs,
                         contigTempVcfPath(outputPrefix, slice.contigIndex),
                         appendToResumedContig ? VcfOutputMode::kAppendAfterHeader : VcfOutputMode::kTruncate);
@@ -1514,7 +1516,8 @@ void htsLowMemStreamingSampleAnalysis(
         IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(),
             contigTempJsonPath(outputPrefix, contigIndex), programParams.copyCatalogFields(),
             programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(),
-            commandLine, JsonOutputMode::kAppendAfterHeader, contigIndexAndResumed.second.hasJsonRecords);
+            commandLine, JsonOutputMode::kAppendAfterHeader, contigIndexAndResumed.second.hasJsonRecords,
+            programParams.genotypingApproach());
         IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, vcfHeaderContigs,
             contigTempVcfPath(outputPrefix, contigIndex), VcfOutputMode::kAppendAfterHeader);
         // Closed explicitly rather than left to the destructors, which have to swallow a write failure: the

@@ -39,7 +39,6 @@ TEST(DecodeAnalysisMode, ValidModes_Decoded)
 {
     EXPECT_EQ(decodeAnalysisMode("seeking"), AnalysisMode::kSeeking);
     EXPECT_EQ(decodeAnalysisMode("streaming"), AnalysisMode::kStreaming);
-    EXPECT_EQ(decodeAnalysisMode("low-mem-streaming"), AnalysisMode::kLowMemStreaming);
     EXPECT_EQ(decodeAnalysisMode("optimized-streaming"), AnalysisMode::kOptimizedStreaming);
 }
 
@@ -47,6 +46,13 @@ TEST(DecodeAnalysisMode, RegionParallelStreaming_Rejected)
 {
     // region-parallel-streaming was removed; it must no longer decode to any mode.
     EXPECT_THROW(decodeAnalysisMode("region-parallel-streaming"), std::logic_error);
+}
+
+TEST(DecodeAnalysisMode, LowMemStreaming_Rejected)
+{
+    // low-mem-streaming was folded into optimized-streaming (--genotyping-approach only-full); it must no
+    // longer decode to any mode.
+    EXPECT_THROW(decodeAnalysisMode("low-mem-streaming"), std::logic_error);
 }
 
 TEST(DecodeAnalysisMode, UnknownMode_Rejected)
