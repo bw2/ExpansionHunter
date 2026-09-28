@@ -138,9 +138,7 @@ itself.
   `"KnownMotifs": ["CAG", "CAA", "CCG"]`). The order of the entries does not
   matter, and each can be written in any rotation. Entries must have the same
   length as the `LocusStructure` motif, and must consist of A, C, G or T bases
-  only (other IUPAC letters are not supported). Otherwise, they will be skipped
-  with a warning. An entry that repeats an earlier one, including as a rotation
-  of it (`GCA` after `CAG`), is also skipped with a warning. Additional motifs
+  only (other IUPAC letters are not supported). Additional motifs
   can still be discovered from the reads. With
   `--output-motif-composition loci-with-known-motifs`, only loci whose record
   has a non-empty `KnownMotifs` list get a `MotifComposition` record. See
