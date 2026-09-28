@@ -56,7 +56,7 @@ optional arguments.
   where it can confidently resolve a locus and the full graph-based genotyper for larger or more
   complex alleles. `only-quick` runs only the quick heuristic and writes a `skipped` record for every locus that it
   is unable to genotype using only spanning reads; it is provided mainly for benchmarking and
-  debugging. `only-full` runs the full genotyper on every locus (the former `low-mem-streaming`
+  debugging. `only-full` runs the full genotyper on every locus (previously this was called the `low-mem-streaming`
   analysis mode). See [Optimized-streaming mode](#optimized-streaming-mode) below.
 * `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
