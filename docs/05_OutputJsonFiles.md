@@ -318,7 +318,7 @@ Limitations:
 * Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not
   supported.
 * Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units
-  in a 30 bp-motif VNTR) are not counted, even when listed in `KnownMotifs`.
+  in a 30 bp-motif VNTR) are not counted.
 
 ## Catalog field passthrough
 
