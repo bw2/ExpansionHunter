@@ -311,13 +311,6 @@ How it works, in brief:
 * A repeat unit that differs from a more common motif at a low-quality base is not counted.
 * A catalog can list the motifs expected at a locus in an optional `KnownMotifs` field (see
   [Variant catalog files](04_VariantCatalogFiles.md)).
-* A possible new motif that an indel or a read end cuts off from the neighboring repeat units is
-  usually a window shifted out of frame by the indel, so it is dropped. The exception is a motif of
-  at least 10 bp that differs from the catalog motif or an accepted motif at no more than 10% of
-  its bases, compared position by position, and matches it better than any shifted copy of those
-  motifs. At a locus with `KnownMotifs`, the list decides instead, at any motif length: such a
-  repeat unit is kept if and only if it is a rotation of a listed motif. A kept repeat unit still
-  has to pass the tests above to be counted.
 
 Limitations:
 
