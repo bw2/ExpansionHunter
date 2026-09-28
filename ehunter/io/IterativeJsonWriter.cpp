@@ -138,7 +138,8 @@ IterativeJsonWriter::IterativeJsonWriter(
     AnalysisMode analysisMode,
     const std::string& commandLine,
     JsonOutputMode outputMode,
-    bool hasExistingRecords)
+    bool hasExistingRecords,
+    OptimizedStreamingGenotypingApproach genotypingApproach)
     : contigInfo_(contigInfo)
     , outputFilePath_(outputFilePath)
     , firstRecord_(outputMode == JsonOutputMode::kTruncate || !hasExistingRecords)
@@ -147,6 +148,7 @@ IterativeJsonWriter::IterativeJsonWriter(
     , startedEpoch_(startedEpoch)
     , threadCount_(threadCount)
     , analysisMode_(analysisMode)
+    , genotypingApproach_(genotypingApproach)
     , commandLine_(commandLine)
 {
     const bool append = outputMode == JsonOutputMode::kAppendAfterHeader;
@@ -271,6 +273,13 @@ void IterativeJsonWriter::close()
     runInfoRecord["Source"] = kSourceUrl;
     runInfoRecord["Version"] = kCommitSha;
     runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode_);
+    if (analysisMode_ == AnalysisMode::kOptimizedStreaming)
+    {
+        // --genotyping-approach changes what optimized-streaming does at every locus (only-full writes no
+        // QuickGenotype fields), so the approach is recorded next to the mode, as buildRunInfoJson does for
+        // the multi-threaded run.
+        runInfoRecord["GenotypingApproach"] = optimizedStreamingGenotypingApproachToString(genotypingApproach_);
+    }
     runInfoRecord["Threads"] = threadCount_;
     runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch_);
     if (completedNormally)

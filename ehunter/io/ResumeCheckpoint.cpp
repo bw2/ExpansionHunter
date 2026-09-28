@@ -233,7 +233,7 @@ std::string buildRunSignature(const ProgramParameters& params)
     signature["NLoci"] = params.nLoci();
     signature["SkipHomRef"] = params.skipHomRef();
     signature["SkipMissingGenotypes"] = params.skipMissingGenotypes();
-    signature["HeuristicGenotypingOnly"] = params.heuristicGenotypingOnly();
+    signature["GenotypingApproach"] = optimizedStreamingGenotypingApproachToString(params.genotypingApproach());
     signature["MaxDepth"] = params.maxDepth();
     signature["QualityMetrics"] = params.enableAlleleQualityMetrics();
     signature["ConsensusSequences"] = params.enableConsensusSequences();

@@ -270,8 +270,7 @@ int main(int argc, char** argv)
 
         const HeuristicParameters& heuristicParams = params.heuristics();
         const OutputPaths& outputPaths = params.outputPaths();
-        if (params.analysisMode() == AnalysisMode::kLowMemStreaming
-            || params.analysisMode() == AnalysisMode::kOptimizedStreaming)
+        if (params.analysisMode() == AnalysisMode::kOptimizedStreaming)
         {
             spdlog::info("Running sample analysis in {} mode", analysisModeToString(params.analysisMode()));
             BamletWriterPtr bamletWriter = params.enableBamletOutput

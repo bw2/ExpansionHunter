@@ -32,12 +32,24 @@ std::string analysisModeToString(AnalysisMode mode)
         return "seeking";
     case AnalysisMode::kStreaming:
         return "streaming";
-    case AnalysisMode::kLowMemStreaming:
-        return "low-mem-streaming";
     case AnalysisMode::kOptimizedStreaming:
         return "optimized-streaming";
     }
     throw std::logic_error("Invalid AnalysisMode");
+}
+
+std::string optimizedStreamingGenotypingApproachToString(OptimizedStreamingGenotypingApproach approach)
+{
+    switch (approach)
+    {
+    case OptimizedStreamingGenotypingApproach::kAuto:
+        return "auto";
+    case OptimizedStreamingGenotypingApproach::kOnlyQuick:
+        return "only-quick";
+    case OptimizedStreamingGenotypingApproach::kOnlyFull:
+        return "only-full";
+    }
+    throw std::logic_error("Invalid OptimizedStreamingGenotypingApproach");
 }
 
 std::string motifCompositionModeToString(MotifCompositionMode mode)

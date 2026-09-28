@@ -46,14 +46,25 @@ enum class AnalysisMode
 {
     kSeeking,
     kStreaming,
-    kLowMemStreaming,
     kOptimizedStreaming
 };
 
 // Encodes an AnalysisMode the same way --analysis-mode spells it on the command line
-// ("seeking" / "streaming" / "low-mem-streaming" / "optimized-streaming"). Used for both
+// ("seeking" / "streaming" / "optimized-streaming"). Used for both
 // logging and the "AnalysisMode" field in the output JSON's RunInfo record.
 std::string analysisModeToString(AnalysisMode mode);
+
+// --genotyping-approach: which genotyper(s) optimized-streaming mode runs on each locus.
+enum class OptimizedStreamingGenotypingApproach
+{
+    kAuto, // the quick spanning-read heuristic where it resolves the locus, the full graph-based genotyper elsewhere
+    kOnlyQuick, // the quick heuristic only; loci with reads that it cannot resolve get a skipped record
+    kOnlyFull // the full genotyper on every locus (the former low-mem-streaming analysis mode)
+};
+
+// Encodes an OptimizedStreamingGenotypingApproach the way --genotyping-approach spells it
+// ("auto" / "only-quick" / "only-full").
+std::string optimizedStreamingGenotypingApproachToString(OptimizedStreamingGenotypingApproach approach);
 
 enum class LogLevel
 {
@@ -225,7 +236,7 @@ public:
         size_t startWith, size_t nLoci, bool compressOutputFiles, bool plotAll, bool disableAllPlots, LogLevel logLevel,
         const int initThreadCount, const bool initEnableBamletOutput, bool cacheMates,
         bool initEnableAlleleQualityMetrics = true, bool initCopyCatalogFields = false, bool initSkipHomRef = false,
-        bool initSkipMissingGenotypes = false, bool initHeuristicGenotypingOnly = false,
+        bool initSkipMissingGenotypes = false, OptimizedStreamingGenotypingApproach initOptimizedStreamingGenotypingApproach = OptimizedStreamingGenotypingApproach::kAuto,
         bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false,
         bool initResume = false, size_t initAbortAfterLoci = 0,
         MotifCompositionMode initMotifCompositionMode = MotifCompositionMode::kOff)
@@ -236,7 +247,7 @@ public:
         , copyCatalogFields_(initCopyCatalogFields)
         , skipHomRef_(initSkipHomRef)
         , skipMissingGenotypes_(initSkipMissingGenotypes)
-        , heuristicGenotypingOnly_(initHeuristicGenotypingOnly)
+        , genotypingApproach_(initOptimizedStreamingGenotypingApproach)
         , maxDepth_(initMaxDepth)
         , outputGenotypeTiming_(initOutputGenotypeTiming)
         , resume_(initResume)
@@ -280,8 +291,10 @@ public:
     bool enableConsensusSequences() const { return enableConsensusSequences_; }
     bool skipHomRef() const { return skipHomRef_; }
     bool skipMissingGenotypes() const { return skipMissingGenotypes_; }
-    bool heuristicGenotypingOnly() const { return heuristicGenotypingOnly_; }
-    // Target max average base-level depth over the locus window in low-mem/optimized streaming. Each locus's
+    // --genotyping-approach: which genotyper(s) optimized-streaming mode runs on each locus. Ignored by the
+    // other analysis modes, which always run the full genotyper.
+    OptimizedStreamingGenotypingApproach genotypingApproach() const { return genotypingApproach_; }
+    // Target max average base-level depth over the locus window in optimized-streaming mode. Each locus's
     // reservoir cap is derived from this depth and the window width (reference repeat regions + flanks), so the
     // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingSampleAnalysis.
     int maxDepth() const { return maxDepth_; }
@@ -320,7 +333,7 @@ private:
     bool copyCatalogFields_;
     bool skipHomRef_;
     bool skipMissingGenotypes_;
-    bool heuristicGenotypingOnly_;
+    OptimizedStreamingGenotypingApproach genotypingApproach_;
     int maxDepth_;
     bool outputGenotypeTiming_;
     bool resume_;
