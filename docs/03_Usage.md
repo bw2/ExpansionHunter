@@ -69,7 +69,7 @@ optional arguments.
   adds it only where the reads show a motif not present in the reference repeat sequence; `loci-with-known-motifs` adds it only to loci whose
   input catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
-  Compound locus definitions, such as HTT (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
+  Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
   `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
   default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
   Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
