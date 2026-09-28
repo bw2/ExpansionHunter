@@ -67,7 +67,7 @@ optional arguments.
   (see [Motif composition](05_OutputJsonFiles.md#motif-composition)). `all-loci` adds it to every
   genotype whose motif size is 2 bp or longer and at most a third of the read length; `loci-with-non-ref-motifs`
   adds it only where the reads show a motif not present in the reference repeat sequence; `loci-with-known-motifs` adds it only to loci whose
-  catalog record has a non-empty `KnownMotifs` list (see
+  input catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
   Only loci with a single
   repeat get the record: a locus with more than one repeat, such as HTT (`(CAG)*CAACAG(CCG)*`), gets none, for
