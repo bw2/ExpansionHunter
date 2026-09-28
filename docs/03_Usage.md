@@ -119,9 +119,9 @@ that can be quickly genotyped using spanning reads, and then runs the full graph
 of loci that appear to have larger expansions. This significantly speeds up analysis of large catalogs
 (> ~5k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
 selects which of the two genotypers are used for a given locus: `auto` (the default) chooses automatically as
-described above, `only-quick` only runs the heuristic approach and skips loci that can't be genotyped using spanning
-reads alone, or `only-full` to run the full genotyper on every locus (the former `low-mem-streaming` analysis mode). This mode
-requires that the input BAM or CRAM file is sorted and indexed.
+described above, `only-quick` uses only the heuristic approach and skips loci where it can't be confidently applied.
+Conversely, `only-full` always runs the full genotyper on every locus (this was previously called the
+`low-mem-streaming` analysis mode). This mode requires that the input BAM or CRAM file is sorted and indexed.
 
 ### Resuming an interrupted run
 
