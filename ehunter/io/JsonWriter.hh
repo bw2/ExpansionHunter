@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "core/Parameters.hh"
 #include "locus/LocusFindings.hh"
 #include "locus/LocusSpecification.hh"
@@ -41,13 +43,17 @@ public:
     // When qualityModel is non-null, per-allele genotype-quality fields
     // (PredictedLengthCorrectionFactor / pTooShort / pTooLong) are added to each
     // AlleleQualityMetrics allele record. A null model leaves output unchanged.
+    // locusCoverage is the model's `coverage` feature and must be the same value the caller
+    // emits as the locus record's Coverage field; NaN when it is not available.
     VariantJsonWriter(
         const ReferenceContigInfo& contigInfo, const LocusSpecification& locusSpec,
-        const VariantSpecification& variantSpec, const gq::GenotypeQualityModel* qualityModel = nullptr)
+        const VariantSpecification& variantSpec, const gq::GenotypeQualityModel* qualityModel = nullptr,
+        double locusCoverage = std::numeric_limits<double>::quiet_NaN())
         : contigInfo_(contigInfo)
         , locusSpec_(locusSpec)
         , variantSpec_(variantSpec)
         , qualityModel_(qualityModel)
+        , locusCoverage_(locusCoverage)
     {
     }
 
@@ -61,6 +67,7 @@ private:
     const LocusSpecification& locusSpec_;
     const VariantSpecification& variantSpec_;
     const gq::GenotypeQualityModel* qualityModel_;
+    double locusCoverage_;
     nlohmann::json record_;
 };
 

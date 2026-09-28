@@ -79,7 +79,8 @@ public:
         graphtools::Graph regionGraph, NodeToRegionAssociation referenceRegions, GenotyperParameters genotyperParams,
         bool useRFC1MotifAnalysis,
         std::vector<PlotReadVisualization> plotConditions = {},
-        std::optional<nlohmann::json> extraFields = std::nullopt);
+        std::optional<nlohmann::json> extraFields = std::nullopt,
+        std::vector<std::string> knownMotifs = {});
 
     const RegionId& locusId() const { return locusId_; }
     ChromType typeOfChromLocusLocatedOn() const { return typeOfChromLocusLocatedOn_; }
@@ -123,6 +124,8 @@ public:
     const std::vector<PlotReadVisualization>& plotConditions() const { return plotConditions_; }
     bool hasPlotConditions() const { return !plotConditions_.empty(); }
     const std::optional<nlohmann::json>& extraFields() const { return extraFields_; }
+    // Catalog "KnownMotifs", as written; used by --output-motif-composition (see locus/MotifComposition.hh).
+    const std::vector<std::string>& knownMotifs() const { return knownMotifs_; }
 
     PlotPolicy plotPolicy() const { return plotPolicy_; }
     void setPlotPolicy(PlotPolicy policy) { plotPolicy_ = policy; }
@@ -146,6 +149,7 @@ private:
     std::vector<PlotReadVisualization> plotConditions_;
     PlotPolicy plotPolicy_ = PlotPolicy::kConditional;
     std::optional<nlohmann::json> extraFields_;
+    std::vector<std::string> knownMotifs_;
 };
 
 enum class VariantTypeFromUser
@@ -174,7 +178,8 @@ public:
         std::optional<double> likelihoodRatioThreshold = std::nullopt,
         std::optional<double> minLocusCoverage = std::nullopt,
         std::vector<PlotReadVisualization> plotConditions = {},
-        std::optional<nlohmann::json> extraFields = std::nullopt
+        std::optional<nlohmann::json> extraFields = std::nullopt,
+        std::vector<std::string> knownMotifs = {}
     );
 
     // Getters
@@ -198,6 +203,7 @@ public:
     const std::vector<PlotReadVisualization>& plotConditions() const { return plotConditions_; }
     bool hasPlotConditions() const { return !plotConditions_.empty(); }
     const std::optional<nlohmann::json>& extraFields() const { return extraFields_; }
+    const std::vector<std::string>& knownMotifs() const { return knownMotifs_; }
 
 private:
     std::string locusId_;
@@ -219,6 +225,7 @@ private:
     std::optional<double> minLocusCoverage_;
     std::vector<PlotReadVisualization> plotConditions_;
     std::optional<nlohmann::json> extraFields_;
+    std::vector<std::string> knownMotifs_;
 };
 
 std::ostream& operator<<(std::ostream& out, const LocusDescription& locusDescription);

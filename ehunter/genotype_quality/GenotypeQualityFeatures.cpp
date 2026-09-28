@@ -7,6 +7,7 @@
 #include "genotype_quality/GenotypeQualityFeatures.hh"
 
 #include <cassert>
+#include <cmath>
 #include <limits>
 
 namespace ehunter
@@ -19,9 +20,11 @@ const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime
     // features.QUICK_FEATURES order (kept in lockstep with assembleFeatures below).
     static const std::vector<std::string> quick = {
         "motif_size", "num_repeats_in_reference", "ref_size_bp", "eh", "eh_minus_ref",
-        "allele_rank", "ci_width", "ci_asymmetry", "ci_over_eh", "spanning_total",
-        "hq_unamb_total", "spanning_at_called", "spanning_above_called", "flanking_above_called",
-        "support_frac", "depth", "hq_unambiguous_reads", "strand_bias_phred",
+        "allele_rank", "n_alleles", "n_distinct_alleles", "ci_width", "ci_asymmetry", "ci_over_eh",
+        "spanning_total", "hq_unamb_total", "flanking_total",
+        "spanning_at_called", "spanning_above_called", "flanking_above_called",
+        "support_frac", "flanking_frac", "coverage",
+        "depth", "hq_unambiguous_reads", "strand_bias_phred",
         "mean_inserted_bases", "mean_deleted_bases",
         "reference_repeat_purity", "read_repeat_purity"};
     // features.FULL_FEATURES = QUICK_FEATURES + the two flank-normalized depths.
@@ -36,6 +39,14 @@ const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime
 
 namespace
 {
+
+// Mirrors JsonWriter's round3: the training parquets are parsed from the emitted JSON, and every
+// AlleleQualityMetrics-derived field is written there through that same 3-decimal rounding. Feeding
+// the model the unrounded double would differ by up to 5e-4 from what training saw. NaN rounds to NaN.
+double roundLikeJson3(double value)
+{
+    return std::round(value * 1000.0) / 1000.0;
+}
 
 int sumCounts(const CountTable& table)
 {
@@ -61,6 +72,11 @@ int countsAbove(const CountTable& table, int threshold)
 }
 
 } // namespace
+
+int numDistinctAllelesOf(bool isHomozygous, int numAlleles)
+{
+    return isHomozygous ? 1 : numAlleles;
+}
 
 GenotypingRegime genotypingRegimeOf(bool quickGenotype, int spanningAtCalled)
 {
@@ -88,23 +104,39 @@ std::vector<double> assembleFeatures(
 
     const int spanningTotal = sumCounts(ctx.spanningReads);
     const int hqUnambTotal = sumCounts(ctx.hqUnambiguousReads);
+    const int flankingTotal = sumCounts(ctx.flankingReads);
     const int spanningAtCalled = ctx.spanningReads.countOf(eh);
     const int spanningAboveCalled = countsAbove(ctx.spanningReads, eh);
     const int flankingAboveCalled = countsAbove(ctx.flankingReads, eh);
     const double supportFrac = (spanningTotal > 0)
         ? (static_cast<double>(spanningAtCalled) / spanningTotal)
         : std::numeric_limits<double>::quiet_NaN();
+    // Flanking share of the locus's informative reads. 0 (not NaN) when there are no flanking
+    // reads at all, which also covers the 0/0 case -- matches eh_json.py's flanking_frac.
+    const double flankingFrac = (flankingTotal > 0)
+        ? (static_cast<double>(flankingTotal) / (flankingTotal + spanningTotal))
+        : 0.0;
+
+    // 0 = not supplied (see LocusFeatureContext). Production always has a genotype in hand here, so
+    // this branch is unit-test-only; NaN (not 0) is used so a tree takes its learned missing-value
+    // branch instead of reading the sentinel as a real allele count.
+    const double numAlleles = (ctx.numAlleles > 0)
+        ? static_cast<double>(ctx.numAlleles)
+        : std::numeric_limits<double>::quiet_NaN();
+    const double numDistinctAlleles = (ctx.numDistinctAlleles > 0)
+        ? static_cast<double>(ctx.numDistinctAlleles)
+        : std::numeric_limits<double>::quiet_NaN();
 
     // -1.0 = not computed (JsonWriter's emit-omission sentinel); the model was trained on NaN
     // for missing values (eh_json.py's variant.get(...) -> None -> NaN), so map here.
     const double referenceRepeatPurity = (ctx.referenceRepeatPurity >= 0.0)
-        ? ctx.referenceRepeatPurity
+        ? roundLikeJson3(ctx.referenceRepeatPurity)
         : std::numeric_limits<double>::quiet_NaN();
     const double readRepeatPurity = (aqm.readRepeatPurity >= 0.0)
-        ? aqm.readRepeatPurity
+        ? roundLikeJson3(aqm.readRepeatPurity)
         : std::numeric_limits<double>::quiet_NaN();
 
-    // features.FAST_FEATURES order.
+    // features.QUICK_FEATURES order.
     std::vector<double> features = {
         motifSize,
         numRepeatsInReference,
@@ -112,20 +144,25 @@ std::vector<double> assembleFeatures(
         static_cast<double>(eh),
         ehMinusRef,
         static_cast<double>(alleleRank),
+        numAlleles,
+        numDistinctAlleles,
         ciWidth,
         ciAsymmetry,
         ciOverEh,
         static_cast<double>(spanningTotal),
         static_cast<double>(hqUnambTotal),
+        static_cast<double>(flankingTotal),
         static_cast<double>(spanningAtCalled),
         static_cast<double>(spanningAboveCalled),
         static_cast<double>(flankingAboveCalled),
         supportFrac,
-        aqm.depth,
+        flankingFrac,
+        ctx.coverage,  // already rounded by the caller, to match the emitted LocusResults.Coverage
+        roundLikeJson3(aqm.depth),
         static_cast<double>(aqm.highQualityUnambiguousReads),
-        aqm.strandBiasBinomialPhred,
-        aqm.meanInsertedBasesWithinRepeats,
-        aqm.meanDeletedBasesWithinRepeats,
+        roundLikeJson3(aqm.strandBiasBinomialPhred),
+        roundLikeJson3(aqm.meanInsertedBasesWithinRepeats),
+        roundLikeJson3(aqm.meanDeletedBasesWithinRepeats),
         referenceRepeatPurity,
         readRepeatPurity,
     };
@@ -133,9 +170,21 @@ std::vector<double> assembleFeatures(
     // The full genotyping_regimes append the two flank-normalized depths (FULL_FEATURES).
     if (genotypingRegime != GenotypingRegime::Quick)
     {
-        features.push_back(aqm.leftFlankNormalizedDepth);
-        features.push_back(aqm.rightFlankNormalizedDepth);
+        features.push_back(roundLikeJson3(aqm.leftFlankNormalizedDepth));
+        features.push_back(roundLikeJson3(aqm.rightFlankNormalizedDepth));
     }
+
+    // NOTE: values are left in double precision on purpose, and the model must be trained the same way.
+    // An earlier pipeline downcast every float64 parquet column to float32 before fitting, so thresholds
+    // were learned on float32 values and this function had to reproduce that downcast; otherwise a value
+    // not exactly representable in float32 (coverage 47.47, flanking_frac 21/53) reached the model as a
+    // different number than it did in training, and any threshold falling in the ~1 ULP gap between the
+    // two routed the allele to the wrong child. The training side now keeps float64 end to end, so the
+    // downcast is gone from both. Reinstating it on either side alone silently re-opens that gap.
+    //
+    // The `roundLikeJson3` / pre-rounded-coverage calls above are a separate matter and still required:
+    // the training parquets are parsed from the JSON this binary emits, so the model only ever saw the
+    // 3-decimal (2 for coverage) emitted values.
 
     // The value order above must stay in lockstep with the canonical name list.
     assert(features.size() == featureNamesForGenotypingRegime(genotypingRegime).size());

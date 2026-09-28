@@ -177,6 +177,31 @@ static vector<string> generateIds(const std::string& locusId, const Json& varian
     return variantIds;
 }
 
+std::vector<std::string> decodeKnownMotifs(const Json& locusJson, const std::string& locusId)
+{
+    std::vector<std::string> knownMotifs;
+    static const std::string knownMotifsKey("KnownMotifs");
+    if (checkIfFieldExists(locusJson, knownMotifsKey))
+    {
+        const Json& record(locusJson[knownMotifsKey]);
+        if (!record.is_array()
+            || !std::all_of(record.begin(), record.end(), [](const Json& motif) { return motif.is_string(); }))
+        {
+            std::stringstream out;
+            out << record;
+            throw std::logic_error(
+                "Key '" + knownMotifsKey + "' of locus " + locusId + " must be an array of strings, observed value is '"
+                + out.str() + "'");
+        }
+        knownMotifs.reserve(record.size());
+        for (const auto& motif : record)
+        {
+            knownMotifs.push_back(motif.get<string>());
+        }
+    }
+    return knownMotifs;
+}
+
 /// \brief Translate a single locus from the catalog file json structure into an intermediate locus configuration
 ///
 static LocusDescription loadLocusDescription(
@@ -331,12 +356,14 @@ static LocusDescription loadLocusDescription(
         }
     }
 
+    std::vector<std::string> knownMotifs = decodeKnownMotifs(locusJson, locusId);
+
     // Define known fields that ExpansionHunter processes
     static const std::set<std::string> knownFields = {
         "LocusId", "ReferenceRegion", "LocusStructure", "VariantType",
         "TargetRegion", "VariantId", "OfftargetRegions", "ErrorRate",
         "LikelihoodRatioThreshold", "MinimalLocusCoverage",
-        "RFC1MotifAnalysis", "PlotReadVisualization"
+        "RFC1MotifAnalysis", "PlotReadVisualization", "KnownMotifs"
     };
 
     // Capture any extra fields not in the known set. Only needed when --copy-catalog-fields is set;
@@ -382,7 +409,8 @@ static LocusDescription loadLocusDescription(
         likelihoodRatioThreshold,
         minimalLocusCoverage,
         plotConditions,
-        extraFields
+        extraFields,
+        knownMotifs
     );
 }
 

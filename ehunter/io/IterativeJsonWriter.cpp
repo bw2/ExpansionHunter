@@ -21,6 +21,7 @@
 
 #include "io/IterativeJsonWriter.hh"
 
+#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <exception>
@@ -48,6 +49,73 @@ using Json = nlohmann::json;
 using boost::optional;
 using std::to_string;
 using std::vector;
+
+// Position just past `literal` if `jsonString` has it at `position` (after any spaces), else npos.
+static size_t matchAfterSpaces(const std::string& jsonString, size_t position, const char* literal)
+{
+    if (position >= jsonString.size())
+    {
+        return std::string::npos; // includes npos from a failed earlier match
+    }
+    while (position < jsonString.size() && jsonString[position] == ' ')
+    {
+        ++position;
+    }
+    const size_t length = std::strlen(literal);
+    return jsonString.compare(position, length, literal) == 0 ? position + length : std::string::npos;
+}
+
+// Position just past the digits starting at `position`, or npos if there are none.
+static size_t matchDigits(const std::string& jsonString, size_t position)
+{
+    const size_t start = position;
+    while (position < jsonString.size() && std::isdigit(static_cast<unsigned char>(jsonString[position])))
+    {
+        ++position;
+    }
+    return position > start ? position : std::string::npos;
+}
+
+// Puts each MotifComposition count object, which dump(2) spreads over four lines, on one line:
+// { "count": 143, "reads": 26 }. Nothing else in a locus record has this shape. A plain scan rather than a
+// std::regex, which costs several percent of the run time when applied to every locus record.
+static std::string inlineMotifCountObjects(const std::string& jsonString)
+{
+    if (jsonString.find("\"count\": ") == std::string::npos)
+    {
+        return jsonString;
+    }
+    std::string result;
+    result.reserve(jsonString.size());
+    size_t index = 0;
+    while (index < jsonString.size())
+    {
+        if (jsonString.compare(index, 2, "{\n") == 0)
+        {
+            const size_t countStart = matchAfterSpaces(jsonString, index + 2, "\"count\": ");
+            const size_t countEnd = countStart == std::string::npos ? countStart : matchDigits(jsonString, countStart);
+            const size_t readsStart = countEnd == std::string::npos
+                ? countEnd
+                : matchAfterSpaces(jsonString, matchAfterSpaces(jsonString, countEnd, ",\n"), "\"reads\": ");
+            const size_t readsEnd = readsStart == std::string::npos ? readsStart : matchDigits(jsonString, readsStart);
+            const size_t objectEnd = readsEnd == std::string::npos
+                ? readsEnd
+                : matchAfterSpaces(jsonString, matchAfterSpaces(jsonString, readsEnd, "\n"), "}");
+            if (objectEnd != std::string::npos)
+            {
+                result += "{ \"count\": ";
+                result.append(jsonString, countStart, countEnd - countStart);
+                result += ", \"reads\": ";
+                result.append(jsonString, readsStart, readsEnd - readsStart);
+                result += " }";
+                index = objectEnd;
+                continue;
+            }
+        }
+        result += jsonString[index++];
+    }
+    return result;
+}
 
 std::string jsonDocumentHeader(const SampleParameters& sampleParams)
 {
@@ -124,7 +192,9 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
     }
 
     locusRecord["LocusId"] = locusId;
-    locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
+    // See JsonWriter::write -- the emitted field and the model's `coverage` feature share one value.
+    const double locusCoverage = std::round(locusFindings.stats.depth() * 100) / 100.0;
+    locusRecord["Coverage"] = locusCoverage;
     locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
     locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
     locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
@@ -135,7 +205,7 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
         const string& variantId = variantIdAndFindings.first;
         const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
+        VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_, locusCoverage);
         variantIdAndFindings.second->accept(&variantWriter);
         variantRecords[variantId] = variantWriter.record();
     }
@@ -145,7 +215,8 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
         locusRecord["Variants"] = variantRecords;
     }
 
-	std::string jsonString = std::regex_replace(locusRecord.dump(2), std::regex("\n"), "\n    ");
+    std::string jsonString
+        = std::regex_replace(inlineMotifCountObjects(locusRecord.dump(2)), std::regex("\n"), "\n    ");
     if (!firstRecord_)
         outStream_ << ", ";
     outStream_ << "\n    \"" << locusId << "\": " << jsonString;

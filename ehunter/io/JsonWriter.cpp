@@ -116,7 +116,10 @@ void JsonWriter::write(std::ostream& out)
         }
 
         locusRecord["LocusId"] = locusId;
-        locusRecord["Coverage"] = std::round(locusFindings.stats.depth() * 100) / 100.0;
+        // One value for both the emitted field and the model's `coverage` feature, so the number
+        // the model sees at inference is exactly the one the training parquets were built from.
+        const double locusCoverage = std::round(locusFindings.stats.depth() * 100) / 100.0;
+        locusRecord["Coverage"] = locusCoverage;
         locusRecord["ReadLength"] = locusFindings.stats.meanReadLength();
         locusRecord["FragmentLength"] = locusFindings.stats.meanFragLength();
         locusRecord["AlleleCount"] = static_cast<int>(locusFindings.stats.alleleCount());
@@ -127,7 +130,7 @@ void JsonWriter::write(std::ostream& out)
             const string& variantId = variantIdAndFindings.first;
             const VariantSpecification& variantSpec = locusSpec.getVariantSpecById(variantId);
 
-            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_);
+            VariantJsonWriter variantWriter(contigInfo_, locusSpec, variantSpec, qualityModel_, locusCoverage);
             variantIdAndFindings.second->accept(&variantWriter);
             variantRecords[variantId] = variantWriter.record();
         }
@@ -160,6 +163,37 @@ static string encodeGenotype(const RepeatGenotype& genotype)
     }
 
     return encoding;
+}
+
+// Motif and motif-pair counts of one group of reads, keyed "<id>:<motif>" and "[<id>][<id>]", with values written
+// as {"count": <occurrences>, "reads": <reads>}. A group with no counted motif is written as {}.
+static Json encodeMotifCompositionCounts(const MotifCompositionCounts& counts, const vector<string>& motifs)
+{
+    if (counts.motifs.empty())
+    {
+        return Json::object();
+    }
+    auto encodeCounts = [](const std::pair<int, int>& occurrencesAndReads) {
+        Json value;
+        value["count"] = occurrencesAndReads.first;
+        value["reads"] = occurrencesAndReads.second;
+        return value;
+    };
+    Json motifCounts = Json::object();
+    for (const auto& idAndCounts : counts.motifs)
+    {
+        motifCounts[to_string(idAndCounts.first) + ":" + motifs[idAndCounts.first - 1]] = encodeCounts(idAndCounts.second);
+    }
+    Json pairCounts = Json::object();
+    for (const auto& pairAndCounts : counts.motifPairs)
+    {
+        const auto& ids = pairAndCounts.first;
+        pairCounts["[" + to_string(ids.first) + "][" + to_string(ids.second) + "]"] = encodeCounts(pairAndCounts.second);
+    }
+    Json record;
+    record["Motifs"] = motifCounts;
+    record["MotifPairs"] = pairCounts;
+    return record;
 }
 
 void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
@@ -272,13 +306,21 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                 const int alleleRank = allele.alleleNumber - 1;
                 const NumericInterval ci = (alleleRank <= 0) ? genotype.shortAlleleSizeInUnitsCi()
                                                              : genotype.longAlleleSizeInUnitsCi();
+                const int numDistinctAlleles
+                    = gq::numDistinctAllelesOf(genotype.isHomozygous(), genotype.numAlleles());
+                // Designated initializers: the trailing members are two adjacent doubles followed by
+                // two adjacent ints, so a positional list would let a swapped pair compile silently
+                // and feed the model the wrong feature.
                 const gq::LocusFeatureContext ctx{
-                    static_cast<int>(repeatUnit.length()),
-                    static_cast<int>(variantSpec_.referenceLocus().length()),
-                    repeatFindings.countsOfSpanningReads(),
-                    repeatFindings.countsOfFlankingReads(),
-                    repeatFindings.countsOfHighQualityUnambiguousReads(),
-                    variantSpec_.referenceRepeatPurity()};
+                    .motifSize = static_cast<int>(repeatUnit.length()),
+                    .refSizeBp = static_cast<int>(variantSpec_.referenceLocus().length()),
+                    .spanningReads = repeatFindings.countsOfSpanningReads(),
+                    .flankingReads = repeatFindings.countsOfFlankingReads(),
+                    .hqUnambiguousReads = repeatFindings.countsOfHighQualityUnambiguousReads(),
+                    .referenceRepeatPurity = variantSpec_.referenceRepeatPurity(),
+                    .coverage = locusCoverage_,
+                    .numAlleles = genotype.numAlleles(),
+                    .numDistinctAlleles = numDistinctAlleles};
                 const gq::AllelePrediction pred = gq::predictAllele(
                     *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
                     ci.end(), allele);
@@ -316,6 +358,21 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             }
             record_["ConsensusSequencesReadSupport"] = supportArray;
         }
+    }
+
+    // Only emitted under --output-motif-composition.
+    const auto& motifComposition = repeatFindings.motifComposition();
+    if (motifComposition)
+    {
+        Json motifCompositionRecord = encodeMotifCompositionCounts(motifComposition->locus, motifComposition->motifs);
+        if (motifComposition->hasAlleleBlocks)
+        {
+            motifCompositionRecord["Allele1"]
+                = encodeMotifCompositionCounts(motifComposition->allele1, motifComposition->motifs);
+            motifCompositionRecord["Allele2"]
+                = encodeMotifCompositionCounts(motifComposition->allele2, motifComposition->motifs);
+        }
+        record_["MotifComposition"] = motifCompositionRecord;
     }
 }
 
