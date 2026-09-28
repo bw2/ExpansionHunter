@@ -176,7 +176,7 @@ Things worth knowing:
 
 #### Known limitations of `optimized-streaming`
 
-This newer mode ignores `OfftargetRegions` entries in the variant catalog. This can affect loci that do
+This mode ignores `OfftargetRegions` entries in the variant catalog. This can affect loci that do
 explicitly list off-target regions in the catalog, such as **C9ORF72**, **FMR1**. For these loci,
 `--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
 
