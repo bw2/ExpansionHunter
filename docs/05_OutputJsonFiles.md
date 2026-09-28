@@ -310,10 +310,7 @@ How it works, in brief:
   that it cannot be explained away as a sequencing error given a per-base error rate of 0.001.
 * A repeat unit that differs from a more common motif at a low-quality base is not counted.
 * A catalog can list the motifs expected at a locus in an optional `KnownMotifs` field (see
-  [Variant catalog files](04_VariantCatalogFiles.md)). For each listed motif, the rotation the reads
-  show most often is counted without the sequencing-error part of the new-motif test above (it
-  still needs the same minimum number of read pairs); its other rotations are treated as frame
-  shifts and not counted.
+  [Variant catalog files](04_VariantCatalogFiles.md)).
 * A possible new motif that an indel or a read end cuts off from the neighboring repeat units is
   usually a window shifted out of frame by the indel, so it is dropped. The exception is a motif of
   at least 10 bp that differs from the catalog motif or an accepted motif at no more than 10% of
