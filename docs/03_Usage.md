@@ -117,7 +117,7 @@ does not require that the BAM or CRAM file is sorted or indexed.
 low (typically < 10 GB) and independent of catalog size. It also uses a fast heuristic genotyper to identify loci
 that can be quickly genotyped using spanning reads, and then runs the full graph-based genotyper only on the subset
 of loci that appear to have larger expansions. This significantly speeds up analysis of large catalogs
-(> ~10k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
+(> ~5k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
 selects which of the two genotypers run: `auto` (the default) as just described, `only-quick` for the heuristic
 alone, or `only-full` to run the full genotyper on every locus (the former `low-mem-streaming` analysis mode). This mode
 requires that the input BAM or CRAM file is sorted and indexed.
