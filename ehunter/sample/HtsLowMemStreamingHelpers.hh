@@ -68,8 +68,10 @@ bool processLocusFast(
 
 // When --output-motif-composition is specified, computes the motif composition of the locus's repeat from its cached reads and
 // attaches it to the repeat's findings. Applies only to loci with a single repeat variant (small variants may sit
-// alongside it) whose motif is between 2 bp and a third of typicalReadLength; other loci are left unchanged. With no reads, all-loci mode attaches an
-// empty composition (no reference access), so every eligible locus written to the JSON carries the field.
+// alongside it) whose motif is between 2 bp and a third of typicalReadLength; other loci are left unchanged. In
+// loci-with-known-motifs mode, loci whose catalog record has no KnownMotifs are also left unchanged. With no reads,
+// all-loci and loci-with-known-motifs modes attach an empty composition (no reference access), so every eligible locus
+// written to the JSON carries the field.
 void addMotifComposition(
     const ProgramParameters& params, Reference& reference, const LocusSpecification& locusSpec,
     LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength);

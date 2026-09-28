@@ -62,17 +62,23 @@ optional arguments.
   catalog to the output JSON. This allows custom fields like `Gene`, `Diseases`,
   `PathogenicMin`, etc. to be preserved in the output, making it easier to
   annotate results without a separate join step.
-* `--output-motif-composition <all-loci|loci-with-non-ref-motifs>` Add a `MotifComposition` record to
+* `--output-motif-composition <all-loci|loci-with-non-ref-motifs|loci-with-known-motifs>` Add a `MotifComposition` record to
   the JSON output: counts of each motif and of each pair of adjacent motifs, for the locus and, when the two alleles differ by at least 2 repeat units, for each allele
   (see [Motif composition](05_OutputJsonFiles.md#motif-composition)). `all-loci` adds it to every
   genotype whose motif size is 2 bp or longer and at most a third of the read length; `loci-with-non-ref-motifs`
   adds it only where the reads show a motif not present in the reference repeat sequence (a catalog motif made only
   of A, C, G and T always counts as present, even when the reference repeat sequence lacks it; a catalog motif with
-  other IUPAC codes, such as AARRG, gets no such exemption). Only loci with a single
+  other IUPAC codes, such as AARRG, gets no such exemption); `loci-with-known-motifs` adds it only to loci whose
+  catalog record has a non-empty `KnownMotifs` list (see
+  [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
+  Only loci with a single
   repeat get the record: a locus with more than one repeat, such as HTT (`(CAG)*CAACAG(CCG)*`), gets none, for
   either repeat. This option works with the
   `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
   default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
+  Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
+  file size increases by 5% to 10%. (Measured on HG002 30x WGS reads over 111,603 chr20-22 loci in
+  `optimized-streaming` mode.)
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and
   `low-mem-streaming` analysis modes. See [Resuming an interrupted run](#resuming-an-interrupted-run)
   below.

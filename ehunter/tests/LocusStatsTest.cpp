@@ -189,6 +189,17 @@ TEST(LocusStatsCalculatorFromReadAlignments, LeadingSoftClip_ReadPlacedAtItsFirs
         = { cigarOp(5, BAM_CHARD_CLIP), cigarOp(10, BAM_CSOFT_CLIP), cigarOp(40, BAM_CMATCH) };
     flankClipCalculator.inspect(flankClippedPair);
     EXPECT_NEAR(50.0 * 2 / 150, flankClipCalculator.estimate(Sex::kFemale).depth(), 1e-9);
+
+    // A clip longer than the reference repeat: 60 bases of repeat sequence clipped off a 150bp read at POS
+    // 1040 put its first base at 980, before the repeat's start. It still started in the repeat (an allele
+    // 60bp longer than the reference), not in the left flank, so only its mate at 950 is counted, and the
+    // pair contributes no fragment length.
+    LocusStatsCalculatorFromReadAlignments longClipCalculator(
+        ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
+    FullReadPair longClippedPair = makeReadPair("clippedAcrossRepeat", 150, 950, 1040);
+    longClippedPair.secondMate->s.cigar = { cigarOp(60, BAM_CSOFT_CLIP), cigarOp(90, BAM_CMATCH) };
+    longClipCalculator.inspect(longClippedPair);
+    ASSERT_EQ(LocusStats(AlleleCount::kTwo, 150, 0, 150.0 * 1 / 50), longClipCalculator.estimate(Sex::kFemale));
 }
 
 TEST(LocusStatsCalculatorFromReadAlignments, ReadsExtendingPastTheLocusWindow_NotCounted)

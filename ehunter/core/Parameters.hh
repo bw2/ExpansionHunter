@@ -76,7 +76,8 @@ enum class MotifCompositionMode
 {
     kOff,
     kAllLoci,
-    kLociWithNonRefMotifs
+    kLociWithNonRefMotifs,
+    kLociWithKnownMotifs // only loci whose catalog record has a non-empty KnownMotifs list
 };
 
 // Encodes a MotifCompositionMode the way --output-motif-composition spells it ("off" when the flag is not set).

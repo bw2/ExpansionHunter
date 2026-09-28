@@ -1077,6 +1077,12 @@ void addMotifComposition(
     {
         return;
     }
+    // loci-with-known-motifs: gated on the catalog's KnownMotifs list as written, so a list whose every entry
+    // validateKnownMotifs later skips still qualifies the locus.
+    if (params.motifCompositionMode() == MotifCompositionMode::kLociWithKnownMotifs && locusSpec.knownMotifs().empty())
+    {
+        return;
+    }
     // Loci with a single repeat only; small variants elsewhere in the locus do not matter.
     const VariantSpecification* repeatVariantSpec = nullptr;
     for (const VariantSpecification& spec : locusSpec.variantSpecs())

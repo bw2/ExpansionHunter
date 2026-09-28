@@ -205,7 +205,7 @@ TEST(MotifCompositionSplitting, InterruptionAndDeletion)
 
 TEST(MotifCompositionSplitting, MotifCandidateNextToAGapIsRemoved)
 {
-    // "CAA" followed by a 1-base shift is a substring cut from a longer repeat unit, not a real motif.
+    // "CAA" followed by a 1-base shift is a repeat unit cut out of frame, not a real motif.
     const vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAGCAAGCAGCAG", "CAG", { "CAG" }, 0, true, true, string());
     ASSERT_EQ(5u, sequenceSubstrings.size());
@@ -232,7 +232,7 @@ TEST(MotifCompositionSplitting, MotifCandidateAtAReadEndNeedsAMatchingPartialRep
     ASSERT_EQ(4u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[1].type);
 
-    // "TG" does not match the end of CAG, so CAA could be a frame-shifted substring and is removed.
+    // "TG" does not match the end of CAG, so CAA could be a frame-shifted repeat unit and is removed.
     sequenceSubstrings = splitIntoMotifs("TGCAACAGCAG", "CAG", { "CAG" }, 2, false, false, string());
     ASSERT_EQ(3u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
@@ -271,14 +271,14 @@ TEST(MotifCompositionSplitting, EndAtEdgeOfRepeatSequenceMustCarryTheReferencePa
     ASSERT_EQ(4u, sequenceSubstrings.size());
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
 
-    // A 1-base leftover instead of 2 shows a frame shift, so the last substring is not trusted.
+    // A 1-base leftover instead of 2 shows a frame shift, so the last repeat unit is not trusted.
     sequenceSubstrings = splitIntoMotifs("CAGCAGCAAC", "CAG", { "CAG" }, 0, true, true, string("CA"));
     EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[2].type);
 }
 
-TEST(MotifCompositionSplitting, HomopolymerSequenceSubstringsAreNeverMotifCandidates)
+TEST(MotifCompositionSplitting, HomopolymerRepeatUnitsAreNeverMotifCandidates)
 {
-    // GGG at a CAG locus is a homopolymer substring.
+    // GGG at a CAG locus is a homopolymer repeat unit.
     vector<SequenceSubstring> sequenceSubstrings
         = splitIntoMotifs("CAGCAGGGGCAGCAG", "CAG", { "CAG" }, 0, true, true, string());
     ASSERT_EQ(5u, sequenceSubstrings.size());
@@ -487,7 +487,7 @@ TEST(MotifComposition, SingleReadWithAnInterruptionIsTreatedAsAnError)
         makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
-    // The rejected substring becomes a gap: it is not counted as CAG, and it breaks the pairs on both sides.
+    // The rejected repeat unit becomes a gap: it is not counted as CAG, and it breaks the pairs on both sides.
     EXPECT_EQ(std::make_pair(109, 11), composition->locus.motifs.at(1));
     EXPECT_EQ(std::make_pair(90 + 7, 11), composition->locus.motifPairs.at({ 1, 1 }));
 }
@@ -604,6 +604,55 @@ TEST(MotifComposition, InrepeatReadTakesItsOrientationFromTheAnchoredMate)
         makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false);
     ASSERT_TRUE(unanchored);
     EXPECT_EQ(std::make_pair(4 * 10, 4), unanchored->locus.motifs.at(1));
+}
+
+TEST(MotifComposition, InrepeatReadIsCutAtTheInnermostFlankAnchorMatch)
+{
+    // HG002's chr22:23881827-23881841 (AC x 7) lies in a tandem array of ~120bp units, each holding an AC repeat and
+    // an AG repeat, so the locus's flanks recur one unit away, and every read there has MAPQ 0. A read placed in
+    // the next unit is an in-repeat read; one that starts in an AG repeat and runs on through the AC repeat, the
+    // right flank, the next AG repeat and the next AC repeat matches each flank's anchor twice. It is cut at the
+    // matches nearest its middle, so that only the AC units between them are counted and none of the neighbouring
+    // AG repeat; cut at the outermost matches it would hold a whole array unit.
+    const string leftFlank = "TGAGAGAGACAGAGGCAGAGAGAGAGAGAA";
+    const string rightFlank = "AGACACAGAGACAGAGAGATTGAGAGAGAC";
+    const string repeat = repeatMotif("AC", 7);
+    MotifCompositionLocus locus;
+    locus.contigIndex = 0;
+    locus.locusStart = 23881827;
+    locus.locusEnd = 23881841;
+    locus.catalogMotif = "AC";
+    locus.referenceRepeatSequence = repeat;
+    locus.leftFlankSequence = leftFlank;
+    locus.rightFlankSequence = rightFlank;
+    locus.meanFragmentLength = 300;
+    ReadSet reads;
+    for (int index = 0; index != 4; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "span" + std::to_string(index), MateNumber::kFirstMate, leftFlank + repeat + rightFlank,
+            locus.locusStart - 30, { cigarOp(74, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    const string readThroughTheArrayUnit
+        = leftFlank.substr(18) + repeat + rightFlank + "AGAGGCAGAGAGAGAGAA" + repeat + rightFlank.substr(0, 12);
+    for (int index = 0; index != 3; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "irr" + std::to_string(index), MateNumber::kFirstMate, string(30, 'T'), locus.locusStart - 60,
+            { cigarOp(30, BAM_CMATCH) });
+        pair.secondMate = makeUnmappedRead(
+            "irr" + std::to_string(index), MateNumber::kSecondMate,
+            graphtools::reverseComplement(readThroughTheArrayUnit), locus.locusStart - 60);
+        reads.pairs.push_back(std::move(pair));
+    }
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(2, { 7, 7 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "AC" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(4 * 7 + 3 * 7, 7), composition->locus.motifs.at(1));
 }
 
 TEST(MotifComposition, NoCallInAFlippedInrepeatReadIsNotHighQuality)
@@ -754,11 +803,87 @@ TEST(MotifComposition, FlankBasesAlignedOntoTheLocusAreCutAtTheFlankAnchor)
     EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
     EXPECT_EQ(std::make_pair(48, 8), composition->locus.motifs.at(1));
 
-    // Without the flanks, the flank bases are split into motif-sized substrings and reported as new motifs.
+    // Without the flanks, the flank bases are split into repeat units and reported as new motifs.
     composition = computeMotifComposition(
         makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 6, 6 }), false);
     ASSERT_TRUE(composition);
     EXPECT_GT(composition->motifs.size(), 1u);
+}
+
+TEST(MotifComposition, RepeatSequenceContainingTheFlankAnchorIsNotCutThere)
+{
+    // HG002's chr22:16261470-16261537 (TGATTCCATT x 6.7 in the reference). Its 47bp allele contains the right
+    // flank's anchor, AATGATGATTCC, 21 bases in, ahead of a TGATTCCATT and a CGATTCCATT unit. Reads of that allele,
+    // aligned with the deletion, end their repeat sequence exactly where the flank begins; a cut at the inner anchor
+    // match would drop those two units.
+    const string leftFlank = "ATGATGATTCCACTCGATTCCATATGATAA";
+    const string referenceRepeatSequence = "TGATTCCATTTGATTCCACTCGATGATTCCATTTGATTCCATTCAATGGTTCCATTCGATTCCATTC";
+    const string rightFlank = "AATGATGATTCCATTCGAGTTCATTGATTA";
+    const string shortAllele = "TGATTCCATTTGATTCCATTCAATGATGATTCCATTCGATTCCATTC";
+    MotifCompositionLocus locus;
+    locus.contigIndex = 0;
+    locus.locusStart = 16261470;
+    locus.locusEnd = 16261537;
+    locus.catalogMotif = "TGATTCCATT";
+    locus.referenceRepeatSequence = referenceRepeatSequence;
+    locus.leftFlankSequence = leftFlank;
+    locus.rightFlankSequence = rightFlank;
+    locus.meanFragmentLength = 300;
+    ReadSet reads;
+    for (int index = 0; index != 8; ++index)
+    {
+        // 30 flank bases, the allele's first 25 bases, the 20bp deletion, its last 22 bases, 20 flank bases.
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "short" + std::to_string(index), MateNumber::kFirstMate, leftFlank + shortAllele + rightFlank.substr(0, 20),
+            locus.locusStart - 30, { cigarOp(55, BAM_CMATCH), cigarOp(20, BAM_CDEL), cigarOp(42, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(10, { 5, 5 }), false);
+    ASSERT_TRUE(composition);
+    // Three TGATTCCATT units per read and the CGATTCCATT unit. Cut at the inner anchor match, a read kept a single
+    // TGATTCCATT and no CGATTCCATT at all. The first unit also tests the frame: the reference repeat sequence's best
+    // tiling is at offset 3 (its third and fourth units follow a 3-base shift), and a split that started there would
+    // skip the exact unit at the tract's start.
+    EXPECT_EQ(vector<string>({ "TGATTCCATT", "CGATTCCATT" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(24, 8), composition->locus.motifs.at(1));
+    EXPECT_EQ(std::make_pair(8, 8), composition->locus.motifs.at(2));
+}
+
+TEST(MotifComposition, FlankAnchorFoundOutsideTheTractDoesNotMoveItsEdge)
+{
+    // HG002's chr22:15864961-15864977 (AG x 8). The left flank ends in TATA repeats, so its anchor CATATGTATATA
+    // sits 9 bases before the locus. A read with 4 of those TATA bases deleted still matches the anchor exactly,
+    // 12 bases before its repeat sequence; placing the flank's edge 9 bases past the anchor would cut two AG units
+    // that the alignment already put in the locus.
+    const string leftFlank = "ACACACACACATATGTATATATATATATAT";
+    const string rightFlank = "GAAAGTTTGAATTTACCTATATTAAAAGAT";
+    MotifCompositionLocus locus;
+    locus.contigIndex = 0;
+    locus.locusStart = 15864961;
+    locus.locusEnd = 15864977;
+    locus.catalogMotif = "AG";
+    locus.referenceRepeatSequence = repeatMotif("AG", 8);
+    locus.leftFlankSequence = leftFlank;
+    locus.rightFlankSequence = rightFlank;
+    locus.meanFragmentLength = 300;
+    ReadSet reads;
+    for (int index = 0; index != 8; ++index)
+    {
+        // The flank's first 15 bases, the 4-base deletion, its last 11 bases, the repeat, 20 bases of right flank.
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "deletion" + std::to_string(index), MateNumber::kFirstMate,
+            leftFlank.substr(0, 15) + leftFlank.substr(19) + repeatMotif("AG", 8) + rightFlank.substr(0, 20),
+            locus.locusStart - 30, { cigarOp(15, BAM_CMATCH), cigarOp(4, BAM_CDEL), cigarOp(47, BAM_CMATCH) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, reads.pointers(), RepeatGenotype(2, { 8, 8 }), false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "AG" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(64, 8), composition->locus.motifs.at(1));
 }
 
 TEST(MotifComposition, RepeatUnitsNextToARepeatLikeFlankAreNotCutOff)

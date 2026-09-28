@@ -59,7 +59,7 @@ const double kMotifCompositionBaseErrorRate = 0.001;
 // Target chance that sequencing errors alone add a false motif at a locus.
 const double kMotifCompositionLocusFalsePositiveRate = 1e-4;
 // A new motif must be seen in at least this many read pairs, and in at least this fraction of the read pairs that
-// have any motif-sized substring at the locus.
+// have any repeat unit at the locus.
 const int kMotifCompositionMinReadPairs = 2;
 const double kMotifCompositionMinReadPairFraction = 0.005;
 // A read counts as spanning only with at least this many aligned bases on each side of the locus.
@@ -333,11 +333,11 @@ std::unordered_set<string> computeCanonicalRotations(const vector<string>& motif
     return canonicalRotations;
 }
 
-// See splitIntoMotifs for the arguments. `upperTract` is `tract` in upper case; `tract` keeps the
+// See splitIntoMotifs for the arguments. `tractUpperCased` is `tract` in upper case; `tract` keeps the
 // case that marks base quality. knownMotifRotations holds the canonical rotations of the catalog's KnownMotifs.
 // Returns the length of the partial repeat unit at the end of the tract.
 int splitTract(
-    const string& tract, const string& upperTract, const string& catalogMotif, const MotifList& acceptedMotifs,
+    const string& tract, const string& tractUpperCased, const string& catalogMotif, const MotifList& acceptedMotifs,
     const std::unordered_set<string>& knownMotifRotations, int startOffset, bool startsAtEdgeOfRepeatSequence,
     bool endsAtEdgeOfRepeatSequence, const boost::optional<string>& referenceEndPartialRepeatUnit,
     vector<SequenceSubstring>& sequenceSubstrings)
@@ -347,17 +347,30 @@ int splitTract(
     const int length = tract.size();
     const vector<string>& orderedMotifs = acceptedMotifs.motifs();
 
-    const int leadingPartialRepeatUnitLength = std::min(std::max(startOffset, 0), length);
+    // The first repeat unit starts at startOffset, or at an exact repeat unit ahead of it. The reference frame is
+    // the best fixed-stride tiling of the reference repeat sequence, and an impurity there can put its first window
+    // inside a unit the tract begins with (chr22:16261470-16261537, TGATTCCATT x 6.7 with a 3-base shift after its
+    // second unit, has its frame at offset 3): a split that only ever moves forward would never count that unit.
+    string window;
+    int leadingPartialRepeatUnitLength = std::min(std::max(startOffset, 0), length);
+    for (int candidate = 0; candidate < leadingPartialRepeatUnitLength && candidate + motifSize <= length; ++candidate)
+    {
+        window.assign(tractUpperCased, candidate, motifSize);
+        if (acceptedMotifs.contains(window) || countMismatches(tract.data() + candidate, catalogMotif, 0) == 0)
+        {
+            leadingPartialRepeatUnitLength = candidate;
+            break;
+        }
+    }
     int position = leadingPartialRepeatUnitLength;
     if (position > 0)
     {
         sequenceSubstrings.push_back({ 0, position, SequenceSubstringType::kGap });
     }
 
-    string window;
     while (position + motifSize <= length)
     {
-        window.assign(upperTract, position, motifSize);
+        window.assign(tractUpperCased, position, motifSize);
         if (acceptedMotifs.contains(window))
         {
             sequenceSubstrings.push_back({ position, motifSize, SequenceSubstringType::kAcceptedMotif });
@@ -373,14 +386,14 @@ int splitTract(
         }
 
         // Look up to one motif length ahead for where the frame resumes, so an indel or a partial repeat unit does not
-        // throw off every later substring: the nearest shift whose window matches an accepted motif or the catalog
+        // throw off every later repeat unit: the nearest shift whose window matches an accepted motif or the catalog
         // motif exactly, or, when there is none, the shift whose window has the fewest mismatches. The fallback keeps
         // the frame at loci whose repeat units often differ from every accepted motif by a base or two, such as VNTRs.
         const int maxShift = std::min(motifSize - 1, length - position - motifSize);
         int bestShift = 0;
         for (int shift = 1; shift <= maxShift && bestShift == 0; ++shift)
         {
-            window.assign(upperTract, position + shift, motifSize);
+            window.assign(tractUpperCased, position + shift, motifSize);
             if (acceptedMotifs.contains(window) || countMismatches(windowStart + shift, catalogMotif, 0) == 0)
             {
                 bestShift = shift;
@@ -403,10 +416,10 @@ int splitTract(
 
         if (bestShift == 0)
         {
-            // A substring made of a single base (such as GGG at a CAG locus) is never a new motif: on NovaSeq data,
-            // reads with no signal read as runs of G. A substring that repeats a longer repeat unit (such as ATAT at an
-            // ATCT locus) can be one.
-            const SequenceSubstringType type = isHomopolymer(upperTract, position, motifSize)
+            // A repeat unit made of a single base (such as GGG at a CAG locus) is never a new motif: on NovaSeq data,
+            // reads with no signal read as runs of G. One made of a shorter repeated unit (such as ATAT at an ATCT
+            // locus) can be one.
+            const SequenceSubstringType type = isHomopolymer(tractUpperCased, position, motifSize)
                 ? SequenceSubstringType::kGap
                 : SequenceSubstringType::kNewMotifCandidate;
             sequenceSubstrings.push_back({ position, motifSize, type });
@@ -425,12 +438,12 @@ int splitTract(
         sequenceSubstrings.push_back({ position, trailingPartialRepeatUnitLength, SequenceSubstringType::kGap });
     }
 
-    // Is the tract start (with the partial repeat unit before the first substring) a trusted edge?
+    // Is the tract start (with the leading partial repeat unit) a trusted edge?
     const bool startIsAtTrustedEdge = startsAtEdgeOfRepeatSequence
         || partialRepeatUnitMatchesMotif(
                                     tract.data(), leadingPartialRepeatUnitLength, false, catalogMotif, orderedMotifs);
 
-    // Is the tract end (with the partial repeat unit after the last substring) a trusted edge? At an end the alignment
+    // Is the tract end (with the trailing partial repeat unit) a trusted edge? At an end the alignment
     // placed at the edge of the repeat sequence, the partial repeat unit must be the reference repeat sequence's own
     // partial last repeat unit: at most loci the length of the reference repeat sequence is not a multiple of the motif
     // length, so a partial repeat unit there is normal, while one of any other length shows that an indel shifted the
@@ -471,7 +484,7 @@ int splitTract(
             orderedMotifs);
     }
 
-    // A possible new motif is kept if, on each side, it touches another substring or a trusted edge (the anchoring
+    // A possible new motif is kept if, on each side, it touches another repeat unit or a trusted edge (the anchoring
     // rule), or else if it passes the in-frame test (passesInFrameTest). The anchoring rule stands in for the question
     // the in-frame test asks of the motif candidate's own bases: is it an in-frame variant repeat unit, or an
     // out-of-frame window that an indel created? The test runs only on motif candidates the anchoring rule would
@@ -480,9 +493,9 @@ int splitTract(
     // than 10 bp keep the plain anchoring rule. At a locus whose catalog entry lists KnownMotifs, the list replaces the
     // in-frame test: a motif candidate the anchoring rule would remove is kept only if it is a rotation of a listed
     // motif, at any motif size. A motif candidate kept either way stays a motif candidate, so it anchors its neighbors
-    // like any other substring. Repeat until nothing changes, since removing a motif candidate can leave its neighbor
+    // like any other repeat unit. Loop until nothing changes, since removing a motif candidate can leave its neighbor
     // unanchored.
-    auto isSequenceSubstring = [](SequenceSubstringType type) { return type != SequenceSubstringType::kGap; };
+    auto isNotAGap = [](SequenceSubstringType type) { return type != SequenceSubstringType::kGap; };
     bool changed = true;
     while (changed)
     {
@@ -494,11 +507,11 @@ int splitTract(
             {
                 continue;
             }
-            const bool leftSideIsAnchored = (index > 0 && isSequenceSubstring(sequenceSubstrings[index - 1].type))
+            const bool leftSideIsAnchored = (index > 0 && isNotAGap(sequenceSubstrings[index - 1].type))
                 || (sequenceSubstring.offsetWithinRepeatTract == leadingPartialRepeatUnitLength
                     && startIsAtTrustedEdge);
             const bool rightSideIsAnchored
-                = (index + 1 < sequenceSubstrings.size() && isSequenceSubstring(sequenceSubstrings[index + 1].type))
+                = (index + 1 < sequenceSubstrings.size() && isNotAGap(sequenceSubstrings[index + 1].type))
                 || (sequenceSubstring.offsetWithinRepeatTract + sequenceSubstring.length
                         == trailingPartialRepeatUnitStart
                     && endIsAtTrustedEdge);
@@ -506,7 +519,7 @@ int splitTract(
             {
                 continue;
             }
-            const char* motifCandidateStart = upperTract.data() + sequenceSubstring.offsetWithinRepeatTract;
+            const char* motifCandidateStart = tractUpperCased.data() + sequenceSubstring.offsetWithinRepeatTract;
             const bool isKept = knownMotifRotations.empty()
                 ? passesInFrameTest(motifCandidateStart, catalogMotif, orderedMotifs)
                 : knownMotifRotations.count(computeCanonicalRotation(string(motifCandidateStart, motifSize))) != 0;
@@ -549,7 +562,7 @@ struct RepeatTract
     int alleleLengthSupportedByThisRead;
     bool startsAtEdgeOfRepeatSequence;
     bool endsAtEdgeOfRepeatSequence;
-    int startOffset; // frame offset of the first substring; -1 when it has to be found from the sequence
+    int startOffset; // frame offset of the first repeat unit; -1 when it has to be found from the sequence
 };
 
 // What the read's CIGAR string says about where it sits relative to the locus [S, E).
@@ -696,7 +709,7 @@ bool isUsableAlignment(const FullRead& read)
 // The fast path's rule: ignore reads with MAPQ <= 3 at loci whose reads usually map well.
 bool hasUnusuallyLowMapq(const FullRead& read, double averageMapq) { return read.s.mapq <= 3 && averageMapq >= 20; }
 
-// Frame offset, in the tract, of the first substring of a tract whose first base stands for `referencePosition`,
+// Frame offset, in the tract, of the first repeat unit of a tract whose first base stands for `referencePosition`,
 // given that repeat units start at S + f + j * k in the reference.
 int computeOffsetFromReferenceFrame(int64_t referencePosition, const MotifCompositionLocus& locus, int frameOffset)
 {
@@ -707,7 +720,7 @@ int computeOffsetFromReferenceFrame(int64_t referencePosition, const MotifCompos
 
 // A 12-mer of reference flank close to the locus that differs from the repeat sequence, used to find where a read's
 // repeat sequence ends and the flank begins.
-struct FlankAnchor
+struct FlankAnchorSequence
 {
     string sequence;
     int distanceFromLocus; // flank bases between the edge of the repeat sequence and the anchor
@@ -716,7 +729,7 @@ struct FlankAnchor
 const int kFlankAnchorLength = 12;
 
 // True if the anchor matches the sequence at `position` with at most maxMismatches mismatches.
-bool matchesAnchorAt(const string& sequence, int position, const FlankAnchor& anchor, int maxMismatches)
+bool matchesAnchorAt(const string& sequence, int position, const FlankAnchorSequence& anchor, int maxMismatches)
 {
     int mismatches = 0;
     for (int index = 0; index != kFlankAnchorLength && mismatches <= maxMismatches; ++index)
@@ -726,14 +739,14 @@ bool matchesAnchorAt(const string& sequence, int position, const FlankAnchor& an
     return mismatches <= maxMismatches;
 }
 
-// Picks the anchor from the reference flank next to the locus (`flank` is read away from the locus when
-// isRightFlank, toward it otherwise): the 12-mer closest to the locus, within its first 30 bases, that has at least
-// 3 mismatches against every rotation of the catalog motif and of the given accepted motifs, and that the reference
-// does not also match closer to the locus. Requiring the anchor to differ from the repeat sequence keeps it from
-// matching inside real repeat sequence.
-boost::optional<FlankAnchor> findFlankAnchor(
-    const string& flank, bool isRightFlank, const string& catalogMotif, const vector<string>& acceptedMotifs,
-    const string& referenceRepeatSequence)
+// Picks the anchor from the reference flank next to the locus (flankReferenceSequence is read away from the locus
+// when isRightFlank, toward it otherwise): the 12-mer closest to the locus, within its first 30 bases, that has at
+// least 3 mismatches against every rotation of the catalog motif and of the given accepted motifs, and that the
+// reference does not also match closer to the locus. Requiring the anchor to differ from the repeat sequence keeps it
+// from matching inside real repeat sequence.
+boost::optional<FlankAnchorSequence> findFlankAnchorSequence(
+    const string& flankReferenceSequence, bool isRightFlank, const string& catalogMotif,
+    const vector<string>& acceptedMotifs, const string& referenceRepeatSequence)
 {
     const int kMaxAnchorDistance = 30 - kFlankAnchorLength;
     const int kMinMismatchesVsMotifRotations = 3;
@@ -742,11 +755,11 @@ boost::optional<FlankAnchor> findFlankAnchor(
     {
         motifs.push_back(&acceptedMotif);
     }
-    const int flankLength = flank.size();
+    const int flankLength = flankReferenceSequence.size();
     for (int distance = 0; distance <= std::min(kMaxAnchorDistance, flankLength - kFlankAnchorLength); ++distance)
     {
         const int start = isRightFlank ? distance : flankLength - kFlankAnchorLength - distance;
-        const string window = flank.substr(start, kFlankAnchorLength);
+        const string window = flankReferenceSequence.substr(start, kFlankAnchorLength);
         if (window.find('N') != string::npos)
         {
             continue;
@@ -778,8 +791,9 @@ boost::optional<FlankAnchor> findFlankAnchor(
         // inside the reference repeat sequence, across its junction with the flank, or in the flank bases in between.
         // Reads of the reference allele would be cut there. A periodic flank matches itself one period closer (ATCT
         // repeats next to a GATC repeat), so it gives no anchor.
-        const FlankAnchor anchor { window, distance };
-        const string reference = isRightFlank ? referenceRepeatSequence + flank : flank + referenceRepeatSequence;
+        const FlankAnchorSequence anchor { window, distance };
+        const string reference = isRightFlank ? referenceRepeatSequence + flankReferenceSequence
+                                              : flankReferenceSequence + referenceRepeatSequence;
         const int ownPosition = isRightFlank ? static_cast<int>(referenceRepeatSequence.size()) + start : start;
         bool matchesCloserToLocus = false;
         for (int position = 0; position + kFlankAnchorLength <= static_cast<int>(reference.size()); ++position)
@@ -802,31 +816,77 @@ boost::optional<FlankAnchor> findFlankAnchor(
 // The cuts below need an exact anchor match: next to a repeat-like flank, a variant repeat unit in the read can come
 // within one mismatch of the anchor (a TATC in a GATC repeat followed by ATCT units), and a cut there would drop real
 // repeat units.
+//
+// They also take the anchor match nearest the tract's edge, not the first one found. The anchor is only known to be
+// absent from the REFERENCE repeat sequence; an allele that differs from the reference can contain it (HG002's 47bp
+// allele at chr22:16261470-16261537 holds the right anchor AATGATGATTCC 21 bases in, ahead of two more repeat units),
+// and a cut at that inner match would drop real repeat units. The search runs past the tract's edge by the anchor's
+// distance from the locus, so a tract that the alignment already ends exactly where the flank begins finds its anchor
+// just past its end. Such a match, lying entirely outside the tract, leaves the tract as it is: the edge it would
+// imply, up to distanceFromLocus bases inside the tract, is off by any indel the read carries between the locus and
+// the anchor (HG002 reads at chr22:15864961-15864977 delete 4 of the 9 flank bases before the left anchor), and the
+// alignment has already placed that edge. The search runs no further out than that: a match further out says nothing
+// about where the flank begins and would hide a match that does.
 
 // New end of the tract [start, end) of `sequence`: where the right flank begins, if its anchor is found.
-int cutAtRightAnchor(const string& sequence, int start, int end, const FlankAnchor& anchor)
+int cutAtRightAnchor(const string& sequence, int start, int end, const FlankAnchorSequence& anchor)
 {
-    for (int position = start; position + kFlankAnchorLength <= end; ++position)
+    const int lastPosition
+        = std::min(end + anchor.distanceFromLocus, static_cast<int>(sequence.size()) - kFlankAnchorLength);
+    for (int position = lastPosition; position >= start; --position)
     {
         if (matchesAnchorAt(sequence, position, anchor, 0))
         {
-            return std::max(start, position - anchor.distanceFromLocus);
+            return position >= end ? end : std::max(start, position - anchor.distanceFromLocus);
         }
     }
     return end;
 }
 
 // New start of the tract [start, end) of `sequence`: just past the left flank, if its anchor is found.
-int cutAtLeftAnchor(const string& sequence, int start, int end, const FlankAnchor& anchor)
+int cutAtLeftAnchor(const string& sequence, int start, int end, const FlankAnchorSequence& anchor)
 {
-    for (int position = end - kFlankAnchorLength; position >= start; --position)
+    const int firstPosition = std::max(0, start - kFlankAnchorLength - anchor.distanceFromLocus);
+    for (int position = firstPosition; position + kFlankAnchorLength <= end; ++position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return position + kFlankAnchorLength <= start
+                ? start
+                : std::min(end, position + kFlankAnchorLength + anchor.distanceFromLocus);
+        }
+    }
+    return start;
+}
+
+// The same cuts for an in-repeat read, whose tract is the whole read and has no alignment-placed edge to defer to.
+// They take the anchor match nearest the middle of the read instead: the read is expected to be repeat sequence with
+// at most some flank at either end, and where the locus sits in a tandem array of larger units (AC and AG repeats
+// 100bp apart inside a 120bp unit at chr22:23881827), the flank recurs one unit away, so the outermost match would
+// keep a whole array unit, neighbouring repeat included.
+int cutAtRightAnchorInnermost(const string& sequence, const FlankAnchorSequence& anchor)
+{
+    const int end = sequence.size();
+    for (int position = 0; position + kFlankAnchorLength <= end; ++position)
+    {
+        if (matchesAnchorAt(sequence, position, anchor, 0))
+        {
+            return std::max(0, position - anchor.distanceFromLocus);
+        }
+    }
+    return end;
+}
+
+int cutAtLeftAnchorInnermost(const string& sequence, int end, const FlankAnchorSequence& anchor)
+{
+    for (int position = end - kFlankAnchorLength; position >= 0; --position)
     {
         if (matchesAnchorAt(sequence, position, anchor, 0))
         {
             return std::min(end, position + kFlankAnchorLength + anchor.distanceFromLocus);
         }
     }
-    return start;
+    return 0;
 }
 
 // ------------------------------------------------------------------------------------------------------------
@@ -839,7 +899,7 @@ struct MotifStats
     vector<int> highQualityBaseCounts; // for each position in the motif, observations with a high-quality base there
 };
 
-struct SequenceSubstringLocation
+struct RepeatUnitLocation
 {
     int tractIndex;
     int offsetWithinRepeatTract;
@@ -932,12 +992,12 @@ struct AcceptanceTest
 // The occurrences of a motif seen at `locations`, and for each of its positions how many of them have a high-quality
 // base there.
 MotifStats tallyLocations(
-    const vector<SequenceSubstringLocation>& locations, const vector<RepeatTract>& tracts, int motifSize)
+    const vector<RepeatUnitLocation>& locations, const vector<RepeatTract>& tracts, int motifSize)
 {
     MotifStats stats;
     stats.occurrences = locations.size();
     stats.highQualityBaseCounts.assign(motifSize, 0);
-    for (const SequenceSubstringLocation& location : locations)
+    for (const RepeatUnitLocation& location : locations)
     {
         const string& bases = tracts[location.tractIndex].bases;
         for (int index = 0; index != motifSize; ++index)
@@ -951,13 +1011,13 @@ MotifStats tallyLocations(
 // The number of distinct read pairs that show `motif` at `locations` with high-quality bases at every position where it
 // differs from its nearest more common accepted motifs.
 int countSupportingReadPairs(
-    const string& motif, const vector<SequenceSubstringLocation>& locations,
+    const string& motif, const vector<RepeatUnitLocation>& locations,
     const std::unordered_map<string, MotifStats>& statsForAcceptedMotifs, const vector<RepeatTract>& tracts)
 {
     const vector<int> distinguishingPositions
         = findDistinguishingPositions(motif, locations.size(), statsForAcceptedMotifs);
     std::unordered_set<int> readPairs;
-    for (const SequenceSubstringLocation& location : locations)
+    for (const RepeatUnitLocation& location : locations)
     {
         const RepeatTract& tract = tracts[location.tractIndex];
         if (hasHighQualityBasesAt(tract.bases, location.offsetWithinRepeatTract, distinguishingPositions))
@@ -970,7 +1030,7 @@ int countSupportingReadPairs(
 
 // Tests motif candidates in decreasing order of occurrences and adds the accepted ones to statsForAcceptedMotifs.
 vector<string> acceptNewMotifs(
-    const std::unordered_map<string, vector<SequenceSubstringLocation>>& motifCandidates,
+    const std::unordered_map<string, vector<RepeatUnitLocation>>& motifCandidates,
     std::unordered_map<string, MotifStats>& statsForAcceptedMotifs, const vector<RepeatTract>& tracts,
     const AcceptanceTest& test)
 {
@@ -995,7 +1055,7 @@ vector<string> acceptNewMotifs(
     vector<string> accepted;
     for (const string* motifCandidate : order)
     {
-        const vector<SequenceSubstringLocation>& locations = motifCandidates.at(*motifCandidate);
+        const vector<RepeatUnitLocation>& locations = motifCandidates.at(*motifCandidate);
         const int count = countSupportingReadPairs(*motifCandidate, locations, statsForAcceptedMotifs, tracts);
         if (count < test.minReadPairs)
         {
@@ -1305,7 +1365,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     const bool catalogMotifIsConcrete = graphtools::checkIfNucleotideReferenceSequence(catalogMotif);
     const std::unordered_set<string> knownMotifRotations = computeCanonicalRotations(locus.knownMotifs);
 
-    // --- Repeat units from the reference repeat sequence: parse the reference repeat sequence, both of whose ends
+    // --- Motifs from the reference repeat sequence: parse the reference repeat sequence, both of whose ends
     // are trusted.
     const int frameOffset = computeReferenceRepeatSequenceFrame(locus.referenceRepeatSequence, catalogMotif);
     std::unordered_map<string, MotifStats> statsForAcceptedMotifs;
@@ -1330,23 +1390,23 @@ boost::optional<MotifComposition> computeMotifComposition(
             statsForAcceptedMotifs[catalogMotif];
         }
     }
-    // The set R' of repeat units from the reference repeat sequence, and the same motifs sorted by how often the
+    // The set R' of motifs from the reference repeat sequence, and the same motifs sorted by how often the
     // reference repeat sequence has them, most common first. Those counts only set the order; the counts used by the
     // acceptance test come from the reads, so they are reset here.
-    std::unordered_set<string> repeatUnitsFromReferenceRepeatSequence;
-    const vector<string> referenceRepeatSequenceMotifsSortedByFrequency = orderByOccurrences(statsForAcceptedMotifs);
+    std::unordered_set<string> motifsFromReferenceRepeatSequence;
+    const vector<string> referenceMotifsSortedByFrequency = orderByOccurrences(statsForAcceptedMotifs);
     for (auto& motifAndStats : statsForAcceptedMotifs)
     {
-        repeatUnitsFromReferenceRepeatSequence.insert(motifAndStats.first);
+        motifsFromReferenceRepeatSequence.insert(motifAndStats.first);
         motifAndStats.second.occurrences = 0;
         motifAndStats.second.highQualityBaseCounts.assign(motifSize, 0);
     }
 
-    const boost::optional<FlankAnchor> leftAnchor = findFlankAnchor(
-        locus.leftFlankSequence, false, catalogMotif, referenceRepeatSequenceMotifsSortedByFrequency,
+    const boost::optional<FlankAnchorSequence> leftAnchor = findFlankAnchorSequence(
+        locus.leftFlankSequence, false, catalogMotif, referenceMotifsSortedByFrequency,
         locus.referenceRepeatSequence);
-    const boost::optional<FlankAnchor> rightAnchor = findFlankAnchor(
-        locus.rightFlankSequence, true, catalogMotif, referenceRepeatSequenceMotifsSortedByFrequency,
+    const boost::optional<FlankAnchorSequence> rightAnchor = findFlankAnchorSequence(
+        locus.rightFlankSequence, true, catalogMotif, referenceMotifsSortedByFrequency,
         locus.referenceRepeatSequence);
 
     // The partial repeat unit the reference repeat sequence ends with when split with the given list of accepted
@@ -1355,10 +1415,10 @@ boost::optional<MotifComposition> computeMotifComposition(
     // a multiple of the motif length, and a read of the reference allele split with the same list does the same.
     auto computeReferenceEndPartialRepeatUnit = [&](const MotifList& acceptedMotifs)
     {
-        vector<SequenceSubstring> referenceSubstrings;
+        vector<SequenceSubstring> referenceRepeatUnits;
         const int partialRepeatUnitLength = splitTract(
             locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, acceptedMotifs,
-            knownMotifRotations, frameOffset, true, true, boost::none, referenceSubstrings);
+            knownMotifRotations, frameOffset, true, true, boost::none, referenceRepeatUnits);
         return boost::optional<string>(locus.referenceRepeatSequence.substr(
             locus.referenceRepeatSequence.size() - partialRepeatUnitLength));
     };
@@ -1595,11 +1655,11 @@ boost::optional<MotifComposition> computeMotifComposition(
                 int end = tract.bases.size();
                 if (rightAnchor)
                 {
-                    end = cutAtRightAnchor(tract.bases, start, end, *rightAnchor);
+                    end = cutAtRightAnchorInnermost(tract.bases, *rightAnchor);
                 }
                 if (leftAnchor && end > start)
                 {
-                    start = cutAtLeftAnchor(tract.bases, start, end, *leftAnchor);
+                    start = cutAtLeftAnchorInnermost(tract.bases, end, *leftAnchor);
                 }
                 if (end <= start)
                 {
@@ -1621,21 +1681,22 @@ boost::optional<MotifComposition> computeMotifComposition(
         && genotype->longAlleleSizeInUnits() - genotype->shortAlleleSizeInUnits() >= 2;
 
     // --- Parse with a given motif list and collect motif candidates.
-    vector<string> upperTracts(tracts.size());
+    vector<string> tractsUpperCased(tracts.size());
     for (size_t index = 0; index != tracts.size(); ++index)
     {
-        upperTracts[index] = toUpperSequence(tracts[index].bases);
+        tractsUpperCased[index] = toUpperSequence(tracts[index].bases);
     }
     auto startOffsetOf = [&](size_t tractIndex, const vector<string>& motifs)
     {
         const RepeatTract& tract = tracts[tractIndex];
-        return tract.startOffset >= 0 ? tract.startOffset
-                                      : computeRepeatFrameWithinSequence(upperTracts[tractIndex], catalogMotif, motifs);
+        return tract.startOffset >= 0
+            ? tract.startOffset
+            : computeRepeatFrameWithinSequence(tractsUpperCased[tractIndex], catalogMotif, motifs);
     };
 
-    std::unordered_map<string, vector<SequenceSubstringLocation>> motifCandidates;
-    vector<char> readPairHasSequenceSubstrings(readPairs.size(), false);
-    int readPairsWithSequenceSubstrings = 0;
+    std::unordered_map<string, vector<RepeatUnitLocation>> motifCandidates;
+    vector<char> readPairHasRepeatUnits(readPairs.size(), false);
+    int readPairsWithRepeatUnits = 0;
     vector<SequenceSubstring> sequenceSubstrings;
     auto parseForDiscovery = [&](size_t firstTract, size_t lastTract, const MotifList& motifList)
     {
@@ -1644,7 +1705,7 @@ boost::optional<MotifComposition> computeMotifComposition(
         {
             const RepeatTract& tract = tracts[tractIndex];
             splitTract(
-                tract.bases, upperTracts[tractIndex], catalogMotif, motifList, knownMotifRotations,
+                tract.bases, tractsUpperCased[tractIndex], catalogMotif, motifList, knownMotifRotations,
                 startOffsetOf(tractIndex, motifList.motifs()), tract.startsAtEdgeOfRepeatSequence,
                 tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
             for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
@@ -1653,12 +1714,12 @@ boost::optional<MotifComposition> computeMotifComposition(
                 {
                     continue;
                 }
-                if (!readPairHasSequenceSubstrings[tract.readPairIndex])
+                if (!readPairHasRepeatUnits[tract.readPairIndex])
                 {
-                    readPairHasSequenceSubstrings[tract.readPairIndex] = true;
-                    ++readPairsWithSequenceSubstrings;
+                    readPairHasRepeatUnits[tract.readPairIndex] = true;
+                    ++readPairsWithRepeatUnits;
                 }
-                const string motif = upperTracts[tractIndex].substr(
+                const string motif = tractsUpperCased[tractIndex].substr(
                     sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length);
                 if (sequenceSubstring.type == SequenceSubstringType::kAcceptedMotif)
                 {
@@ -1680,21 +1741,21 @@ boost::optional<MotifComposition> computeMotifComposition(
     };
 
     // The catalog's KnownMotifs are matched by rotation, since the reads, cut in line with the catalog motif, show
-    // which rotation actually occurs. A listed motif is found once one of its rotations is accepted: a repeat unit from
+    // which rotation actually occurs. A listed motif is found once one of its rotations is accepted: a motif from
     // the reference repeat sequence, or a motif candidate trusted here. For a listed motif not yet found, the motif
     // candidate among its rotations seen most often (ties: alphabetically first) is trusted without the error test of
     // acceptNewMotifs, provided it has the same minimum read-pair support a new motif needs (so a single sequencing
     // error does not report it); its other rotations are frame shifts and stay ordinary motif candidates.
     std::unordered_set<string> canonicalRotationsOfNotYetSeenKnownMotifs = knownMotifRotations;
-    for (const string& motif : repeatUnitsFromReferenceRepeatSequence)
+    for (const string& motif : motifsFromReferenceRepeatSequence)
     {
         canonicalRotationsOfNotYetSeenKnownMotifs.erase(computeCanonicalRotation(motif));
     }
 
-    // Bonferroni correction over a family fixed before looking at the reads: the one-base variants of the repeat units
+    // Bonferroni correction over a family fixed before looking at the reads: the one-base variants of the motifs
     // from the reference repeat sequence and of the listed motifs that are not rotations of one.
     const int motifCountForBonferroniCorrection = std::max<int>(
-        1, repeatUnitsFromReferenceRepeatSequence.size() + canonicalRotationsOfNotYetSeenKnownMotifs.size());
+        1, motifsFromReferenceRepeatSequence.size() + canonicalRotationsOfNotYetSeenKnownMotifs.size());
     auto makeAcceptanceTest = [&]()
     {
         AcceptanceTest test;
@@ -1703,11 +1764,11 @@ boost::optional<MotifComposition> computeMotifComposition(
             = kMotifCompositionLocusFalsePositiveRate / (3.0 * motifSize * motifCountForBonferroniCorrection);
         test.minReadPairs = std::max(
             kMotifCompositionMinReadPairs,
-            static_cast<int>(std::ceil(kMotifCompositionMinReadPairFraction * readPairsWithSequenceSubstrings)));
+            static_cast<int>(std::ceil(kMotifCompositionMinReadPairFraction * readPairsWithRepeatUnits)));
         return test;
     };
 
-    std::unordered_set<string> catalogMotifsInReads;
+    std::unordered_set<string> knownMotifsInReads;
     auto trustMotifCandidatesThatMatchKnownMotifs = [&]()
     {
         std::map<string, string> best; // canonical rotation -> motif candidate
@@ -1742,20 +1803,20 @@ boost::optional<MotifComposition> computeMotifComposition(
                 continue;
             }
             statsForAcceptedMotifs.emplace(motif, tallyLocations(motifCandidates.at(motif), tracts, motifSize));
-            catalogMotifsInReads.insert(motif);
+            knownMotifsInReads.insert(motif);
             canonicalRotationsOfNotYetSeenKnownMotifs.erase(canonicalAndMotif.first);
             motifCandidates.erase(motif);
         }
     };
 
-    // Pass 1: reads mapped to the locus, with the repeat units from the reference repeat sequence as the list of
+    // Pass 1: reads mapped to the locus, with the motifs from the reference repeat sequence as the list of
     // accepted motifs.
-    parseForDiscovery(0, mappedTractCount, MotifList(referenceRepeatSequenceMotifsSortedByFrequency, motifSize));
+    parseForDiscovery(0, mappedTractCount, MotifList(referenceMotifsSortedByFrequency, motifSize));
     trustMotifCandidatesThatMatchKnownMotifs();
-    if (onlyLociWithNonRefMotifs && motifCandidates.empty() && catalogMotifsInReads.empty()
+    if (onlyLociWithNonRefMotifs && motifCandidates.empty() && knownMotifsInReads.empty()
         && mappedTractCount == tracts.size())
     {
-        return boost::none; // every substring is a repeat unit from the reference repeat sequence and there are no
+        return boost::none; // every repeat unit is a motif from the reference repeat sequence and there are no
                             // in-repeat reads
     }
     vector<string> newMotifs = acceptNewMotifs(motifCandidates, statsForAcceptedMotifs, tracts, makeAcceptanceTest());
@@ -1773,12 +1834,12 @@ boost::optional<MotifComposition> computeMotifComposition(
     motifCandidates.clear();
 
     // --- Final motif list: merge the rotations of each new motif into the one closest to the catalog
-    // motif, and drop new motifs that are rotations of a repeat unit from the reference repeat sequence or of a catalog
-    // known motif found in the reads.
+    // motif, and drop new motifs that are rotations of a motif from the reference repeat sequence or of a known
+    // motif found in the reads.
     {
         std::unordered_set<string> rotationsOfAcceptedMotifs;
         for (const std::unordered_set<string>* motifs :
-             { &repeatUnitsFromReferenceRepeatSequence, &catalogMotifsInReads })
+             { &motifsFromReferenceRepeatSequence, &knownMotifsInReads })
         {
             for (const string& motif : *motifs)
             {
@@ -1813,11 +1874,11 @@ boost::optional<MotifComposition> computeMotifComposition(
         }
         for (auto it = statsForAcceptedMotifs.begin(); it != statsForAcceptedMotifs.end();)
         {
-            const bool keep = repeatUnitsFromReferenceRepeatSequence.count(it->first) != 0
-                || catalogMotifsInReads.count(it->first) != 0 || keptNewMotifs.count(it->first) != 0;
+            const bool keep = motifsFromReferenceRepeatSequence.count(it->first) != 0
+                || knownMotifsInReads.count(it->first) != 0 || keptNewMotifs.count(it->first) != 0;
             it = keep ? std::next(it) : statsForAcceptedMotifs.erase(it);
         }
-        if (onlyLociWithNonRefMotifs && keptNewMotifs.empty() && catalogMotifsInReads.empty())
+        if (onlyLociWithNonRefMotifs && keptNewMotifs.empty() && knownMotifsInReads.empty())
         {
             return boost::none;
         }
@@ -1834,7 +1895,7 @@ boost::optional<MotifComposition> computeMotifComposition(
             finalMotifs[index], statsForAcceptedMotifs.at(finalMotifs[index]).occurrences, statsForAcceptedMotifs);
     }
 
-    // --- Final parse and counting. A substring counts only if it is on the final list and its bases
+    // --- Final parse and counting. A repeat unit counts only if it is on the final list and its bases
     // are high quality where it differs from its nearest more common motifs; anything else becomes a gap, which
     // breaks pairs.
     GroupTallies locusTallies(finalMotifs.size());
@@ -1846,7 +1907,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     {
         const RepeatTract& tract = tracts[tractIndex];
         splitTract(
-            tract.bases, upperTracts[tractIndex], catalogMotif, finalMotifList, knownMotifRotations,
+            tract.bases, tractsUpperCased[tractIndex], catalogMotif, finalMotifList, knownMotifRotations,
             startOffsetOf(tractIndex, finalMotifs), tract.startsAtEdgeOfRepeatSequence,
             tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
 
@@ -1889,7 +1950,7 @@ boost::optional<MotifComposition> computeMotifComposition(
             if (sequenceSubstring.type == SequenceSubstringType::kAcceptedMotif)
             {
                 motif = finalMotifIndex.at(
-                    upperTracts[tractIndex].substr(
+                    tractsUpperCased[tractIndex].substr(
                         sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length));
                 if (!hasHighQualityBasesAt(
                         tract.bases, sequenceSubstring.offsetWithinRepeatTract, distinguishingPositions[motif]))
@@ -1939,7 +2000,7 @@ boost::optional<MotifComposition> computeMotifComposition(
 
     // Which motifs the reference repeat sequence has depends on the list of accepted motifs the splitter uses (it
     // decides where to shift), so split the reference repeat sequence again with the final list: a motif found there
-    // is a repeat unit from the reference repeat sequence, not a new motif.
+    // is a motif from the reference repeat sequence, not a new motif.
     {
         splitTract(
             locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, finalMotifList,
@@ -1948,7 +2009,7 @@ boost::optional<MotifComposition> computeMotifComposition(
         {
             if (sequenceSubstring.type != SequenceSubstringType::kGap)
             {
-                repeatUnitsFromReferenceRepeatSequence.insert(locus.referenceRepeatSequence.substr(
+                motifsFromReferenceRepeatSequence.insert(locus.referenceRepeatSequence.substr(
                     sequenceSubstring.offsetWithinRepeatTract, sequenceSubstring.length));
             }
         }
@@ -1963,7 +2024,7 @@ boost::optional<MotifComposition> computeMotifComposition(
         motifIds[countedMotifs[rank]] = rank + 1;
         composition.motifs.push_back(motif);
         hasRepeatUnitNotInReferenceRepeatSequence
-            = hasRepeatUnitNotInReferenceRepeatSequence || repeatUnitsFromReferenceRepeatSequence.count(motif) == 0;
+            = hasRepeatUnitNotInReferenceRepeatSequence || motifsFromReferenceRepeatSequence.count(motif) == 0;
     }
     if (onlyLociWithNonRefMotifs && !hasRepeatUnitNotInReferenceRepeatSequence)
     {

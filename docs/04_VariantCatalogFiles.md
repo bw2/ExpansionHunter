@@ -141,7 +141,9 @@ itself.
   only (other IUPAC letters are not supported). Otherwise, they will be skipped
   with a warning. An entry that repeats an earlier one, including as a rotation
   of it (`GCA` after `CAG`), is also skipped with a warning. Additional motifs
-  can still be discovered from the reads. See
+  can still be discovered from the reads. With
+  `--output-motif-composition loci-with-known-motifs`, only loci whose record
+  has a non-empty `KnownMotifs` list get a `MotifComposition` record. See
   [Motif composition](05_OutputJsonFiles.md#motif-composition).
 
 

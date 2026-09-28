@@ -120,7 +120,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
         ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
         ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
-        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present). Only works in optimized-streaming and low-mem-streaming modes, and only for loci with a single repeat. Raises the default --max-depth to 500.")
+        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in optimized-streaming and low-mem-streaming modes, and only for loci with a single repeat. Raises the default --max-depth to 500.")
     ;
     // clang-format on
 
@@ -307,10 +307,12 @@ void assertValidity(const UserParameters& userParameters)
     if (!userParameters.motifCompositionMode.empty())
     {
         if (userParameters.motifCompositionMode != "all-loci"
-            && userParameters.motifCompositionMode != "loci-with-non-ref-motifs")
+            && userParameters.motifCompositionMode != "loci-with-non-ref-motifs"
+            && userParameters.motifCompositionMode != "loci-with-known-motifs")
         {
             throw std::invalid_argument(
-                "--output-motif-composition must be set to either all-loci or loci-with-non-ref-motifs, not '"
+                "--output-motif-composition must be set to all-loci, loci-with-non-ref-motifs or "
+                "loci-with-known-motifs, not '"
                 + userParameters.motifCompositionMode + "'");
         }
         // Motif composition is counted from each read's original alignment (its CIGAR string). Streaming mode does
@@ -496,6 +498,10 @@ static MotifCompositionMode decodeMotifCompositionMode(const string& encoding)
     else if (encoding == "loci-with-non-ref-motifs")
     {
         return MotifCompositionMode::kLociWithNonRefMotifs;
+    }
+    else if (encoding == "loci-with-known-motifs")
+    {
+        return MotifCompositionMode::kLociWithKnownMotifs;
     }
     else
     {

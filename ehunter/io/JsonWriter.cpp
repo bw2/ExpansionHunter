@@ -166,22 +166,29 @@ static string encodeGenotype(const RepeatGenotype& genotype)
 }
 
 // Motif and motif-pair counts of one group of reads, keyed "<id>:<motif>" and "[<id>][<id>]", with values written
-// as "(<occurrences>, <reads>)" in the style of CountsOfSpanningReads.
+// as {"count": <occurrences>, "reads": <reads>}. A group with no counted motif is written as {}.
 static Json encodeMotifCompositionCounts(const MotifCompositionCounts& counts, const vector<string>& motifs)
 {
-    auto encodeTuple = [](const std::pair<int, int>& occurrencesAndReads) {
-        return "(" + to_string(occurrencesAndReads.first) + ", " + to_string(occurrencesAndReads.second) + ")";
+    if (counts.motifs.empty())
+    {
+        return Json::object();
+    }
+    auto encodeCounts = [](const std::pair<int, int>& occurrencesAndReads) {
+        Json value;
+        value["count"] = occurrencesAndReads.first;
+        value["reads"] = occurrencesAndReads.second;
+        return value;
     };
     Json motifCounts = Json::object();
     for (const auto& idAndCounts : counts.motifs)
     {
-        motifCounts[to_string(idAndCounts.first) + ":" + motifs[idAndCounts.first - 1]] = encodeTuple(idAndCounts.second);
+        motifCounts[to_string(idAndCounts.first) + ":" + motifs[idAndCounts.first - 1]] = encodeCounts(idAndCounts.second);
     }
     Json pairCounts = Json::object();
     for (const auto& pairAndCounts : counts.motifPairs)
     {
         const auto& ids = pairAndCounts.first;
-        pairCounts["[" + to_string(ids.first) + "][" + to_string(ids.second) + "]"] = encodeTuple(pairAndCounts.second);
+        pairCounts["[" + to_string(ids.first) + "][" + to_string(ids.second) + "]"] = encodeCounts(pairAndCounts.second);
     }
     Json record;
     record["Motifs"] = motifCounts;

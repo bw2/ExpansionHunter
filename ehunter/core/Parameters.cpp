@@ -50,6 +50,8 @@ std::string motifCompositionModeToString(MotifCompositionMode mode)
         return "all-loci";
     case MotifCompositionMode::kLociWithNonRefMotifs:
         return "loci-with-non-ref-motifs";
+    case MotifCompositionMode::kLociWithKnownMotifs:
+        return "loci-with-known-motifs";
     }
     throw std::logic_error("Invalid MotifCompositionMode");
 }

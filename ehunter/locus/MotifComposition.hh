@@ -138,10 +138,11 @@ enum class SequenceSubstringType
     kAcceptedMotif, // a motif from the list of accepted motifs
     kCatalogMotifMatch, // matches the catalog motif via IUPAC codes, but is not on the list of accepted motifs
     kNewMotifCandidate, // matches neither; a possible new motif
-    kGap // bases that do not form a motif-sized substring (an indel, a partial repeat unit, or a rejected motif
-         // candidate)
+    kGap // not a repeat unit: an indel, a partial repeat unit, or a rejected motif candidate
 };
 
+// One motif-sized window of a tract, or the run of bases between two of them (type kGap). Gaps are recorded
+// alongside the repeat units so that the entries for a tract cover it end to end.
 struct SequenceSubstring
 {
     int offsetWithinRepeatTract;
@@ -149,21 +150,23 @@ struct SequenceSubstring
     SequenceSubstringType type;
 };
 
-// Splits a tract into motif-sized substrings and gaps. acceptedMotifs are concrete upper-case motifs of the catalog
-// motif's length (std::logic_error otherwise), ordered most common first; the shift search compares against the
-// catalog motif and all of them. startOffset is where the first substring starts. Motif candidates that do not touch
-// another substring or a trusted end of the tract on both sides are turned into gaps, unless they look like an in-frame
-// variant repeat unit: compared position by position with the catalog motif and the accepted motifs, they differ from
-// the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other rotation of
-// those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. knownMotifs are the
-// catalog's KnownMotifs for the locus, as returned by validateKnownMotifs; when there are any, they replace that
+// Splits a tract into repeat units and gaps. acceptedMotifs are concrete upper-case motifs of the catalog motif's
+// length (std::logic_error otherwise), ordered most common first; the shift search compares against the catalog motif
+// and all of them. startOffset is where the first repeat unit starts, unless a window before it matches the catalog
+// motif or an accepted motif exactly, in which case the first repeat unit starts at the first such window (the
+// reference frame's first window can fall inside a repeat unit at the tract's start). Motif candidates that do not
+// touch another repeat unit or a trusted end of the tract on both sides are turned into gaps, unless they look like an
+// in-frame variant repeat unit: compared position by position with the catalog motif and the accepted motifs, they
+// differ from the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other
+// rotation of those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. knownMotifs are
+// the catalog's KnownMotifs for the locus, as returned by validateKnownMotifs; when there are any, they replace that
 // exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them.
 //
 // Whether an end is trusted: startsAtEdgeOfRepeatSequence / endsAtEdgeOfRepeatSequence mean the read's alignment placed
 // that end of the tract exactly at the edge of the repeat sequence in the reference. referenceEndPartialRepeatUnit is
 // the reference repeat sequence's partial last repeat unit (possibly empty); at an end placed at the edge of the repeat
 // sequence the tract must end with a partial repeat unit of the same length that resembles it (an empty one means the
-// last substring must end exactly at the tract end). Pass boost::none when the tract is the reference repeat sequence
+// last repeat unit must end exactly at the tract end). Pass boost::none when the tract is the reference repeat sequence
 // itself, whose end needs no check.
 std::vector<SequenceSubstring> splitIntoMotifs(
     const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& acceptedMotifs,

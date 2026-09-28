@@ -225,15 +225,33 @@ overlapping each locus. For example:
 
 ```json
 "MotifComposition": {
-    "Motifs": {"1:CAG": "(305, 20)", "2:CAA": "(15, 9)"},
-    "MotifPairs": {"[1][1]": "(250, 20)", "[1][2]": "(14, 9)", "[2][1]": "(13, 9)"},
+    "Motifs": {
+        "1:CAG": { "count": 305, "reads": 20 },
+        "2:CAA": { "count": 15, "reads": 9 }
+    },
+    "MotifPairs": {
+        "[1][1]": { "count": 250, "reads": 20 },
+        "[1][2]": { "count": 14, "reads": 9 },
+        "[2][1]": { "count": 13, "reads": 9 }
+    },
     "Allele1": {
-        "Motifs": {"1:CAG": "(130, 9)"},
-        "MotifPairs": {"[1][1]": "(118, 9)"}
+        "Motifs": {
+            "1:CAG": { "count": 130, "reads": 9 }
+        },
+        "MotifPairs": {
+            "[1][1]": { "count": 118, "reads": 9 }
+        }
     },
     "Allele2": {
-        "Motifs": {"1:CAG": "(160, 10)", "2:CAA": "(15, 9)"},
-        "MotifPairs": {"[1][1]": "(120, 10)", "[1][2]": "(14, 9)", "[2][1]": "(13, 9)"}
+        "Motifs": {
+            "1:CAG": { "count": 160, "reads": 10 },
+            "2:CAA": { "count": 15, "reads": 9 }
+        },
+        "MotifPairs": {
+            "[1][1]": { "count": 120, "reads": 10 },
+            "[1][2]": { "count": 14, "reads": 9 },
+            "[2][1]": { "count": 13, "reads": 9 }
+        }
     }
 }
 ```
@@ -249,14 +267,22 @@ overlapping each locus. For example:
 
   ```json
   "MotifComposition": {
-      "Motifs": {"1:CAG": "(5, 1)", "2:CAA": "(2, 1)"},
-      "MotifPairs": {"[1][1]": "(3, 1)", "[1][2]": "(1, 1)", "[2][1]": "(1, 1)", "[2][2]": "(1, 1)"}
+      "Motifs": {
+          "1:CAG": { "count": 5, "reads": 1 },
+          "2:CAA": { "count": 2, "reads": 1 }
+      },
+      "MotifPairs": {
+          "[1][1]": { "count": 3, "reads": 1 },
+          "[1][2]": { "count": 1, "reads": 1 },
+          "[2][1]": { "count": 1, "reads": 1 },
+          "[2][2]": { "count": 1, "reads": 1 }
+      }
   }
   ```
 
-* Each value is a string `"(<occurrences>, <reads>)"`: how many times the motif (or pair) was
-  counted, and how many distinct reads contain at least one counted occurrence. Counts grow with
-  depth; `Coverage` can be used to normalize them.
+* Each value is an object `{ "count": <occurrences>, "reads": <reads> }`: how many times the motif
+  (or pair) was counted, and how many distinct reads contain at least one counted occurrence.
+  Counts grow with depth; `Coverage` can be used to normalize them.
 * `Allele1`, `Allele2` sections contain per-allele counts. These sections are only included for
   heterozygous calls whose allele sizes differ by at least 2 repeat units, and when at least one
   read could be unambiguously assigned to either allele. Reads are assigned based on the allele
@@ -264,6 +290,8 @@ overlapping each locus. For example:
   flanking or in-repeat read) is assigned to the long allele. Reads that cannot be assigned count
   only toward the locus totals, so the two allele sections can add up to less than the locus
   totals.
+* A section with no counted motif is written as `{}`: the whole record at a locus without usable
+  reads (for example a zero-coverage locus), or an allele section to which no read was assigned.
 
 How it works, in brief:
 
@@ -272,17 +300,17 @@ How it works, in brief:
   alignment, but it is kept here.
 * The bases aligned between the two edges of the reference repeat sequence are extracted, along
   with in-repeat reads.
-* The repeat sequence is split into motif-sized substrings. Where a substring does not match an
+* The repeat sequence is split into motif-sized repeat units. Where a repeat unit does not match an
   accepted motif, the splitter looks ahead up to one motif length so that an indel or a partial
-  repeat unit does not disrupt every subsequent substring. Bases skipped this way are not counted.
-  The accepted motifs are the catalog motif and the repeat units from the reference repeat sequence,
+  repeat unit does not disrupt every subsequent repeat unit. Bases skipped this way are not counted.
+  The accepted motifs are the catalog motif and the motifs from the reference repeat sequence,
   plus the motifs listed in `KnownMotifs` (see below) that the reads confirm and the new motifs
   that pass the tests below.
-* A homopolymer substring (such as `GGG` at a CAG locus) is never counted as a new motif.
+* A homopolymer repeat unit (such as `GGG` at a CAG locus) is never counted as a new motif.
 * A motif that is not in the reference repeat sequence (a new motif) is counted only if it is seen
   in at least 2 read pairs, in at least 0.5% of the read pairs at the locus, and in enough reads
   that it cannot be explained away as a sequencing error given a per-base error rate of 0.001.
-* A substring that differs from a more common motif at a low-quality base is not counted.
+* A repeat unit that differs from a more common motif at a low-quality base is not counted.
 * A catalog can list the motifs expected at a locus in an optional `KnownMotifs` field (see
   [Variant catalog files](04_VariantCatalogFiles.md)). For each listed motif, the rotation the reads
   show most often is counted without the sequencing-error part of the new-motif test above (it
@@ -293,8 +321,8 @@ How it works, in brief:
   at least 10 bp that differs from the catalog motif or an accepted motif at no more than 10% of
   its bases, compared position by position, and matches it better than any shifted copy of those
   motifs. At a locus with `KnownMotifs`, the list decides instead, at any motif length: such a
-  substring is kept if and only if it is a rotation of a listed motif. A kept substring still has to
-  pass the tests above to be counted.
+  repeat unit is kept if and only if it is a rotation of a listed motif. A kept repeat unit still
+  has to pass the tests above to be counted.
 
 Limitations:
 
