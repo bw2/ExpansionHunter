@@ -121,7 +121,8 @@ of loci that appear to have larger expansions. This significantly speeds up anal
 selects which of the two genotypers are used for a given locus: `auto` (the default) chooses automatically as
 described above, `only-quick` uses only the heuristic approach and skips loci where it can't be confidently applied.
 Conversely, `only-full` always runs the full genotyper on every locus (this was previously called the
-`low-mem-streaming` analysis mode). This mode requires that the input BAM or CRAM file is sorted and indexed.
+`low-mem-streaming` analysis mode). `optimized-streaming` mode (unlike regular `streaming` mode)
+requires that the input BAM or CRAM file is sorted and indexed.
 
 ### Resuming an interrupted run
 
