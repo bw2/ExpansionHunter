@@ -281,7 +281,7 @@ overlapping each locus. For example:
   ```
 
 * Each value is an object `{ "count": <occurrences>, "reads": <reads> }`: how many times the motif
-  (or pair) was counted, and how many distinct reads contain at least one counted occurrence.
+  (or motif pair) was counted, and how many distinct reads contain at least one counted occurrence.
   Counts grow with depth; `Coverage` can be used to normalize them.
 * `Allele1`, `Allele2` sections contain per-allele counts. These sections are only included for
   heterozygous calls whose allele sizes differ by at least 2 repeat units, and when at least one
