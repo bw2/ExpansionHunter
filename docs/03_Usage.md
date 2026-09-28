@@ -66,9 +66,7 @@ optional arguments.
   the JSON output: counts of each motif and of each pair of adjacent motifs, for the locus and, when the two alleles differ by at least 2 repeat units, for each allele
   (see [Motif composition](05_OutputJsonFiles.md#motif-composition)). `all-loci` adds it to every
   genotype whose motif size is 2 bp or longer and at most a third of the read length; `loci-with-non-ref-motifs`
-  adds it only where the reads show a motif not present in the reference repeat sequence (a catalog motif made only
-  of A, C, G and T always counts as present, even when the reference repeat sequence lacks it; a catalog motif with
-  other IUPAC codes, such as AARRG, gets no such exemption); `loci-with-known-motifs` adds it only to loci whose
+  adds it only where the reads show a motif not present in the reference repeat sequence; `loci-with-known-motifs` adds it only to loci whose
   catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
   Only loci with a single
