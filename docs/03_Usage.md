@@ -73,8 +73,7 @@ optional arguments.
   `optimized-streaming` and `low-mem-streaming` analysis modes. When this flag is used and `--max-depth` is not specified, the
   default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
   Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
-  file size increases by 5% to 10%. (Measured on HG002 30x WGS reads over 111,603 chr20-22 loci in
-  `optimized-streaming` mode.)
+  file size increases by 5% to 10%.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming` and
   `low-mem-streaming` analysis modes. See [Resuming an interrupted run](#resuming-an-interrupted-run)
   below.
