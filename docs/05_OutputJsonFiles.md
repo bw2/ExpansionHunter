@@ -315,8 +315,8 @@ How it works, in brief:
 Limitations:
 
 * Only `--analysis-mode optimized-streaming` and `low-mem-streaming` are supported.
-* Only loci with a single repeat are supported. A locus with more than one repeat, such as HTT
-  (`(CAG)*CAACAG(CCG)*`), gets no `MotifComposition` record for either repeat.
+* Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not
+  supported.
 * Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units
   in a 30 bp-motif VNTR) are not counted, even when listed in `KnownMotifs`.
 
