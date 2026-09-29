@@ -1,14 +1,15 @@
-# `chrparallel` — synthetic multi-contig EH test fixture
+# `parallel_processing_fixtures` — synthetic multi-contig EH test fixture
 
 A tiny, fully deterministic ExpansionHunter (EH) fixture for validating that
-`low-mem-streaming` and `optimized-streaming` produce **byte-identical** output
+`optimized-streaming` mode, with both `--genotyping-approach auto` (the default)
+and `--genotyping-approach only-full`, produces **byte-identical** output
 regardless of `--threads`, and that the per-contig / cross-contig / mate-cache
 machinery handles a set of edge cases.
 
 Regenerate with:
 
 ```
-python3 ehunter/tests/data/chrparallel/make_fixture.py
+python3 ehunter/tests/data/parallel_processing_fixtures/make_fixture.py
 ```
 
 It is seeded (`random.Random(20260619)`) with no timestamps, so every run emits
@@ -54,7 +55,8 @@ Both were discovered by iterating against the EH binary; they are documented in
    `is_reverse` flag. If you reverse-complement the bytes yourself for a
    reverse-strand read, the stored SEQ ends up double-reversed and EH's graph
    aligner rejects that mate, so the pair is never classified and the locus
-   silently fails to genotype in full-genotyping (seeking / low-mem) modes.
+   silently fails to genotype under full genotyping (seeking mode, or
+   optimized-streaming mode with `--genotyping-approach only-full`).
 
 2. **Coverage must clear `--min-locus-coverage` (default 10).**
    The full graph genotyper's `isLowDepth()` filter discards a locus whose
@@ -71,22 +73,23 @@ Run from the repo root with the built binary
 `build/ehunter-prefix/src/ehunter-build/ExpansionHunter`:
 
 ```
-ExpansionHunter --reads   ehunter/tests/data/chrparallel/reads.bam \
-                --reference ehunter/tests/data/chrparallel/reference.fa \
-                --variant-catalog ehunter/tests/data/chrparallel/variant_catalog.json \
-                --analysis-mode <low-mem-streaming|optimized-streaming> \
+ExpansionHunter --reads   ehunter/tests/data/parallel_processing_fixtures/reads.bam \
+                --reference ehunter/tests/data/parallel_processing_fixtures/reference.fa \
+                --variant-catalog ehunter/tests/data/parallel_processing_fixtures/variant_catalog.json \
+                --analysis-mode optimized-streaming \
+                --genotyping-approach <auto|only-full> \
                 --sort-catalog-by position --threads <N> \
                 --output-prefix <prefix>
 ```
 
-- exit code 0 in both modes; 4 `LocusResults` spanning **4 distinct contigs** (chr1–chr4).
-- **Genotypes (identical in both modes):** `CHR1_CAG` = 15/15, `CHR2_CCG` = 12/12,
+- exit code 0 with both genotyping approaches; 4 `LocusResults` spanning **4 distinct contigs** (chr1–chr4).
+- **Genotypes (identical with both genotyping approaches):** `CHR1_CAG` = 15/15, `CHR2_CCG` = 12/12,
   `CHR4_MULTI` = SNV 0/0 + `(ATTCT)*` 14/14.
 - `CHR3_GAA` is emitted as a **zero-coverage no-call** (`Coverage: 0.0`, no `Genotype`).
-- `optimized-streaming` reports **2 (50.0%) loci via fast genotyping** (CHR1_CAG,
+- `--genotyping-approach auto` reports **2 (50.0%) loci via fast genotyping** (CHR1_CAG,
   CHR2_CCG), 1 via full genotyping (CHR4_MULTI), 1 zero-coverage no-call.
 - `LocusResults` and `SampleParameters` are **byte-identical across `--threads 1`,
-  `2`, and `4`** in both modes (the primary purpose of this fixture). The
+  `2`, and `4`** with both genotyping approaches (the primary purpose of this fixture). The
   `RunInfo` record (`Started`/`Completed`/`Runtime`/`Threads`) is expected to
   differ, since it reports true wall-clock timing and the actual `--threads`
   value for each run.
