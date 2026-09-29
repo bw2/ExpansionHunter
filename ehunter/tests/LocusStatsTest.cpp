@@ -190,16 +190,55 @@ TEST(LocusStatsCalculatorFromReadAlignments, LeadingSoftClip_ReadPlacedAtItsFirs
     flankClipCalculator.inspect(flankClippedPair);
     EXPECT_NEAR(50.0 * 2 / 150, flankClipCalculator.estimate(Sex::kFemale).depth(), 1e-9);
 
-    // A clip longer than the reference repeat: 60 bases of repeat sequence clipped off a 150bp read at POS
-    // 1040 put its first base at 980, before the repeat's start. It still started in the repeat (an allele
-    // 60bp longer than the reference), not in the left flank, so only its mate at 950 is counted, and the
-    // pair contributes no fragment length.
+    // A clip longer than the reference repeat: 45 bases of repeat sequence clipped off a 50bp read at POS
+    // 1040 put its first base at 995, before the repeat's start. Measured from POS it spans [1040, 1090),
+    // which fits the window, so only the started-in-the-repeat rule keeps it out of the left flank: it started in the repeat (an
+    // allele longer than the reference), so only its mate at 950 is counted, and the pair contributes no
+    // fragment length.
     LocusStatsCalculatorFromReadAlignments longClipCalculator(
         ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
-    FullReadPair longClippedPair = makeReadPair("clippedAcrossRepeat", 150, 950, 1040);
-    longClippedPair.secondMate->s.cigar = { cigarOp(60, BAM_CSOFT_CLIP), cigarOp(90, BAM_CMATCH) };
+    FullReadPair longClippedPair = makeReadPair("clippedAcrossRepeat", 50, 950, 1040);
+    longClippedPair.secondMate->s.cigar = { cigarOp(45, BAM_CSOFT_CLIP), cigarOp(5, BAM_CMATCH) };
     longClipCalculator.inspect(longClippedPair);
-    ASSERT_EQ(LocusStats(AlleleCount::kTwo, 150, 0, 150.0 * 1 / 50), longClipCalculator.estimate(Sex::kFemale));
+    const LocusStats longClipStats = longClipCalculator.estimate(Sex::kFemale);
+    EXPECT_EQ(0, longClipStats.meanFragLength());
+    EXPECT_NEAR(50.0 * 1 / 150, longClipStats.depth(), 1e-9);
+}
+
+TEST(LocusStatsCalculatorFromReadAlignments, LeadingSoftClip_WindowFitJudgedFromPos)
+{
+    // Which flank a read starts in comes from its first base, but whether it fits inside the window is
+    // measured from POS (the start of the aligned part), because that is what the read-admission gates
+    // test: seeking passes read.s.pos to AnalyzerFinder::query, and optimized-streaming mode's cache uses
+    // POS plus the typical read length. Seeking never counts a read that runs from POS past the window
+    // end, while optimized-streaming mode's cache passes one through when its mate is contained, so this
+    // calculator must drop it itself.
+    const auto cigarOp = [](int length, int op) { return (static_cast<uint32_t>(length) << BAM_CIGAR_SHIFT) | op; };
+
+    // POS 1085 with a 20bp leading clip: measured from POS the read ends at 1135, five bases past the
+    // window end of 1130, while measured from its first base it spans [1065, 1115) and would fit. Not
+    // counted.
+    LocusStatsCalculatorFromReadAlignments calculatorForClippedReadEndingPastWindowEnd(
+        ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
+    FullReadPair readPairWithClippedMateEndingPastWindowEnd
+        = makeReadPair("readFromPosOverrunsWindow", 50, 950, 1085);
+    readPairWithClippedMateEndingPastWindowEnd.secondMate->s.cigar
+        = { cigarOp(20, BAM_CSOFT_CLIP), cigarOp(30, BAM_CMATCH) };
+    calculatorForClippedReadEndingPastWindowEnd.inspect(readPairWithClippedMateEndingPastWindowEnd);
+    EXPECT_NEAR(
+        50.0 * 1 / 150, calculatorForClippedReadEndingPastWindowEnd.estimate(Sex::kFemale).depth(), 1e-9);
+
+    // The same read five bases to the left, measured from POS, ends exactly at the window end, so it is
+    // counted, and its first base at 1065 still puts its start in the right flank.
+    LocusStatsCalculatorFromReadAlignments calculatorForClippedReadEndingAtWindowEnd(
+        ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
+    FullReadPair readPairWithClippedMateEndingAtWindowEnd
+        = makeReadPair("readFromPosEndsAtWindowEnd", 50, 950, 1080);
+    readPairWithClippedMateEndingAtWindowEnd.secondMate->s.cigar
+        = { cigarOp(20, BAM_CSOFT_CLIP), cigarOp(30, BAM_CMATCH) };
+    calculatorForClippedReadEndingAtWindowEnd.inspect(readPairWithClippedMateEndingAtWindowEnd);
+    EXPECT_NEAR(
+        50.0 * 2 / 150, calculatorForClippedReadEndingAtWindowEnd.estimate(Sex::kFemale).depth(), 1e-9);
 }
 
 TEST(LocusStatsCalculatorFromReadAlignments, ReadsExtendingPastTheLocusWindow_NotCounted)
@@ -218,10 +257,10 @@ TEST(LocusStatsCalculatorFromReadAlignments, ReadsExtendingPastTheLocusWindow_No
     EXPECT_NEAR(50.0 * 1 / 150, stats.depth(), 1e-9);
 
     // The last start position that still fits inside the window is counted.
-    LocusStatsCalculatorFromReadAlignments lastFittingCalculator(
+    LocusStatsCalculatorFromReadAlignments calculatorForReadEndingAtWindowEnd(
         ChromType::kAutosome, kTestRepeatRegion, kTestExtensionLength);
-    lastFittingCalculator.inspect(makeReadPair("lastFitting", 50, 950, 1080));
-    EXPECT_NEAR(50.0 * 2 / 150, lastFittingCalculator.estimate(Sex::kFemale).depth(), 1e-9);
+    calculatorForReadEndingAtWindowEnd.inspect(makeReadPair("endsAtWindowEnd", 50, 950, 1080));
+    EXPECT_NEAR(50.0 * 2 / 150, calculatorForReadEndingAtWindowEnd.estimate(Sex::kFemale).depth(), 1e-9);
 }
 
 TEST(LocusStatsCalculatorFromReadAlignments, UnmappedMateOrWrongContig_NotCounted)
