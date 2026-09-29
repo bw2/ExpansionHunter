@@ -141,9 +141,11 @@ private:
         kRight
     };
 
-    // The flank a read is anchored in: its alignment starts inside that flank AND the whole read fits
-    // inside the locus window. Reads that fail either test are not counted.
-    Flank flankAnchoringRead(const FullRead& read) const;
+    // The flank a read starts in: its first base (soft clip included) lies inside that flank AND the read,
+    // measured from POS, fits inside the locus window. Reads that fail either test are not counted, and
+    // neither are reads whose aligned part starts inside the repeat. The two tests deliberately use
+    // different start positions; the definition explains why.
+    Flank flankContainingReadStart(const FullRead& read) const;
     void recordReadLen(const Read& read);
     void recordFragLen(const FullRead& read, const FullRead& mate);
 

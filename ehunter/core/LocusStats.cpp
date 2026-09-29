@@ -187,15 +187,27 @@ LocusStatsCalculatorFromReadAlignments::LocusStatsCalculatorFromReadAlignments(
 }
 
 LocusStatsCalculatorFromReadAlignments::Flank
-LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read) const
+LocusStatsCalculatorFromReadAlignments::flankContainingReadStart(const FullRead& read) const
 {
     if (!read.s.isMapped || read.s.chromId != locusRegion_.contigIndex())
     {
         return Flank::kNone;
     }
 
-    const int64_t alignmentStart = readStartIncludingSoftClip(read);
-    const int64_t alignmentEnd = alignmentStart + static_cast<int64_t>(read.r.sequence().size());
+    // Which flank the read starts in is decided from its first base, leading soft clip included.
+    const int64_t firstBasePositionIncludingSoftClip = readStartIncludingSoftClip(read);
+
+    // Whether the read fits inside the locus window is decided from POS instead (the start of the aligned
+    // part, ignoring any leading soft clip), because that is what the read-admission gates test: seeking
+    // passes read.s.pos straight to AnalyzerFinder::query (sample/HtsSeekingSampleAnalysis.cpp), which
+    // drops a read that runs from POS past the window end, and optimized-streaming mode tests POS plus the
+    // typical read length when caching a pair (sample/HtsLowMemStreamingSampleAnalysis.cpp). A leading soft
+    // clip of c bases puts the first base c bases left of POS, so judging the fit from the first base would
+    // count reads that seeking never counts. Optimized-streaming mode's cache does pass such a read through
+    // when its mate is contained, so this check, not an upstream gate, is what drops it here.
+    const int64_t alignedPartStart = read.s.pos;
+    const int64_t alignedPartStartPlusReadLength
+        = alignedPartStart + static_cast<int64_t>(read.r.sequence().size());
 
     // The read must fit inside the locus window, not merely start in a flank. estimate() below counts on
     // that: its denominator drops one read length precisely because a read starting near the far edge of
@@ -204,11 +216,8 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
     // contained reads). Optimized-streaming mode is looser on both sides -- its cache keeps a whole pair when
     // EITHER mate is contained, and genotypeLocusFull's containment test only picks single-ended vs paired
     // routing for NEARBY pairs, so a far-apart pair passes both mates through regardless. Applying the
-    // strict rule here keeps the numerator consistent with the denominator. It matches seeking except for
-    // reads with a leading soft clip: seeking tests containment from POS, while this tests it from the read's
-    // first base (readStartIncludingSoftClip), so such a read near either edge of the window can be kept by
-    // one and dropped by the other.
-    if (alignmentStart < leftFlankStart_ || alignmentEnd > rightFlankEnd_)
+    // strict rule here keeps the numerator consistent with the denominator and matches seeking exactly.
+    if (alignedPartStart < leftFlankStart_ || alignedPartStartPlusReadLength > rightFlankEnd_)
     {
         return Flank::kNone;
     }
@@ -218,16 +227,16 @@ LocusStatsCalculatorFromReadAlignments::flankAnchoringRead(const FullRead& read)
     // from an allele longer than the reference, however many of them there are. Classifying it by its first
     // base alone would let a clip longer than the reference repeat walk it across the repeat into the left
     // flank, where it would be counted.
-    if (read.s.pos >= locusRegion_.start() && alignmentStart < locusRegion_.end())
+    if (alignedPartStart >= locusRegion_.start() && firstBasePositionIncludingSoftClip < locusRegion_.end())
     {
         return Flank::kNone;
     }
 
-    if (alignmentStart < locusRegion_.start())
+    if (firstBasePositionIncludingSoftClip < locusRegion_.start())
     {
         return Flank::kLeft;
     }
-    if (locusRegion_.end() <= alignmentStart)
+    if (locusRegion_.end() <= firstBasePositionIncludingSoftClip)
     {
         return Flank::kRight;
     }
@@ -240,8 +249,8 @@ void LocusStatsCalculatorFromReadAlignments::inspect(const FullReadPair& readPai
     // mate is unmapped, used by the optimized-streaming fast path for genotyping) still contribute to the
     // read-length and coverage stats. The fragment-length contribution is only computed when both mates
     // are present and start in the same flank.
-    const Flank readFlank = readPair.firstMate ? flankAnchoringRead(*readPair.firstMate) : Flank::kNone;
-    const Flank mateFlank = readPair.secondMate ? flankAnchoringRead(*readPair.secondMate) : Flank::kNone;
+    const Flank readFlank = readPair.firstMate ? flankContainingReadStart(*readPair.firstMate) : Flank::kNone;
+    const Flank mateFlank = readPair.secondMate ? flankContainingReadStart(*readPair.secondMate) : Flank::kNone;
 
     if (readFlank != Flank::kNone)
     {
