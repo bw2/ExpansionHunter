@@ -14,9 +14,11 @@ on:
 permissions:
   contents: write
 
+# Only pull request runs are cancelled by a newer run for the same PR. A push to master always runs to completion,
+# since it is what publishes the Docker Hub image and records its digest; later pushes queue behind it.
 concurrency:
   group: docker-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
