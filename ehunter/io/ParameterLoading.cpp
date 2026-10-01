@@ -57,6 +57,7 @@ struct UserParameters
     string outputPrefix;
 
     // Sample parameters
+    string sampleId;
     string sampleSexEncoding;
 
     // Heuristic parameters
@@ -109,6 +110,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("catalog", po::value<string>(&params.catalogPath), "JSON file with variants to genotype")
         ("sort-catalog-by,b", po::value<string>(&params.sortCatalogBy)->default_value("position"), "sort the catalog by 'position' (to sort loci by their genomic coordinates), 'id' (to sort by LocusId), or 'none' (meaning don't sort). The sorting will happen before applying --start-with or --n-loci filters if specified.")
         ("output-prefix", po::value<string>(&params.outputPrefix)->required(), "prefix for the output files")
+        ("sample-id", po::value<string>(&params.sampleId), "sample id to use in the output VCF and JSON (default: the --reads filename prefix)")
         ("sex", po::value<string>(&params.sampleSexEncoding)->default_value("female"), "sample sex; must be either 'male' or 'female'")
         ("locus,l", po::value<string>(&params.locus), "filter the input catalog by LocusId (or a list of comma-separated LocusIds)")
         ("region,L", po::value<string>(&params.region), "filter the input catalog to this genomic region (e.g. chr1:1000-2000)")
@@ -374,6 +376,11 @@ void assertValidity(const UserParameters& userParameters)
     assertWritablePath(userParameters.outputPrefix);
 
     // Validate sample parameters
+    if (userParameters.sampleId.find_first_of(" \t\r\n") != string::npos)
+    {
+        throw std::invalid_argument("--sample-id '" + userParameters.sampleId + "' must not contain whitespace");
+    }
+
     if (userParameters.sampleSexEncoding != "female" && userParameters.sampleSexEncoding != "male")
     {
         throw std::invalid_argument(userParameters.sampleSexEncoding + " is not a valid sex encoding");
@@ -429,8 +436,8 @@ void assertValidity(const UserParameters& userParameters)
 
 SampleParameters decodeSampleParameters(const UserParameters& userParams)
 {
-    fs::path boostHtsFilePath(userParams.htsFilePath);
-    auto sampleId = boostHtsFilePath.stem().string();
+    const string sampleId
+        = userParams.sampleId.empty() ? fs::path(userParams.htsFilePath).stem().string() : userParams.sampleId;
     Sex sex = decodeSampleSex(userParams.sampleSexEncoding);
     return SampleParameters(sampleId, sex);
 }

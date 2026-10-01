@@ -27,6 +27,9 @@ ExpansionHunter --reads <aligned reads BAM/CRAM file/URL> \
 In addition to the required program options listed above, there are a number of
 optional arguments.
 
+* `--sample-id <arg>` Specifies the sample id written to the output VCF sample
+  column and the JSON `SampleParameters.SampleId` field. Defaults to the
+  `--reads` filename prefix (e.g. `NA12878` for `/data/NA12878.cram`).
 * `--sex <arg>` Specifies sex of the sample; can be either `male` or `female`
   (default). This parameter only affects repeats on sex chromosomes.
 * `--threads <int>` Specifies how many threads to can be used accelerate analysis
