@@ -44,7 +44,7 @@ This modified version of ExpansionHunter introduces the following new features:
 Thank you to [@maarten-k](https://github.com/maarten-k) for testing out early versions and introducing substantial optimizations to the build process.
 
 ### Citation
-If you use this modified version of ExpansionHunter, please cite:
+If you use this modified version of ExpansionHunter, in addition to citing the original ExpansionHunter paper [[1](https://academic.oup.com/bioinformatics/article/35/22/4754/5499079?__cf_chl_tk=vST7rCGkBUMC8zOCBEo.syWggiCkyFoBsXbbWxF.nlA-1790848398-1.0.1.1-2DsPNQFdaAs0mYSVm7kbKg0K28vUvW_B0dYn6.3pJg4)], please cite:
 ```
 Insights from a genome-wide truth set of tandem repeat variation
 Ben Weisburd, Grace Tiao, Heidi L. Rehm
