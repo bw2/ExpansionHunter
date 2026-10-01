@@ -9,3 +9,7 @@
 # Denote all files that are truly binary and should not be modified.
 *.png binary
 *.jpg binary
+
+# Have `git archive` (and so GitHub's archive/<sha>.tar.gz downloads) fill in the commit date and SHA,
+# so builds from a tarball without .git still report a real version (see ehunter/CMakeLists.txt).
+ehunter/GitArchiveVersion.txt export-subst

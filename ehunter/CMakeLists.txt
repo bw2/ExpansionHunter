@@ -1,27 +1,47 @@
 cmake_minimum_required(VERSION 3.13)
 project(ExpansionHunter LANGUAGES CXX)
 
-# Get git commit date for version string
-execute_process(
-    COMMAND git log -1 --format=%cs
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_DATE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
+# Git commit date (for the version string) and short git commit SHA (reported in the output JSON as the
+# "Version" field). Each is taken from the first of these that provides it:
+#   1. -DGIT_COMMIT_DATE=... / -DGIT_COMMIT_SHA=... passed to cmake.
+#   2. GitArchiveVersion.txt, which `git archive` fills in (export-subst in .gitattributes), so a GitHub
+#      archive/<sha>.tar.gz download, which has no .git, still gets the real values. In a git checkout the
+#      file holds the unexpanded $Format:...$ placeholders, which don't match the regexes below.
+#   3. git, when building from a git checkout.
+#   4. "unknown".
+file(STRINGS ${CMAKE_SOURCE_DIR}/GitArchiveVersion.txt GIT_ARCHIVE_VERSION_LINES)
+
+if(NOT DEFINED GIT_COMMIT_DATE)
+    if("${GIT_ARCHIVE_VERSION_LINES}" MATCHES "commit_date=([0-9]+-[0-9]+-[0-9]+)")
+        set(GIT_COMMIT_DATE "${CMAKE_MATCH_1}")
+    else()
+        execute_process(
+            COMMAND git log -1 --format=%cs
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_COMMIT_DATE
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+endif()
 if(NOT GIT_COMMIT_DATE)
     set(GIT_COMMIT_DATE "unknown")
 endif()
 add_compile_definitions(GIT_COMMIT_DATE="${GIT_COMMIT_DATE}")
 
-# Get short git commit SHA, reported in the output JSON as the "Version" field.
-execute_process(
-    COMMAND git rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_SHA
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
+if(NOT DEFINED GIT_COMMIT_SHA)
+    if("${GIT_ARCHIVE_VERSION_LINES}" MATCHES "commit_sha=([0-9a-f]+)")
+        set(GIT_COMMIT_SHA "${CMAKE_MATCH_1}")
+    else()
+        execute_process(
+            COMMAND git rev-parse --short HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_COMMIT_SHA
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+endif()
 if(NOT GIT_COMMIT_SHA)
     set(GIT_COMMIT_SHA "unknown")
 endif()

@@ -92,6 +92,15 @@ ExternalProject_Add(googletest
 )
 
 
+# Pass optional -DGIT_COMMIT_DATE=... / -DGIT_COMMIT_SHA=... version overrides through to the ehunter build
+set(gitVersionOverrideArgs "")
+if(DEFINED GIT_COMMIT_DATE)
+	list(APPEND gitVersionOverrideArgs -DGIT_COMMIT_DATE=${GIT_COMMIT_DATE})
+endif()
+if(DEFINED GIT_COMMIT_SHA)
+	list(APPEND gitVersionOverrideArgs -DGIT_COMMIT_SHA=${GIT_COMMIT_SHA})
+endif()
+
 ExternalProject_Add(ehunter
 	SOURCE_DIR ${CMAKE_SOURCE_DIR}/ehunter
 	BUILD_ALWAYS YES
@@ -101,6 +110,7 @@ ExternalProject_Add(ehunter
 		-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
 		-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 		-DCMAKE_CXX_FLAGS=-O2
+		${gitVersionOverrideArgs}
 		${CMAKE_SOURCE_DIR}/ehunter
 )
 

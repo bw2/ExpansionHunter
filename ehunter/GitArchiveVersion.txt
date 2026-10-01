@@ -1,0 +1,2 @@
+commit_date=$Format:%cs$
+commit_sha=$Format:%h$
