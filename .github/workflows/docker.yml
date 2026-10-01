@@ -73,13 +73,16 @@ jobs:
           exit 0
         fi
         git commit -m "Update docker image sha256 digest [skip ci]"
-        # A concurrent push to master (rare, since concurrency.group above should serialize runs on
-        # the same ref) can make this a non-fast-forward; rebase onto the latest master and retry.
+        # This push is a non-fast-forward whenever master moved during the build. That always happens when
+        # two pushes land within one build time: concurrency.group above runs them one after the other, but
+        # each run checks out its own triggering commit, which lacks the previous run's digest commit. Both
+        # commits then change the one line of docker/sha256.txt, so rebase with -X theirs (during a rebase,
+        # "theirs" is the commit being replayed) to keep this run's digest, which belongs to the newer image.
         for attempt in 1 2 3; do
           git push && exit 0
           echo "Push attempt ${attempt} failed; rebasing onto latest master and retrying."
           git fetch origin master
-          git rebase origin/master
+          git rebase -X theirs origin/master
           sleep 5
         done
         echo "Failed to push the digest update after multiple attempts."
