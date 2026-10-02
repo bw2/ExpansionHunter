@@ -191,6 +191,7 @@ string computeInfoFields(const VariantSpecification& variantSpec, const string& 
     const int referenceSizeInUnits = referenceSizeInBp / repeatUnit.length();
 
     vector<string> fields;
+    fields.push_back("SVTYPE=STR");
     fields.push_back("END=" + std::to_string(referenceLocus.end()));
     fields.push_back("REF=" + std::to_string(referenceSizeInUnits));
     fields.push_back("RL=" + std::to_string(referenceSizeInBp));
