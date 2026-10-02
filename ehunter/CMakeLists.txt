@@ -62,7 +62,20 @@ endif ()
 
 message(STATUS "BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
+# The htslib and Boost search results below are cached, so changing these options in an existing build directory
+# would silently keep the libraries found before. Require a fresh build directory instead.
+set(systemLibrarySettings "USE_SYSTEM_HTSLIB=${USE_SYSTEM_HTSLIB} SYSTEM_HTSLIB_PREFIX=${SYSTEM_HTSLIB_PREFIX} \
+LINK_SYSTEM_HTSLIB_STATICALLY=${LINK_SYSTEM_HTSLIB_STATICALLY} USE_SYSTEM_BOOST=${USE_SYSTEM_BOOST} \
+SYSTEM_BOOST_PREFIX=${SYSTEM_BOOST_PREFIX}")
+if (DEFINED CONFIGURED_SYSTEM_LIBRARY_SETTINGS AND NOT CONFIGURED_SYSTEM_LIBRARY_SETTINGS STREQUAL systemLibrarySettings)
+    message(FATAL_ERROR "The installed-library options changed since this build directory was configured "
+            "(was: ${CONFIGURED_SYSTEM_LIBRARY_SETTINGS}; now: ${systemLibrarySettings}). Use a fresh build directory.")
+endif ()
+
 set(Boost_USE_STATIC_LIBS ON)
+if (USE_SYSTEM_BOOST AND SYSTEM_BOOST_PREFIX)
+    set(Boost_ROOT ${SYSTEM_BOOST_PREFIX})
+endif ()
 find_package(Boost 1.84 REQUIRED COMPONENTS program_options filesystem system iostreams)
 
 
@@ -70,7 +83,6 @@ add_compile_options(-Wall -Werror -Wextra -O2)
 
 enable_testing()
 
-find_package(libdeflate REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
 find_package(LibLZMA REQUIRED)
@@ -83,10 +95,92 @@ if (NOT APPLE)
     find_package(OpenSSL REQUIRED)
 endif ()
 
-find_library(htslib libhts.a)
-find_library(htslib hts)
+if (USE_SYSTEM_HTSLIB)
+    # By default link the installed shared htslib, which brings its own dependencies (libdeflate, libcurl, ...), so
+    # libdeflate is not linked here. With LINK_SYSTEM_HTSLIB_STATICALLY, link libhts.a instead. The headers are
+    # taken from the same prefix as the library so that the two always match. The installed ExpansionHunter binary
+    # gets no stored library search path (CMake's default install behavior, kept on purpose), so a shared htslib
+    # in a custom prefix must be on LD_LIBRARY_PATH when running it.
+    if (LINK_SYSTEM_HTSLIB_STATICALLY)
+        set(htslibLibraryName libhts.a)
+    else ()
+        set(htslibLibraryName hts)
+    endif ()
+    if (SYSTEM_HTSLIB_PREFIX)
+        find_path(HTSLIB_INCLUDE_DIR htslib/hts.h PATHS ${SYSTEM_HTSLIB_PREFIX}/include NO_DEFAULT_PATH)
+        # lib/<architecture> covers Debian/Ubuntu's multiarch layout (e.g. /usr/lib/x86_64-linux-gnu)
+        find_library(htslib ${htslibLibraryName}
+                PATHS ${SYSTEM_HTSLIB_PREFIX}/lib/${CMAKE_LIBRARY_ARCHITECTURE} ${SYSTEM_HTSLIB_PREFIX}/lib ${SYSTEM_HTSLIB_PREFIX}/lib64
+                NO_DEFAULT_PATH)
+    else ()
+        find_path(HTSLIB_INCLUDE_DIR htslib/hts.h)
+        find_library(htslib ${htslibLibraryName})
+    endif ()
+    if (NOT HTSLIB_INCLUDE_DIR OR NOT htslib)
+        message(FATAL_ERROR "USE_SYSTEM_HTSLIB is ON but htslib was not found "
+                "(headers: ${HTSLIB_INCLUDE_DIR}, library: ${htslib}). Set SYSTEM_HTSLIB_PREFIX to its install prefix.")
+    endif ()
+
+    # HTS_VERSION is defined from htslib 1.10 onward, which is also the first release with sam_index_load3()
+    file(STRINGS ${HTSLIB_INCLUDE_DIR}/htslib/hts.h HTS_VERSION_LINE REGEX "^#define HTS_VERSION [0-9]+")
+    string(REGEX MATCH "[0-9]+" HTS_VERSION_NUMBER "${HTS_VERSION_LINE}")
+    if (NOT HTS_VERSION_NUMBER OR HTS_VERSION_NUMBER LESS 101000)
+        message(FATAL_ERROR "htslib 1.10 or newer is required, but ${HTSLIB_INCLUDE_DIR}/htslib/hts.h is older")
+    endif ()
+    message(STATUS "Using installed htslib: ${htslib} (HTS_VERSION ${HTS_VERSION_NUMBER})")
+    set(htslibDependencyLibraries "")
+
+    # A static htslib needs its dependencies linked here. The static_libs line of the htslib.pc installed next to
+    # libhts.a lists them (e.g. "-lpthread -lz -lm -lbz2 -llzma -ldeflate -lcurl", plus -lhtscodecs for builds
+    # with an external htscodecs, such as Debian's). Those already linked below are skipped, the C runtime's own
+    # libraries (m, dl, rt) are linked by name, and each remaining one is looked up, preferring a static library and
+    # looking next to htslib first. Without htslib.pc, only libdeflate is added, when it is found.
+    if (LINK_SYSTEM_HTSLIB_STATICALLY)
+        get_filename_component(htslibLibraryDir ${htslib} DIRECTORY)
+        set(htslibPkgConfigFile ${htslibLibraryDir}/pkgconfig/htslib.pc)
+        set(htslibLinkedBelow pthread z bz2 lzma curl crypto)
+        set(cRuntimeLibraries m dl rt)
+        if (EXISTS ${htslibPkgConfigFile})
+            file(STRINGS ${htslibPkgConfigFile} htslibStaticLibsLine REGEX "^static_libs=")
+            string(REGEX MATCHALL "-l[^ ]+" htslibStaticLibFlags "${htslibStaticLibsLine}")
+            string(REPLACE "-l" "" htslibStaticLibNames "${htslibStaticLibFlags}")
+            list(REMOVE_ITEM htslibStaticLibNames ${htslibLinkedBelow})
+            set(htslibStaticLibsRequired YES)
+        else ()
+            set(htslibStaticLibNames deflate)
+            set(htslibStaticLibsRequired NO)
+        endif ()
+        foreach (libraryName ${htslibStaticLibNames})
+            if (libraryName IN_LIST cRuntimeLibraries)
+                list(APPEND htslibDependencyLibraries ${libraryName})
+                continue()
+            endif ()
+            find_library(HTSLIB_DEPENDENCY_${libraryName} NAMES lib${libraryName}.a ${libraryName} HINTS ${htslibLibraryDir})
+            if (HTSLIB_DEPENDENCY_${libraryName})
+                message(STATUS "Linking ${libraryName} for the static htslib: ${HTSLIB_DEPENDENCY_${libraryName}}")
+                list(APPEND htslibDependencyLibraries ${HTSLIB_DEPENDENCY_${libraryName}})
+            elseif (htslibStaticLibsRequired)
+                message(FATAL_ERROR "The static htslib needs lib${libraryName} (listed in ${htslibPkgConfigFile}), but it was not found")
+            else ()
+                message(STATUS "${libraryName} not found; linking the static htslib only works if it was built without it")
+            endif ()
+        endforeach ()
+    endif ()
+else ()
+    find_package(libdeflate REQUIRED)
+    find_path(HTSLIB_INCLUDE_DIR htslib/hts.h)
+    find_library(htslib libhts.a)
+    find_library(htslib hts)
+    set(htslibDependencyLibraries libdeflate::libdeflate_static)
+endif ()
+# Recorded only once the htslib and Boost checks above have passed, so that fixing a failed configure (e.g. setting
+# SYSTEM_HTSLIB_PREFIX after htslib was not found) does not trip the changed-settings check
+set(CONFIGURED_SYSTEM_LIBRARY_SETTINGS "${systemLibrarySettings}" CACHE INTERNAL "")
 
 add_subdirectory(thirdparty/graph-tools-master-0cd9399)
+# graph-tools includes spdlog headers without linking spdlog, so pass it spdlog's include directory explicitly
+# (otherwise it only finds them when spdlog shares an include directory with Boost)
+target_include_directories(graphtools SYSTEM PRIVATE $<TARGET_PROPERTY:spdlog::spdlog,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # Embed the genotype-quality model file (GQ_MODEL_FILE, set below) into the
 # binary as a generated byte-array source. Regenerated whenever the model file or the
@@ -178,7 +272,11 @@ add_library(ExpansionHunterLib
 
 set(CTPL_INCLUDE_DIRS thirdparty/ctpl/ctpl-0.0.2)
 target_include_directories(ExpansionHunterLib PUBLIC ${CMAKE_SOURCE_DIR})
+# spdlog's include directory (the downloaded spdlog and googletest) goes first so that other spdlog or googletest
+# headers in a shared prefix such as /opt/homebrew/include can't shadow them
 target_include_directories(ExpansionHunterLib SYSTEM PUBLIC
+        $<TARGET_PROPERTY:spdlog::spdlog,INTERFACE_INCLUDE_DIRECTORIES>
+        ${HTSLIB_INCLUDE_DIR}
         ${Boost_INCLUDE_DIRS}
         ${LIBLZMA_INCLUDE_DIRS}
         ${CURL_INCLUDE_DIRS}
@@ -197,7 +295,7 @@ target_link_libraries(ExpansionHunterLib PUBLIC
         ${Boost_LIBRARIES}
         ${LIBLZMA_LIBRARIES}
         ${CURL_LIBRARIES}
-        libdeflate::libdeflate_static
+        ${htslibDependencyLibraries}
         ZLIB::ZLIB
         BZip2::BZip2
         Threads::Threads
