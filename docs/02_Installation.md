@@ -67,17 +67,22 @@ $ cmake .. \
 ```
 
  - `SYSTEM_HTSLIB_PREFIX` and `SYSTEM_BOOST_PREFIX` are optional. Without them, the standard install locations
-   are searched. Use a fresh build directory when switching these options.
+   are searched.
+ - To change any of these options (including `LINK_SYSTEM_HTSLIB_STATICALLY` below), use a fresh build
+   directory; reconfiguring an existing one with different values stops with an error.
  - htslib must be version 1.10 or newer and is linked as a shared library. Add
-   `-DLINK_SYSTEM_HTSLIB_STATICALLY=ON` to link its static `libhts.a` instead; libdeflate is then linked too
-   (a static `libdeflate.a` is preferred, searched for in the htslib prefix first). Reading `gs://`, `s3://` or
+   `-DLINK_SYSTEM_HTSLIB_STATICALLY=ON` to link its static `libhts.a` instead. Its dependencies are then linked
+   too, as listed in the `htslib.pc` file installed next to it (static libraries are preferred, searched for in
+   the htslib library directory first). Reading `gs://`, `s3://` or
    `https://` input requires an htslib built with libcurl support (`--enable-libcurl`, plus `--enable-gcs` and
    `--enable-s3` for those schemes).
  - Boost must be version 1.84 or newer and include static libraries for `program_options`, `filesystem`,
    `system` and `iostreams`.
  - The installed ExpansionHunter binary does not record where a shared htslib is. If it lives outside the standard
    library locations, add its `lib` directory to `LD_LIBRARY_PATH` when running ExpansionHunter on Linux. On
-   macOS the full path of the htslib library is recorded in the binary by the system linker.
+   macOS the binary records the name the htslib library gives itself: usually its full path (as with Homebrew),
+   but for some installs (e.g. conda) a name starting with `@rpath/`, in which case add its `lib` directory to
+   `DYLD_LIBRARY_PATH` when running ExpansionHunter.
 
 A binary built this way depends on the exact libraries installed on the machine that built it. Use it on that
 machine only: do not distribute it, and when reporting a problem, mention which htslib version it was built

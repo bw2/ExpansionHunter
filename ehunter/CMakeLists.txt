@@ -62,6 +62,16 @@ endif ()
 
 message(STATUS "BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
+# The htslib and Boost search results below are cached, so changing these options in an existing build directory
+# would silently keep the libraries found before. Require a fresh build directory instead.
+set(systemLibrarySettings "USE_SYSTEM_HTSLIB=${USE_SYSTEM_HTSLIB} SYSTEM_HTSLIB_PREFIX=${SYSTEM_HTSLIB_PREFIX} \
+LINK_SYSTEM_HTSLIB_STATICALLY=${LINK_SYSTEM_HTSLIB_STATICALLY} USE_SYSTEM_BOOST=${USE_SYSTEM_BOOST} \
+SYSTEM_BOOST_PREFIX=${SYSTEM_BOOST_PREFIX}")
+if (DEFINED CONFIGURED_SYSTEM_LIBRARY_SETTINGS AND NOT CONFIGURED_SYSTEM_LIBRARY_SETTINGS STREQUAL systemLibrarySettings)
+    message(FATAL_ERROR "The installed-library options changed since this build directory was configured "
+            "(was: ${CONFIGURED_SYSTEM_LIBRARY_SETTINGS}; now: ${systemLibrarySettings}). Use a fresh build directory.")
+endif ()
+
 set(Boost_USE_STATIC_LIBS ON)
 if (USE_SYSTEM_BOOST AND SYSTEM_BOOST_PREFIX)
     set(Boost_ROOT ${SYSTEM_BOOST_PREFIX})
@@ -98,7 +108,10 @@ if (USE_SYSTEM_HTSLIB)
     endif ()
     if (SYSTEM_HTSLIB_PREFIX)
         find_path(HTSLIB_INCLUDE_DIR htslib/hts.h PATHS ${SYSTEM_HTSLIB_PREFIX}/include NO_DEFAULT_PATH)
-        find_library(htslib ${htslibLibraryName} PATHS ${SYSTEM_HTSLIB_PREFIX}/lib ${SYSTEM_HTSLIB_PREFIX}/lib64 NO_DEFAULT_PATH)
+        # lib/<architecture> covers Debian/Ubuntu's multiarch layout (e.g. /usr/lib/x86_64-linux-gnu)
+        find_library(htslib ${htslibLibraryName}
+                PATHS ${SYSTEM_HTSLIB_PREFIX}/lib/${CMAKE_LIBRARY_ARCHITECTURE} ${SYSTEM_HTSLIB_PREFIX}/lib ${SYSTEM_HTSLIB_PREFIX}/lib64
+                NO_DEFAULT_PATH)
     else ()
         find_path(HTSLIB_INCLUDE_DIR htslib/hts.h)
         find_library(htslib ${htslibLibraryName})
@@ -117,22 +130,41 @@ if (USE_SYSTEM_HTSLIB)
     message(STATUS "Using installed htslib: ${htslib} (HTS_VERSION ${HTS_VERSION_NUMBER})")
     set(htslibDependencyLibraries "")
 
-    # A static htslib needs its dependencies linked here. All of them (zlib, bzip2, lzma, curl, crypto, threads)
-    # are linked below anyway except libdeflate, which htslib uses only when it was configured with it. Prefer a
-    # static libdeflate, and look next to htslib first.
+    # A static htslib needs its dependencies linked here. The static_libs line of the htslib.pc installed next to
+    # libhts.a lists them (e.g. "-lpthread -lz -lm -lbz2 -llzma -ldeflate -lcurl", plus -lhtscodecs for builds
+    # with an external htscodecs, such as Debian's). Those already linked below are skipped, the C runtime's own
+    # libraries (m, dl, rt) are linked by name, and each remaining one is looked up, preferring a static library and
+    # looking next to htslib first. Without htslib.pc, only libdeflate is added, when it is found.
     if (LINK_SYSTEM_HTSLIB_STATICALLY)
-        if (SYSTEM_HTSLIB_PREFIX)
-            find_library(LIBDEFLATE_LIBRARY NAMES libdeflate.a deflate
-                    HINTS ${SYSTEM_HTSLIB_PREFIX}/lib ${SYSTEM_HTSLIB_PREFIX}/lib64)
+        get_filename_component(htslibLibraryDir ${htslib} DIRECTORY)
+        set(htslibPkgConfigFile ${htslibLibraryDir}/pkgconfig/htslib.pc)
+        set(htslibLinkedBelow pthread z bz2 lzma curl crypto)
+        set(cRuntimeLibraries m dl rt)
+        if (EXISTS ${htslibPkgConfigFile})
+            file(STRINGS ${htslibPkgConfigFile} htslibStaticLibsLine REGEX "^static_libs=")
+            string(REGEX MATCHALL "-l[^ ]+" htslibStaticLibFlags "${htslibStaticLibsLine}")
+            string(REPLACE "-l" "" htslibStaticLibNames "${htslibStaticLibFlags}")
+            list(REMOVE_ITEM htslibStaticLibNames ${htslibLinkedBelow})
+            set(htslibStaticLibsRequired YES)
         else ()
-            find_library(LIBDEFLATE_LIBRARY NAMES libdeflate.a deflate)
+            set(htslibStaticLibNames deflate)
+            set(htslibStaticLibsRequired NO)
         endif ()
-        if (LIBDEFLATE_LIBRARY)
-            message(STATUS "Linking libdeflate for the static htslib: ${LIBDEFLATE_LIBRARY}")
-            set(htslibDependencyLibraries ${LIBDEFLATE_LIBRARY})
-        else ()
-            message(STATUS "libdeflate not found; linking the static htslib only works if it was built without libdeflate")
-        endif ()
+        foreach (libraryName ${htslibStaticLibNames})
+            if (libraryName IN_LIST cRuntimeLibraries)
+                list(APPEND htslibDependencyLibraries ${libraryName})
+                continue()
+            endif ()
+            find_library(HTSLIB_DEPENDENCY_${libraryName} NAMES lib${libraryName}.a ${libraryName} HINTS ${htslibLibraryDir})
+            if (HTSLIB_DEPENDENCY_${libraryName})
+                message(STATUS "Linking ${libraryName} for the static htslib: ${HTSLIB_DEPENDENCY_${libraryName}}")
+                list(APPEND htslibDependencyLibraries ${HTSLIB_DEPENDENCY_${libraryName}})
+            elseif (htslibStaticLibsRequired)
+                message(FATAL_ERROR "The static htslib needs lib${libraryName} (listed in ${htslibPkgConfigFile}), but it was not found")
+            else ()
+                message(STATUS "${libraryName} not found; linking the static htslib only works if it was built without it")
+            endif ()
+        endforeach ()
     endif ()
 else ()
     find_package(libdeflate REQUIRED)
@@ -141,6 +173,9 @@ else ()
     find_library(htslib hts)
     set(htslibDependencyLibraries libdeflate::libdeflate_static)
 endif ()
+# Recorded only once the htslib and Boost checks above have passed, so that fixing a failed configure (e.g. setting
+# SYSTEM_HTSLIB_PREFIX after htslib was not found) does not trip the changed-settings check
+set(CONFIGURED_SYSTEM_LIBRARY_SETTINGS "${systemLibrarySettings}" CACHE INTERNAL "")
 
 add_subdirectory(thirdparty/graph-tools-master-0cd9399)
 # graph-tools includes spdlog headers without linking spdlog, so pass it spdlog's include directory explicitly

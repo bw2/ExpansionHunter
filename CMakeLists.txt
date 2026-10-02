@@ -132,16 +132,6 @@ if(DEFINED GIT_COMMIT_SHA)
 	list(APPEND gitVersionOverrideArgs -DGIT_COMMIT_SHA=${GIT_COMMIT_SHA})
 endif()
 
-# Pass the installed-library options through to the ehunter build only when they are turned on
-set(systemLibraryArgs "")
-if(USE_SYSTEM_HTSLIB)
-	list(APPEND systemLibraryArgs -DUSE_SYSTEM_HTSLIB=ON -DSYSTEM_HTSLIB_PREFIX:PATH=${SYSTEM_HTSLIB_PREFIX}
-		-DLINK_SYSTEM_HTSLIB_STATICALLY=${LINK_SYSTEM_HTSLIB_STATICALLY})
-endif()
-if(USE_SYSTEM_BOOST)
-	list(APPEND systemLibraryArgs -DUSE_SYSTEM_BOOST=ON -DSYSTEM_BOOST_PREFIX:PATH=${SYSTEM_BOOST_PREFIX})
-endif()
-
 ExternalProject_Add(ehunter
 	SOURCE_DIR ${CMAKE_SOURCE_DIR}/ehunter
 	BUILD_ALWAYS YES
@@ -152,7 +142,12 @@ ExternalProject_Add(ehunter
 		-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 		-DCMAKE_CXX_FLAGS=-O2
 		${gitVersionOverrideArgs}
-		${systemLibraryArgs}
+		# Passed even when OFF, so that switching an option off also reaches the ehunter build's cache
+		-DUSE_SYSTEM_HTSLIB=${USE_SYSTEM_HTSLIB}
+		-DSYSTEM_HTSLIB_PREFIX:PATH=${SYSTEM_HTSLIB_PREFIX}
+		-DLINK_SYSTEM_HTSLIB_STATICALLY=${LINK_SYSTEM_HTSLIB_STATICALLY}
+		-DUSE_SYSTEM_BOOST=${USE_SYSTEM_BOOST}
+		-DSYSTEM_BOOST_PREFIX:PATH=${SYSTEM_BOOST_PREFIX}
 		${CMAKE_SOURCE_DIR}/ehunter
 )
 
