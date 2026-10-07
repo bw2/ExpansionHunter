@@ -53,6 +53,9 @@ struct LocusFeatureContext
     // way; also test-only, since these are derived from a genotype the caller already has.
     int numAlleles = 0;
     int numDistinctAlleles = 0;
+    // The variant's CountsOfInrepeatReads, summed into the full genotyping regimes' `inrepeat_total`
+    // feature. nullptr = not supplied, mapped to NaN; production always supplies it, so it is test-only.
+    const CountTable* inrepeatReads = nullptr;
 };
 
 // Number of DISTINCT called sizes in a genotype -- the model's `n_distinct_alleles` feature
@@ -73,7 +76,7 @@ GenotypingRegime genotypingRegimeOf(bool quickGenotype, int spanningAtCalled);
 const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime genotypingRegime);
 
 // Builds the model feature vector for one allele, in features.py order
-// (QUICK_FEATURES = 27 entries for Quick, FULL_FEATURES = 29 for the full genotyping_regimes).
+// (QUICK_FEATURES = 27 entries for Quick, FULL_FEATURES = 30 for the full genotyping_regimes).
 // `eh` is the called allele size in repeat units; `ciStart`/`ciEnd` its confidence
 // interval; `aqm` the matching per-allele quality metrics.
 std::vector<double> assembleFeatures(

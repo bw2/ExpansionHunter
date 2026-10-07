@@ -228,7 +228,7 @@ TEST(GenotypeQualityAnnotator, ModelMayDeclareEveryAssembledFeature)
     // Declaring the full list must load and evaluate; nothing may be assembled-but-unresolvable.
     const GenotypeQualityModel full = modelSplittingOn(0, 5.0);
     EXPECT_EQ(full.featureNamesQuick.size(), 27u);
-    EXPECT_EQ(full.featureNamesFull.size(), 29u);
+    EXPECT_EQ(full.featureNamesFull.size(), 30u);
 
     CountTable spanning;
     spanning.setCountOf(20, 4);

@@ -54,13 +54,15 @@ TEST(GenotypeQualityFeatures, FullGenotypingRegimeVectorMatchesFeaturesPyOrder)
     const CountTable spanning(std::map<int32_t, int32_t>{{20, 8}, {22, 1}});
     const CountTable flanking(std::map<int32_t, int32_t>{{18, 1}, {25, 2}});
     const CountTable hq(std::map<int32_t, int32_t>{{20, 5}});
+    const CountTable inrepeat(std::map<int32_t, int32_t>{{33, 4}, {34, 1}});
     const LocusFeatureContext ctx{3, 30, spanning, flanking, hq, /*referenceRepeatPurity=*/0.92,
-                                  /*coverage=*/41.5, /*numAlleles=*/2, /*numDistinctAlleles=*/2};
+                                  /*coverage=*/41.5, /*numAlleles=*/2, /*numDistinctAlleles=*/2,
+                                  /*inrepeatReads=*/&inrepeat};
 
     const std::vector<double> f = assembleFeatures(ctx, /*rank=*/0, /*eh=*/20, /*ciStart=*/18,
                                                    /*ciEnd=*/24, makeAqm(), GenotypingRegime::FullSpanning);
 
-    ASSERT_EQ(f.size(), 29u);
+    ASSERT_EQ(f.size(), 30u);
     EXPECT_DOUBLE_EQ(f[0], (3.0));             // motif_size
     EXPECT_DOUBLE_EQ(f[1], (10.0));            // num_repeats_in_reference = 30/3
     EXPECT_DOUBLE_EQ(f[2], (30.0));            // ref_size_bp
@@ -90,6 +92,10 @@ TEST(GenotypeQualityFeatures, FullGenotypingRegimeVectorMatchesFeaturesPyOrder)
     EXPECT_DOUBLE_EQ(f[26], (0.97));           // read_repeat_purity
     EXPECT_DOUBLE_EQ(f[27], (0.9));            // left_flank_norm_depth
     EXPECT_DOUBLE_EQ(f[28], (1.1));            // right_flank_norm_depth
+    EXPECT_DOUBLE_EQ(f[29], (5.0));            // inrepeat_total = 4 + 1
+    EXPECT_TRUE(std::isnan(assembleFeatures(
+        LocusFeatureContext{3, 30, spanning, flanking, hq}, 0, 20, 18, 24, makeAqm(),
+        GenotypingRegime::FullSpanning)[29]));   // an unsupplied in-repeat table is NaN, not 0
 }
 
 TEST(GenotypeQualityFeatures, NumDistinctAllelesOfMatchesLenSetGenotype)
@@ -226,7 +232,7 @@ TEST(GenotypeQualityFeatures, CanonicalNamesMatchAssemblerOrder)
     const std::vector<std::string>& quick = featureNamesForGenotypingRegime(GenotypingRegime::Quick);
     const std::vector<std::string>& full = featureNamesForGenotypingRegime(GenotypingRegime::FullSpanning);
     ASSERT_EQ(quick.size(), 27u);
-    ASSERT_EQ(full.size(), 29u);
+    ASSERT_EQ(full.size(), 30u);
     EXPECT_EQ(quick.front(), "motif_size");           // value index 0 in the asserts above
     EXPECT_EQ(quick[6], "n_alleles");                 // value index 6
     EXPECT_EQ(quick[7], "n_distinct_alleles");        // value index 7
@@ -239,6 +245,7 @@ TEST(GenotypeQualityFeatures, CanonicalNamesMatchAssemblerOrder)
     EXPECT_EQ(quick.back(), "read_repeat_purity");    // value index 26
     EXPECT_EQ(full[27], "left_flank_norm_depth");    // full-only, value index 27
     EXPECT_EQ(full[28], "right_flank_norm_depth");   // full-only, value index 28
-    EXPECT_TRUE(std::equal(quick.begin(), quick.end(), full.begin())); // full is quick + 2
+    EXPECT_EQ(full[29], "inrepeat_total");           // full-only, value index 29
+    EXPECT_TRUE(std::equal(quick.begin(), quick.end(), full.begin())); // full is quick + 3
     EXPECT_EQ(featureNamesForGenotypingRegime(GenotypingRegime::FullNonspanning), full); // both full genotyping_regimes share the list
 }

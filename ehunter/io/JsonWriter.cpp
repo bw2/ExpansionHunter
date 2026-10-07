@@ -320,7 +320,8 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                     .referenceRepeatPurity = variantSpec_.referenceRepeatPurity(),
                     .coverage = locusCoverage_,
                     .numAlleles = genotype.numAlleles(),
-                    .numDistinctAlleles = numDistinctAlleles};
+                    .numDistinctAlleles = numDistinctAlleles,
+                    .inrepeatReads = &repeatFindings.countsOfInrepeatReads()};
                 const gq::AllelePrediction pred = gq::predictAllele(
                     *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
                     ci.end(), allele);

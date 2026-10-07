@@ -27,11 +27,12 @@ const std::vector<std::string>& featureNamesForGenotypingRegime(GenotypingRegime
         "depth", "hq_unambiguous_reads", "strand_bias_phred",
         "mean_inserted_bases", "mean_deleted_bases",
         "reference_repeat_purity", "read_repeat_purity"};
-    // features.FULL_FEATURES = QUICK_FEATURES + the two flank-normalized depths.
+    // features.FULL_FEATURES = QUICK_FEATURES + the two flank-normalized depths + the in-repeat read count.
     static const std::vector<std::string> full = [] {
         std::vector<std::string> names = quick;
         names.push_back("left_flank_norm_depth");
         names.push_back("right_flank_norm_depth");
+        names.push_back("inrepeat_total");
         return names;
     }();
     return genotypingRegime == GenotypingRegime::Quick ? quick : full;
@@ -167,11 +168,15 @@ std::vector<double> assembleFeatures(
         readRepeatPurity,
     };
 
-    // The full genotyping_regimes append the two flank-normalized depths (FULL_FEATURES).
+    // The full genotyping_regimes append the two flank-normalized depths and the in-repeat read count
+    // (FULL_FEATURES).
     if (genotypingRegime != GenotypingRegime::Quick)
     {
         features.push_back(roundLikeJson3(aqm.leftFlankNormalizedDepth));
         features.push_back(roundLikeJson3(aqm.rightFlankNormalizedDepth));
+        features.push_back(
+            (ctx.inrepeatReads != nullptr) ? static_cast<double>(sumCounts(*ctx.inrepeatReads))
+                                           : std::numeric_limits<double>::quiet_NaN());
     }
 
     // NOTE: values are left in double precision on purpose, and the model must be trained the same way.
