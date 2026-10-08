@@ -1,6 +1,12 @@
 [![Build](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml/badge.svg)](https://github.com/bw2/ExpansionHunter/actions/workflows/build.yml)
 [![Docker Build](https://github.com/bw2/ExpansionHunter/actions/workflows/docker.yml/badge.svg)](https://github.com/bw2/ExpansionHunter/actions/workflows/docker.yml)
 
+Latest docker image:
+
+```
+weisburd/expansion-hunter@sha256:53d4a3ec87cdf153f4dcc381f888df04ac0308316eac11f458afbf9c08c4ceea
+```
+
 ### ExpansionHunter fork - under active development
 
 This modified version of ExpansionHunter introduces the following new features:

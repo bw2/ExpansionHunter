@@ -2,7 +2,7 @@ name: Docker Build
 
 # Builds docker/Dockerfile on every push/PR to master. On push (not PRs), also pushes the image to
 # Docker Hub as weisburd/expansion-hunter:latest (the same image + tag as `make -C docker all`) and
-# commits the resulting digest to docker/sha256.txt.
+# commits the resulting digest to docker/sha256.txt and to the docker image line at the top of README.md.
 on:
   push:
     branches: [master]
@@ -67,7 +67,7 @@ jobs:
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add docker/sha256.txt
+        git add docker/sha256.txt README.md
         if git diff --cached --quiet; then
           echo "No digest change to commit"
           exit 0
@@ -76,8 +76,9 @@ jobs:
         # This push is a non-fast-forward whenever master moved during the build. That always happens when
         # two pushes land within one build time: concurrency.group above runs them one after the other, but
         # each run checks out its own triggering commit, which lacks the previous run's digest commit. Both
-        # commits then change the one line of docker/sha256.txt, so rebase with -X theirs (during a rebase,
-        # "theirs" is the commit being replayed) to keep this run's digest, which belongs to the newer image.
+        # commits then change the one line of docker/sha256.txt and the digest line in README.md, so rebase with
+        # -X theirs (during a rebase, "theirs" is the commit being replayed) to keep this run's digest, which
+        # belongs to the newer image.
         for attempt in 1 2 3; do
           git push && exit 0
           echo "Push attempt ${attempt} failed; rebasing onto latest master and retrying."

@@ -13,3 +13,5 @@ push:
 
 update_sha:
 	docker pull $(PREFIX1)/$(IMAGE_NAME) 2>&1 | grep Digest | cut -c 9- > sha256.txt
+	grep -qE '^sha256:[0-9a-f]{64}$$' sha256.txt
+	DIGEST=$$(cat sha256.txt) perl -pi -e 's|weisburd/expansion-hunter\@sha256:[0-9a-f]{64}|weisburd/expansion-hunter\@$$ENV{DIGEST}|' ../README.md
