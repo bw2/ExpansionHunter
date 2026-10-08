@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <map>
 
 #include "reviewer/Projection.hh"
 
@@ -83,12 +84,137 @@ ScoredDiplotypes scoreDiplotypes(const FragById& fragById, const vector<Diplotyp
         scoredDiplotypes.emplace_back(diplotype, genotypeScore);
     }
 
-    std::sort(
+    // stable_sort so tied diplotypes keep the (sorted) candidate order, making the top pick the same on every
+    // platform; std::sort's order for ties depends on the standard library implementation.
+    std::stable_sort(
         scoredDiplotypes.begin(), scoredDiplotypes.end(),
         [](const ScoredDiplotype& gt1, const ScoredDiplotype& gt2) { return gt1.second > gt2.second; });
 
     assert(!scoredDiplotypes.empty());
     return scoredDiplotypes;
+}
+
+/// Best pair alignment score of each fragment across the haplotypes of the given diplotype. project() keeps only
+/// each fragment's best-scoring haplotype alignments, so the first read and mate alignments carry that score.
+static std::map<string, int> getBestPairScoreByFragId(const Diplotype& diplotype, const FragById& fragById)
+{
+    std::map<string, int> bestPairScoreByFragId;
+    for (const auto& fragIdAndPairPathAlign : project(diplotype, fragById))
+    {
+        const PairPathAlign& pairPathAlign = fragIdAndPairPathAlign.second;
+        bestPairScoreByFragId.emplace(
+            fragIdAndPairPathAlign.first,
+            score(*pairPathAlign.readAligns.front().align) + score(*pairPathAlign.mateAligns.front().align));
+    }
+
+    return bestPairScoreByFragId;
+}
+
+DiplotypeChoiceSupport compareTopTwoDiplotypes(const FragById& fragById, const ScoredDiplotypes& scoredDiplotypes)
+{
+    DiplotypeChoiceSupport support;
+    support.numberOfCandidateDiplotypes = static_cast<int>(scoredDiplotypes.size());
+    if (scoredDiplotypes.size() < 2)
+    {
+        return support;
+    }
+
+    support.topDiplotypeIsTiedWithNextBest = scoredDiplotypes[0].second == scoredDiplotypes[1].second;
+
+    const auto topScoreByFragId = getBestPairScoreByFragId(scoredDiplotypes[0].first, fragById);
+    const auto nextBestScoreByFragId = getBestPairScoreByFragId(scoredDiplotypes[1].first, fragById);
+    for (const auto& fragIdAndFrag : fragById)
+    {
+        // A fragment that projects onto no haplotype of a diplotype counts as fitting that diplotype worst
+        const auto topIt = topScoreByFragId.find(fragIdAndFrag.first);
+        const auto nextBestIt = nextBestScoreByFragId.find(fragIdAndFrag.first);
+        const bool fitsTop = topIt != topScoreByFragId.end();
+        const bool fitsNextBest = nextBestIt != nextBestScoreByFragId.end();
+
+        if (fitsTop && (!fitsNextBest || topIt->second > nextBestIt->second))
+        {
+            ++support.fragmentsFavoringTopDiplotype;
+        }
+        else if (fitsNextBest && (!fitsTop || nextBestIt->second > topIt->second))
+        {
+            ++support.fragmentsFavoringNextBestDiplotype;
+        }
+    }
+
+    return support;
+}
+
+std::optional<RepeatAllelePhasing> summarizeRepeatAllelePhasing(
+    const LocusSpecification& locusSpec, const LocusFindings& findings, const Diplotype& chosenDiplotype,
+    const DiplotypeChoiceSupport& support)
+{
+    // Repeat sizes on each haplotype, in catalog variant order
+    vector<vector<int>> repeatSizesOnEachHaplotype(chosenDiplotype.size());
+    vector<string> repeatVariantIds;
+    for (const auto& variantSpec : locusSpec.variantSpecs())
+    {
+        if (variantSpec.classification().type != VariantType::kRepeat)
+        {
+            continue;
+        }
+
+        const auto findingsIt = findings.findingsForEachVariant.find(variantSpec.id());
+        const RepeatFindings* repeatFindings = findingsIt == findings.findingsForEachVariant.end()
+            ? nullptr
+            : dynamic_cast<const RepeatFindings*>(findingsIt->second.get());
+        if (!repeatFindings || !repeatFindings->optionalGenotype())
+        {
+            return std::nullopt;
+        }
+        const RepeatGenotype& genotype = *repeatFindings->optionalGenotype();
+        repeatVariantIds.push_back(variantSpec.id());
+
+        // The haplotype paths hold the genotype's allele sizes, possibly capped (see capLengths in
+        // GenotypePaths.cpp), so the shorter path count marks the haplotype carrying the short allele.
+        const graphtools::NodeId repeatNode = variantSpec.nodes().front();
+        vector<int> repeatNodeCountOnEachHaplotype;
+        for (const auto& haplotypePath : chosenDiplotype)
+        {
+            const auto& nodeIds = haplotypePath.nodeIds();
+            repeatNodeCountOnEachHaplotype.push_back(
+                static_cast<int>(std::count(nodeIds.begin(), nodeIds.end(), repeatNode)));
+        }
+
+        const bool isHeterozygous = genotype.shortAlleleSizeInUnits() != genotype.longAlleleSizeInUnits();
+        if (isHeterozygous
+            && (chosenDiplotype.size() != 2 || repeatNodeCountOnEachHaplotype[0] == repeatNodeCountOnEachHaplotype[1]))
+        {
+            return std::nullopt;
+        }
+
+        for (size_t haplotypeIndex = 0; haplotypeIndex != chosenDiplotype.size(); ++haplotypeIndex)
+        {
+            const bool carriesShortAllele = !isHeterozygous
+                || repeatNodeCountOnEachHaplotype[haplotypeIndex]
+                    < repeatNodeCountOnEachHaplotype[1 - haplotypeIndex];
+            repeatSizesOnEachHaplotype[haplotypeIndex].push_back(
+                carriesShortAllele ? genotype.shortAlleleSizeInUnits() : genotype.longAlleleSizeInUnits());
+        }
+    }
+
+    std::sort(repeatSizesOnEachHaplotype.begin(), repeatSizesOnEachHaplotype.end());
+
+    RepeatAllelePhasing phasing;
+    for (const auto& repeatSizes : repeatSizesOnEachHaplotype)
+    {
+        std::map<string, int> repeatSizeByVariantId;
+        for (size_t variantIndex = 0; variantIndex != repeatVariantIds.size(); ++variantIndex)
+        {
+            repeatSizeByVariantId.emplace(repeatVariantIds[variantIndex], repeatSizes[variantIndex]);
+        }
+        phasing.repeatSizeByVariantIdOnEachHaplotype.push_back(std::move(repeatSizeByVariantId));
+    }
+    phasing.numberOfPossiblePairings = support.numberOfCandidateDiplotypes;
+    phasing.fragmentsSupportingChosenPairingOverNextBest = support.fragmentsFavoringTopDiplotype;
+    phasing.fragmentsSupportingNextBestPairingOverChosen = support.fragmentsFavoringNextBestDiplotype;
+    phasing.chosenPairingIsTiedWithNextBest = support.topDiplotypeIsTiedWithNextBest;
+
+    return phasing;
 }
 
 }  // namespace reviewer

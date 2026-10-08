@@ -97,4 +97,7 @@ private:
 
 std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter);
 
+// Locus-level "RepeatAllelePhasing" record, shared by JsonWriter and IterativeJsonWriter
+nlohmann::json encodeRepeatAllelePhasing(const RepeatAllelePhasing& phasing);
+
 }

@@ -216,6 +216,10 @@ void IterativeJsonWriter::addRecord(const LocusSpecification& locusSpec, const L
     {
         locusRecord["Variants"] = variantRecords;
     }
+    if (locusFindings.repeatAllelePhasing)
+    {
+        locusRecord["RepeatAllelePhasing"] = encodeRepeatAllelePhasing(*locusFindings.repeatAllelePhasing);
+    }
 
     std::string jsonString
         = std::regex_replace(inlineMotifCountObjects(locusRecord.dump(2)), std::regex("\n"), "\n    ");

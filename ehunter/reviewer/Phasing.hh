@@ -22,9 +22,12 @@
 
 #pragma once
 
+#include <optional>
 #include <utility>
 #include <vector>
 
+#include "locus/LocusFindings.hh"
+#include "locus/LocusSpecification.hh"
 #include "reviewer/Aligns.hh"
 #include "reviewer/GenotypePaths.hh"
 
@@ -36,11 +39,41 @@ namespace reviewer
 using ScoredDiplotype = std::pair<Diplotype, int>;
 using ScoredDiplotypes = std::vector<ScoredDiplotype>;
 
+/// How strongly the fragments favor the top-scoring candidate diplotype over the next-best one
+struct DiplotypeChoiceSupport
+{
+    int numberOfCandidateDiplotypes = 0;
+    // Fragments whose best pair alignment score is higher on the top diplotype than on the next-best one
+    int fragmentsFavoringTopDiplotype = 0;
+    // Fragments whose best pair alignment score is higher on the next-best diplotype than on the top one
+    int fragmentsFavoringNextBestDiplotype = 0;
+    // True when the top two diplotypes have equal scores, so which one ranks first is arbitrary
+    bool topDiplotypeIsTiedWithNextBest = false;
+};
+
 /// Score diplotypes by read alignment support
 /// @param fragById Map of fragments by ID
 /// @param diplotypes Candidate diplotypes to score
-/// @return Scored diplotypes sorted by score (highest first)
+/// @return Scored diplotypes sorted by score (highest first); diplotypes with equal scores keep their input order
 ScoredDiplotypes scoreDiplotypes(const FragById& fragById, const std::vector<Diplotype>& diplotypes);
+
+/// Count the fragments that favor the top-scoring diplotype over the next-best one, and vice versa
+/// @param fragById Map of fragments by ID
+/// @param scoredDiplotypes Output of scoreDiplotypes (sorted highest score first)
+/// @return Support summary; the fragment counts stay 0 when there are fewer than two candidates
+DiplotypeChoiceSupport
+compareTopTwoDiplotypes(const FragById& fragById, const ScoredDiplotypes& scoredDiplotypes);
+
+/// Describe which allele of each repeat variant the chosen diplotype places on each haplotype
+/// @param locusSpec Locus specification
+/// @param findings Locus findings with the genotype of each repeat variant
+/// @param chosenDiplotype Top-scoring diplotype
+/// @param support Output of compareTopTwoDiplotypes for the same candidates
+/// @return Phasing summary, or empty if a variant has no genotype or if its two alleles were capped to the
+///         same path length (see capLengths in GenotypePaths.cpp), which hides which haplotype carries which
+std::optional<RepeatAllelePhasing> summarizeRepeatAllelePhasing(
+    const LocusSpecification& locusSpec, const LocusFindings& findings, const Diplotype& chosenDiplotype,
+    const DiplotypeChoiceSupport& support);
 
 }  // namespace reviewer
 }  // namespace ehunter

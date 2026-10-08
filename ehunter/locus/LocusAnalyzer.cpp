@@ -20,6 +20,9 @@
 //
 
 #include "locus/LocusAnalyzer.hh"
+
+#include <algorithm>
+
 #include "locus/AlleleQualityMetrics.hh"
 #include "locus/LocusAligner.hh"
 #include "locus/RFC1MotifAnalysis.hh"
@@ -43,6 +46,14 @@ namespace ehunter
 namespace locus
 {
 
+static bool hasMoreThanOneRepeatVariant(const LocusSpecification& locusSpec)
+{
+    const auto& variantSpecs = locusSpec.variantSpecs();
+    return std::count_if(variantSpecs.begin(), variantSpecs.end(), [](const VariantSpecification& variantSpec) {
+        return variantSpec.classification().type == VariantType::kRepeat;
+    }) > 1;
+}
+
 LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, BamletWriterPtr writer,
                              bool enableAlleleQualityMetrics, bool enableConsensusSequences)
     : locusSpec_(std::move(locusSpec))
@@ -51,8 +62,10 @@ LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParame
     // Create buffer if requiresAlignmentBuffer() (RFC1, plot-all policy, or has plot conditions)
     // or if allele quality metrics or consensus sequences are enabled (both run via the reviewer
     // workflow, which needs the buffer). Keep these independent so e.g. --dont-output-quality-metrics
-    // does not also suppress consensus output.
-    , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics || enableConsensusSequences)
+    // does not also suppress consensus output. Loci with more than one repeat variant always get the
+    // buffer, since the reviewer workflow also decides how their repeat alleles pair onto haplotypes.
+    , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics || enableConsensusSequences
+                        || hasMoreThanOneRepeatVariant(locusSpec_))
                        ? std::make_shared<locus::AlignmentBuffer>() : nullptr)
     , aligner_(locusSpec_.locusId(), &locusSpec_.regionGraph(), params, std::move(writer), alignmentBuffer_)
     , statsCalc_(locusSpec_.typeOfChromLocusLocatedOn(), locusSpec_.regionGraph())
@@ -209,11 +222,13 @@ LocusFindings LocusAnalyzer::analyze(
         }
     }
 
-    // Run REViewer workflow once if alignment buffer exists (for metrics and/or SVG)
+    // Run REViewer workflow once if alignment buffer exists (for metrics, SVG, and/or repeat allele phasing)
     std::optional<reviewer::ReviewerContext> reviewerContext;
+    const bool phaseRepeatAlleles = hasMoreThanOneRepeatVariant(locusSpec_);
     const bool needsReviewer = alignmentBuffer_ &&
         (reviewer::shouldPlotReadVisualization(locusSpec_, locusFindings)
-         || ((enableAlleleQualityMetrics_ || enableConsensusSequences_) && alignmentBuffer_->getBuffer().size() > 0));
+         || ((enableAlleleQualityMetrics_ || enableConsensusSequences_ || phaseRepeatAlleles)
+             && alignmentBuffer_->getBuffer().size() > 0));
 
     // The reviewer workflow's path-construction step (getCandidateDiplotypes) throws if any of the
     // locus's variant specs is a SmallVariant. Bail out early with an info-level message so the
@@ -245,6 +260,17 @@ LocusFindings LocusAnalyzer::analyze(
         catch (const std::exception& e)
         {
             spdlog::debug("Failed to run reviewer workflow for locus {}: {}", locusSpec_.locusId(), e.what());
+        }
+    }
+
+    if (phaseRepeatAlleles && reviewerContext)
+    {
+        locusFindings.repeatAllelePhasing = reviewer::summarizeRepeatAllelePhasing(
+            locusSpec_, locusFindings, reviewerContext->paths, reviewerContext->diplotypeChoiceSupport);
+        if (!locusFindings.repeatAllelePhasing)
+        {
+            spdlog::info("Skipping repeat allele phasing for locus {}: a repeat has no genotype, or both of its "
+                         "alleles exceed the REViewer path length cap", locusSpec_.locusId());
         }
     }
 

@@ -196,7 +196,7 @@ std::optional<ReviewerContext> runReviewerWorkflow(
             repeatVariantCount++;
         }
     }
-    if (repeatVariantCount > 1)
+    if (buildConsensus && repeatVariantCount > 1)
     {
         spdlog::warn("REViewer workflow: Locus {} has {} repeat variants; consensus building only supports single repeat variant loci",
                      locusId, repeatVariantCount);
@@ -243,6 +243,7 @@ std::optional<ReviewerContext> runReviewerWorkflow(
 
     // Score diplotypes by alignment support
     auto scoredDiplotypes = scoreDiplotypes(fragById, candidateDiplotypes);
+    const DiplotypeChoiceSupport diplotypeChoiceSupport = compareTopTwoDiplotypes(fragById, scoredDiplotypes);
     auto topDiplotype = scoredDiplotypes.front().first;
     spdlog::debug("REViewer workflow: Top diplotype has {} haplotype paths", topDiplotype.size());
 
@@ -278,12 +279,14 @@ std::optional<ReviewerContext> runReviewerWorkflow(
         }
     }
 
-    return ReviewerContext(
+    ReviewerContext reviewerContext(
         std::move(topDiplotype),
         std::move(fragById),
         std::move(fragPathAlignsById),
         std::move(fragAssignment),
         std::move(consensusResult));
+    reviewerContext.diplotypeChoiceSupport = diplotypeChoiceSupport;
+    return reviewerContext;
 }
 
 

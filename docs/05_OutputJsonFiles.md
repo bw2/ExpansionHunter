@@ -8,6 +8,8 @@ locus (`LocusResults` field). The locus results contain these fields
  * `FragmentLength` The fragment size estimated from read pairs fully contained in either the left or right flank of the repeat region
  * `LocusId` Locus identifier
  * `ReadLength` Mean length of the reads counted for `Coverage`
+ * `RepeatAllelePhasing` (optional) Only for loci with more than one repeat: which allele of each
+   repeat is on the same haplotype (see [Repeat allele phasing](#repeat-allele-phasing))
  * `Variants` Genotypes and other information describing each variant
    analyzed at the locus
 
@@ -216,6 +218,53 @@ always match what full genotyping would produce for the same locus:
 
 The genotype, confidence intervals, and read counts are unaffected by any of this -- the
 consensus is derived from the same reads after the call is made, and never changes it.
+
+## Repeat allele phasing
+
+Each repeat in a locus is genotyped independently, and its alleles are reported sorted by size. For a
+locus with more than one repeat (for example HTT, whose definition `(CAG)*CAACAG(CCG)*` yields the
+variants `HTT` and `HTT_CCG`), the first allele of one repeat is therefore NOT necessarily on the same
+haplotype as the first allele of the other. To report which alleles sit together, every locus with more
+than one repeat variant gets a locus-level `RepeatAllelePhasing` record (next to `Variants`). It comes
+from the REViewer step, which builds every possible pairing of the genotyped alleles onto two
+haplotypes and picks the one the read pairs fit best. This step runs for these loci even when
+`--dont-output-quality-metrics` and `--dont-output-consensus-sequences` are both set. The record is
+left out if any of the repeats has no genotype, if the locus also contains small variants, or if both
+alleles of a repeat exceed the REViewer path length cap (as many repeat units as the mean fragment
+length has bases), since the two haplotypes then look identical at that repeat.
+
+* `RepeatSizesOnEachHaplotype` Array with one object per haplotype, mapping each repeat's
+  `VariantId` to its size (in repeat units) on that haplotype. Haplotypes are ordered by their repeat
+  sizes, compared in catalog order.
+* `NumberOfPossiblePairings` Number of distinct ways the genotyped alleles can be paired onto
+  haplotypes. It is 1 when at most one of the repeats is heterozygous, in which case there is nothing
+  to choose and the three fields below are omitted.
+* `FragmentsSupportingChosenPairingOverNextBest` Number of read pairs whose best alignment scores
+  higher on the haplotypes of the chosen pairing than on those of the next-best pairing. Only read
+  pairs that cover more than one of the repeats can tell the pairings apart.
+* `FragmentsSupportingNextBestPairingOverChosen` The same count in the other direction.
+* `ChosenPairingIsTiedWithNextBest` `true` when the chosen and next-best pairings have equal scores,
+  typically because no read pair covers more than one repeat. The reported pairing is then an
+  arbitrary pick and should not be relied on.
+
+With 150 bp reads, read pairs that cover both HTT repeats exist only on haplotypes where the CAG and
+CCG tracts together are short enough to be spanned. One such haplotype is still enough: if read pairs
+show which CCG allele goes with the normal-length CAG allele, the other CCG allele must go with the
+expanded one.
+
+Example:
+```json
+"RepeatAllelePhasing": {
+  "ChosenPairingIsTiedWithNextBest": false,
+  "FragmentsSupportingChosenPairingOverNextBest": 11,
+  "FragmentsSupportingNextBestPairingOverChosen": 0,
+  "NumberOfPossiblePairings": 2,
+  "RepeatSizesOnEachHaplotype": [
+    { "HTT": 17, "HTT_CCG": 12 },
+    { "HTT": 45, "HTT_CCG": 9 }
+  ]
+}
+```
 
 ## Motif composition
 
