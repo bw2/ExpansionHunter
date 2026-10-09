@@ -18,3 +18,4 @@ The following sections will help you to get started.
 * [Input variant catalogs](04_VariantCatalogFiles.md)
 * [Output JSON files](05_OutputJsonFiles.md)
 * [Output VCF files](06_OutputVcfFiles.md)
+* [Allele quality metrics](07_AlleleQualityMetrics.md)
