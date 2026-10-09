@@ -68,11 +68,11 @@ The first entry in this catalog specifies a locus containing a single short
 tandem repeat. The identifier of this locus is DMPK (field `LocusId`). The
 regular expression `(CAG)*` means that it is comprised of zero or more
 repetitions of the CAG repeat unit (field `LocusStructure`). The reference
-coordinates of this repeat are 19:46273462-46273522 (field  `ReferenceRegion`).
+coordinates of this repeat are 19:46273462-46273522 (field `ReferenceRegion`).
 The `VariantType` field specifies that it is an ordinary STR meaning that we
 expect the genome to contain multiple long repeats (whose size is close to
 fragment length and longer) with this repeat unit. For ordinary `Repeat`s
-Expansion Hunter limits the types of reads that are used used to infer the size
+Expansion Hunter limits the types of reads that are used to infer the size
 of the repeat. As a result, regular repeats are genotyped up to the fragment
 length and if a repeat is reported to have a size estimate close to the fragment
 length then this number should be treated as a lower bound for its true size.
@@ -94,16 +94,16 @@ Fields `ReferenceRegion` and `VariantType` contain the reference region and
 variant type of each constituent repeat. By default, the program assigns an identifier to
 each variant consisting of the locus id and reference region. So the two repeats
 receive ids HTT_4:3076604-3076660 and HTT_4:3076666-3076693 respectively. An
-optional field `VariantId` allows to assign custom variant ids to each
+optional field `VariantId` allows assigning custom variant ids to each
 variant.
 
-The following section describes loci-specification records that the catalogs are
+The following section describes locus-specification records that the catalogs are
 comprised of.
 
 
 ## Structure of a locus-specification record
 
-When locus contains a single variant, there is no difference between the
+When a locus contains a single variant, there is no difference between the
 variant and the locus containing it. So field names refer to the variant
 itself.
 
@@ -113,16 +113,16 @@ itself.
   the locus contains multiple variants, ReferenceRegion and VariantType are
   arrays with associated information for each variant in the same order.
 
-* `ReferenceRegion` 0-based half open reference coordinates of the variant
+* `ReferenceRegion` 0-based half-open reference coordinates of the variant
   formatted as `chrom:start-end`.
 
 * `VariantType` Can be either `Repeat`, `RareRepeat`, or `SmallVariant`
-  with the latter corresponding to insertions deletions or sequence swaps.
+  with the latter corresponding to insertions, deletions, or sequence swaps.
 
 * `VariantId` Optional array of unique variant ids. If missing, variant ids
   are synthesized according to this rule: If there is only one variant in
-  a locus then it gets the same id as the locus itself. If locus contains
-  multiple variants, each one of them gets id of the form `<LocusId>_<ReferenceRegionOfTheVariant>`.
+  a locus then it gets the same id as the locus itself. If a locus contains
+  multiple variants, each one of them gets an id of the form `<LocusId>_<ReferenceRegionOfTheVariant>`.
 
 * `OfftargetRegions` Array of regions where informative reads may misalign;
    only used for variants of type `RareRepeat`.
@@ -149,7 +149,7 @@ itself.
 
 ExpansionHunter supports a very limited subset of regular expressions to
 define the structure of each locus. These expressions can consist of
-sub-expressions listed in the table bellow, possibly separated by
+sub-expressions listed in the table below, possibly separated by
 interrupting DNA sequences.
 
 
@@ -159,10 +159,10 @@ interrupting DNA sequences.
 | Short tandem repeat that can occur 1 or more times | (CCG)+             |
 | Single nucleotide variant                          | (C\|T)             |
 | Sequence swap                                      | (CAGT\|CGTTG)      |
-| Deletion or insertion	                             | (CTGGC)\?          |
+| Deletion or insertion                              | (CTGGC)\?          |
 
 
-For example, a CAG repeat flanked by a CAG/CAT swap	is defined by expression
+For example, a CAG repeat flanked by a CAG/CAT swap is defined by expression
 (CAG)+CTGT(CAG|CAT).
 
 

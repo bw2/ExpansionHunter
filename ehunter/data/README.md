@@ -2,9 +2,9 @@
 
 `genotype_quality_model_from_HG002_and_CHM1_CHM13_plus50.20261008.json.gz` specifies a pretrained gradient-boosted decision tree model 
 that ExpansionHunter uses to generate the `PredictedLengthCorrectionFactor`,
-`pOk`, `pTooShort`, and `pTooLong` fields within the output JSON `AlleleQualityMetrics`  section.
+`pOk`, `pTooShort`, and `pTooLong` fields within the output JSON `AlleleQualityMetrics` section.
 
-To override the default model, specify  `--genotype-quality-model PATH` .
+To override the default model, specify `--genotype-quality-model PATH`.
 
 The pipeline used to train this model is available in:
 
