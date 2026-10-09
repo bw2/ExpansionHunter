@@ -30,6 +30,7 @@
 #include "locus/LocusFindings.hh"
 #include "reviewer/Aligns.hh"
 #include "reviewer/ConsensusSequence.hh"
+#include "reviewer/Phasing.hh"
 
 namespace ehunter
 {
@@ -45,6 +46,7 @@ struct ReviewerContext
     FragPathAlignsById fragPathAlignsById;  // Fragment path alignments
     FragAssignment fragAssignment;       // Assignment of fragments to haplotypes
     ConsensusResult consensusResult;     // Consensus sequences built from anchor reads
+    DiplotypeChoiceSupport diplotypeChoiceSupport;  // How strongly fragments favor `paths` over the next-best diplotype
 
     ReviewerContext()
         : fragAssignment({}, {})

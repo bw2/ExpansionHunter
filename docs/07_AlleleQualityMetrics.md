@@ -111,7 +111,7 @@ Similar interpretation to `MeanInsertedBasesWithinRepeats`.
 ### ReadRepeatPurity
 
 Fraction of the repeat-region read bases (the read bases falling within the repeat region, among the
-reads supporting this allele) that match a perfect repeat sequence (eg. CAG.CAG.CAG.CAG) of the
+reads supporting this allele) that match a perfect repeat sequence (e.g. CAG.CAG.CAG.CAG) of the
 catalog motif — a measure of how clean the observed repeat is, in `[0, 1]` (`1.0` = perfectly pure).
 
 **Formula:** `ReadRepeatPurity = matchedRepeatRegionReadBases / totalRepeatRegionReadBases`
@@ -214,7 +214,7 @@ The model's estimate of the called size divided by the true size (`called / true
 - `< 1.0` — the call is likely **too short** (the true allele is larger).
 - `> 1.0` — the call is likely **too long** (the true allele is smaller).
 
-A size-corrected estimate can be computed as  `AlleleSize / PredictedLengthCorrectionFactor`.
+A size-corrected estimate can be computed as `AlleleSize / PredictedLengthCorrectionFactor`.
 
 ### pOk, pTooShort, pTooLong
 

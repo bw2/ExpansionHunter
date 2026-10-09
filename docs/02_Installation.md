@@ -17,7 +17,7 @@ Prerequisites:
      - Centos8
        - `bzip2-devel libcurl-devel libstdc++-static openssl-devel xz-devel zlib-devel`
      - Ubuntu 20.04
-       - `libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev `
+       - `libbz2-dev libcurl4-openssl-dev liblzma-dev libssl-dev zlib1g-dev`
      - macOS 10.15
        - `xz` (from homebrew)
 

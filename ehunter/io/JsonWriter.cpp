@@ -139,6 +139,10 @@ void JsonWriter::write(std::ostream& out)
         {
             locusRecord["Variants"] = variantRecords;
         }
+        if (locusFindings.repeatAllelePhasing)
+        {
+            locusRecord["RepeatAllelePhasing"] = encodeRepeatAllelePhasing(*locusFindings.repeatAllelePhasing);
+        }
         resultsRecord[locusId] = locusRecord;
     }
 
@@ -151,6 +155,30 @@ void JsonWriter::write(std::ostream& out)
     sampleRecords["RunInfo"] = runInfoRecord;
 
     out << std::setw(2) << sampleRecords << std::endl;
+}
+
+Json encodeRepeatAllelePhasing(const RepeatAllelePhasing& phasing)
+{
+    Json phasingRecord;
+    Json haplotypeRecords = Json::array();
+    for (const auto& repeatSizeByVariantId : phasing.repeatSizeByVariantIdOnEachHaplotype)
+    {
+        haplotypeRecords.push_back(repeatSizeByVariantId);
+    }
+    phasingRecord["RepeatSizesOnEachHaplotype"] = haplotypeRecords;
+    phasingRecord["NumberOfPossiblePairings"] = phasing.numberOfPossiblePairings;
+
+    // With a single possible pairing there is nothing to compare against
+    if (phasing.numberOfPossiblePairings > 1)
+    {
+        phasingRecord["FragmentsSupportingChosenPairingOverNextBest"]
+            = phasing.fragmentsSupportingChosenPairingOverNextBest;
+        phasingRecord["FragmentsSupportingNextBestPairingOverChosen"]
+            = phasing.fragmentsSupportingNextBestPairingOverChosen;
+        phasingRecord["ChosenPairingIsTiedWithNextBest"] = phasing.chosenPairingIsTiedWithNextBest;
+    }
+
+    return phasingRecord;
 }
 
 static string encodeGenotype(const RepeatGenotype& genotype)

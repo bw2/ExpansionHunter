@@ -26,8 +26,14 @@
 #include "graphalign/GraphAlignment.hh"
 #include "graphalign/GraphAlignmentOperations.hh"
 
+#include "core/CountTable.hh"
+#include "genotyping/RepeatGenotype.hh"
 #include "io/GraphBlueprint.hh"
+#include "io/JsonWriter.hh"
 #include "io/RegionGraph.hh"
+#include "locus/LocusFindings.hh"
+#include "locus/LocusSpecification.hh"
+#include "locus/VariantFindings.hh"
 #include "reviewer/Aligns.hh"
 #include "reviewer/GenotypePaths.hh"
 
@@ -62,6 +68,44 @@ Frag makeFrag(
     ReadWithAlign mateWithAlign(std::move(mate), std::move(mateAlign));
 
     return Frag(std::move(readWithAlign), std::move(mateWithAlign));
+}
+
+// Locus with two adjacent repeats, like HTT's CAG and CCG: "ATTCGA(C)*TT(G)*ATGTCG"
+// Node 0: ATTCGA (left flank), node 1: C repeat, node 2: TT spacer, node 3: G repeat, node 4: ATGTCG (right flank)
+LocusSpecification makeTwoRepeatLocusSpec()
+{
+    Graph graph = makeRegionGraph(decodeFeaturesFromRegex("ATTCGA(C)*TT(G)*ATGTCG"));
+    LocusSpecification spec(
+        "TWO_REPEAT_LOCUS", ChromType::kAutosome, { GenomicRegion(0, 100, 200) }, graph, {}, GenotyperParameters(10),
+        false, {});
+    const VariantClassification repeatClassification(VariantType::kRepeat, VariantSubtype::kCommonRepeat);
+    spec.addVariantSpecification("C_REPEAT", repeatClassification, GenomicRegion(0, 106, 107), { 1 }, boost::none);
+    spec.addVariantSpecification("G_REPEAT", repeatClassification, GenomicRegion(0, 109, 110), { 3 }, boost::none);
+    return spec;
+}
+
+LocusFindings makeTwoRepeatFindings(
+    std::vector<int> cRepeatAlleleSizes, std::vector<int> gRepeatAlleleSizes)
+{
+    LocusFindings findings;
+    for (const auto& variantIdAndAlleleSizes :
+         { std::make_pair("C_REPEAT", cRepeatAlleleSizes), std::make_pair("G_REPEAT", gRepeatAlleleSizes) })
+    {
+        findings.findingsForEachVariant[variantIdAndAlleleSizes.first] = std::make_unique<RepeatFindings>(
+            CountTable(), CountTable(), CountTable(), AlleleCount::kTwo,
+            RepeatGenotype(1, variantIdAndAlleleSizes.second), static_cast<GenotypeFilter>(0));
+    }
+    return findings;
+}
+
+// Runs the same pairing steps as runReviewerWorkflow and summarizes the chosen pairing
+std::optional<RepeatAllelePhasing> phaseRepeatAlleles(
+    const LocusSpecification& spec, const LocusFindings& findings, const FragById& fragById, int meanFragLen = 300)
+{
+    const ScoredDiplotypes scoredDiplotypes
+        = scoreDiplotypes(fragById, getCandidateDiplotypes(meanFragLen, spec, findings));
+    return summarizeRepeatAllelePhasing(
+        spec, findings, scoredDiplotypes.front().first, compareTopTwoDiplotypes(fragById, scoredDiplotypes));
 }
 
 }  // namespace
@@ -142,7 +186,7 @@ TEST(ReviewerPhasing_ScoreDiplotypes, TiedScores_StableOrdering)
     ASSERT_EQ(2u, result.size());
     // Both should have the same score
     EXPECT_EQ(result[0].second, result[1].second);
-    // Note: std::sort is not stable, but with identical scores both orderings are valid
+    // Note: scoreDiplotypes uses std::stable_sort, so tied diplotypes keep their input order
 }
 
 // Test scoreDiplotypes with no fragments - all diplotypes should score 0
@@ -218,4 +262,112 @@ TEST(ReviewerPhasing_ScoreDiplotypes, MultipleFragments_ScoresAccumulate)
 
     // Score with two fragments should be greater than with one
     EXPECT_GT(score2, score1);
+}
+
+// A fragment spanning both repeats on the C=1, G=1 haplotype places the other alleles (C=3, G=2) together
+TEST(ReviewerPhasing_RepeatAllelePhasing, FragmentSpanningBothRepeats_PairsShortAllelesTogether)
+{
+    const LocusSpecification spec = makeTwoRepeatLocusSpec();
+    const LocusFindings findings = makeTwoRepeatFindings({ 1, 3 }, { 1, 2 });
+    const Graph& graph = spec.regionGraph();
+
+    FragById fragById;
+    fragById.emplace(
+        "frag1",
+        makeFrag("frag1", graph, "ATTCGACTTGATGTCG", "0[6M]1[1M]2[2M]3[1M]4[6M]", "ATGTCG", "4[6M]"));
+
+    const auto phasing = phaseRepeatAlleles(spec, findings, fragById);
+    ASSERT_TRUE(phasing);
+    const std::vector<std::map<std::string, int>> expectedHaplotypes
+        = { { { "C_REPEAT", 1 }, { "G_REPEAT", 1 } }, { { "C_REPEAT", 3 }, { "G_REPEAT", 2 } } };
+    EXPECT_EQ(expectedHaplotypes, phasing->repeatSizeByVariantIdOnEachHaplotype);
+    EXPECT_EQ(2, phasing->numberOfPossiblePairings);
+    EXPECT_EQ(1, phasing->fragmentsSupportingChosenPairingOverNextBest);
+    EXPECT_EQ(0, phasing->fragmentsSupportingNextBestPairingOverChosen);
+    EXPECT_FALSE(phasing->chosenPairingIsTiedWithNextBest);
+}
+
+// The opposite phase: the short C allele sits with the long G allele, which sorting alleles by size would hide
+TEST(ReviewerPhasing_RepeatAllelePhasing, FragmentSpanningBothRepeats_PairsShortAlleleWithLongAllele)
+{
+    const LocusSpecification spec = makeTwoRepeatLocusSpec();
+    const LocusFindings findings = makeTwoRepeatFindings({ 1, 3 }, { 1, 2 });
+    const Graph& graph = spec.regionGraph();
+
+    FragById fragById;
+    fragById.emplace(
+        "frag1",
+        makeFrag("frag1", graph, "ATTCGACTTGGATGTCG", "0[6M]1[1M]2[2M]3[1M]3[1M]4[6M]", "ATGTCG", "4[6M]"));
+
+    const auto phasing = phaseRepeatAlleles(spec, findings, fragById);
+    ASSERT_TRUE(phasing);
+    const std::vector<std::map<std::string, int>> expectedHaplotypes
+        = { { { "C_REPEAT", 1 }, { "G_REPEAT", 2 } }, { { "C_REPEAT", 3 }, { "G_REPEAT", 1 } } };
+    EXPECT_EQ(expectedHaplotypes, phasing->repeatSizeByVariantIdOnEachHaplotype);
+    EXPECT_EQ(1, phasing->fragmentsSupportingChosenPairingOverNextBest);
+    EXPECT_EQ(0, phasing->fragmentsSupportingNextBestPairingOverChosen);
+    EXPECT_FALSE(phasing->chosenPairingIsTiedWithNextBest);
+}
+
+// Fragments that fit every haplotype equally well cannot tell the pairings apart, so the choice is a tie
+TEST(ReviewerPhasing_RepeatAllelePhasing, NoFragmentSpansBothRepeats_ReportsTie)
+{
+    const LocusSpecification spec = makeTwoRepeatLocusSpec();
+    const LocusFindings findings = makeTwoRepeatFindings({ 1, 3 }, { 1, 2 });
+    const Graph& graph = spec.regionGraph();
+
+    FragById fragById;
+    fragById.emplace("frag1", makeFrag("frag1", graph, "ATTCGA", "0[6M]", "ATGTCG", "4[6M]"));
+
+    const auto phasing = phaseRepeatAlleles(spec, findings, fragById);
+    ASSERT_TRUE(phasing);
+    EXPECT_EQ(2, phasing->numberOfPossiblePairings);
+    EXPECT_EQ(0, phasing->fragmentsSupportingChosenPairingOverNextBest);
+    EXPECT_EQ(0, phasing->fragmentsSupportingNextBestPairingOverChosen);
+    EXPECT_TRUE(phasing->chosenPairingIsTiedWithNextBest);
+}
+
+// With one homozygous repeat there is only one way to pair the alleles
+TEST(ReviewerPhasing_RepeatAllelePhasing, OneHomozygousRepeat_SinglePossiblePairing)
+{
+    const LocusSpecification spec = makeTwoRepeatLocusSpec();
+    const LocusFindings findings = makeTwoRepeatFindings({ 2, 2 }, { 1, 2 });
+
+    const auto phasing = phaseRepeatAlleles(spec, findings, FragById());
+    ASSERT_TRUE(phasing);
+    const std::vector<std::map<std::string, int>> expectedHaplotypes
+        = { { { "C_REPEAT", 2 }, { "G_REPEAT", 1 } }, { { "C_REPEAT", 2 }, { "G_REPEAT", 2 } } };
+    EXPECT_EQ(expectedHaplotypes, phasing->repeatSizeByVariantIdOnEachHaplotype);
+    EXPECT_EQ(1, phasing->numberOfPossiblePairings);
+    EXPECT_FALSE(phasing->chosenPairingIsTiedWithNextBest);
+}
+
+// Both C alleles exceed the path length cap, so the paths no longer show which haplotype carries which
+TEST(ReviewerPhasing_RepeatAllelePhasing, BothAllelesCappedToSamePathLength_ReturnsEmpty)
+{
+    const LocusSpecification spec = makeTwoRepeatLocusSpec();
+    const LocusFindings findings = makeTwoRepeatFindings({ 3, 4 }, { 1, 2 });
+
+    EXPECT_FALSE(phaseRepeatAlleles(spec, findings, FragById(), 2));
+}
+
+TEST(ReviewerPhasing_RepeatAllelePhasing, EncodeJson_OmitsComparisonFieldsWhenOnlyOnePairing)
+{
+    RepeatAllelePhasing phasing;
+    phasing.repeatSizeByVariantIdOnEachHaplotype
+        = { { { "C_REPEAT", 2 }, { "G_REPEAT", 1 } }, { { "C_REPEAT", 2 }, { "G_REPEAT", 2 } } };
+    phasing.numberOfPossiblePairings = 1;
+
+    const nlohmann::json record = encodeRepeatAllelePhasing(phasing);
+    EXPECT_EQ(1, record["NumberOfPossiblePairings"]);
+    EXPECT_EQ(2, record["RepeatSizesOnEachHaplotype"][1]["G_REPEAT"]);
+    EXPECT_FALSE(record.contains("FragmentsSupportingChosenPairingOverNextBest"));
+    EXPECT_FALSE(record.contains("ChosenPairingIsTiedWithNextBest"));
+
+    phasing.numberOfPossiblePairings = 2;
+    phasing.fragmentsSupportingChosenPairingOverNextBest = 5;
+    const nlohmann::json recordWithComparison = encodeRepeatAllelePhasing(phasing);
+    EXPECT_EQ(5, recordWithComparison["FragmentsSupportingChosenPairingOverNextBest"]);
+    EXPECT_EQ(0, recordWithComparison["FragmentsSupportingNextBestPairingOverChosen"]);
+    EXPECT_EQ(false, recordWithComparison["ChosenPairingIsTiedWithNextBest"]);
 }

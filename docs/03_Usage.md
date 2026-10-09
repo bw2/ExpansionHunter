@@ -4,8 +4,8 @@ Expansion Hunter requires the following inputs:
 1. A BAM or a CRAM file containing aligned reads from a PCR-free WGS sample.
     1. The BAM or CRAM file must be sorted, and must be indexed for every [analysis mode](#analysis-modes) except plain `streaming`.
     2. The BAM or CRAM file may be a local filesystem path or [URL](#url-support).
-4. A FASTA file with a reference genome assembly (which must be the same as the one used to align the reads)
-5. A [variant catalog file](04_VariantCatalogFiles.md).
+2. A FASTA file with a reference genome assembly (which must be the same as the one used to align the reads)
+3. A [variant catalog file](04_VariantCatalogFiles.md).
 
 Expansion Hunter outputs a VCF file and a JSON file with variant genotypes and
 other useful information. It can also optionally output a BAMlet containing
@@ -32,7 +32,7 @@ optional arguments.
   `--reads` filename prefix (e.g. `NA12878` for `/data/NA12878.cram`).
 * `--sex <arg>` Specifies sex of the sample; can be either `male` or `female`
   (default). This parameter only affects repeats on sex chromosomes.
-* `--threads <int>` Specifies how many threads to can be used accelerate analysis
+* `--threads <int>` Specifies how many threads can be used to accelerate analysis
    of large variant catalogs. Set to 1 by default. Typically seeking mode can
    benefit from relatively high thread counts, while for streaming mode
    there is limited benefit beyond about 16 threads.
@@ -111,7 +111,7 @@ This mode requires that the input BAM or CRAM file is already sorted and indexed
 
 In streaming mode, the alignment file is read in a single pass and all variants are
 analyzed during this reading operation. Streaming mode is recommended for the analysis
-of large catalogs, but does require more memory as a funciton of catalog size. This mode
+of large catalogs, but does require more memory as a function of catalog size. This mode
 does not require that the BAM or CRAM file is sorted or indexed.
 
 #### Optimized-streaming mode
@@ -120,7 +120,7 @@ does not require that the BAM or CRAM file is sorted or indexed.
 low (typically < 10 GB) and independent of catalog size. It also uses a fast heuristic genotyper to identify loci
 that can be quickly genotyped using spanning reads, and then runs the full graph-based genotyper only on the subset
 of loci that appear to have larger expansions. This significantly speeds up analysis of large catalogs
-(> ~5k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
+(> ~10k loci) since the majority of loci can be genotyped using only spanning reads. `--genotyping-approach`
 selects which of the two genotypers are used for a given locus: `auto` (the default) chooses automatically as
 described above, `only-quick` uses only the heuristic approach and skips loci where it can't be confidently applied.
 Conversely, `only-full` always runs the full genotyper on every locus (this was previously called the
@@ -182,7 +182,7 @@ Things worth knowing:
 #### Known limitations of `optimized-streaming`
 
 This mode ignores `OfftargetRegions` entries in the variant catalog. This can affect loci that do
-explicitly list off-target regions in the catalog, such as **C9ORF72**, **FMR1**. For these loci,
+explicitly list off-target regions in the catalog, such as **C9orf72**, **FMR1**. For these loci,
 `--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
 
 Its VCF output is not always sorted by position within a chromosome. Loci are written in the order
