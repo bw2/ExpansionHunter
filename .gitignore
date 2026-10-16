@@ -1,6 +1,7 @@
 cmake-build-debug
 test-example
 build
+__pycache__/
 
 # Ignore all hidden files and directories except .gitignore itself
 .*

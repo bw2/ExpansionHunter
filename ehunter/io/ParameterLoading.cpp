@@ -122,7 +122,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("copy-catalog-fields", po::bool_switch(&params.copyCatalogFields), "Copy any extra fields from the input catalog (e.g., Gene, Diseases) to the output JSON")
         ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
         ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
-        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in optimized-streaming mode, and only for loci with a single repeat. Raises the default --max-depth to 500.")
+        ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in seeking and optimized-streaming modes, and only for loci with a single repeat. In optimized-streaming mode, raises the default --max-depth to 500.")
     ;
     // clang-format on
 
@@ -133,14 +133,14 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("min-locus-coverage", po::value<double>(&params.minLocusCoverage)->default_value(10.0), "Minimum read coverage depth for diploid loci (set to half for loci on haploid chromosomes)")
         ("aligner", po::value<string>(&params.alignerType)->default_value("dag-aligner"), "Graph aligner to use (dag-aligner or path-aligner)")
         ("analysis-mode", po::value<string>(&params.analysisMode)->default_value("seeking"), "Analysis workflow to use ('seeking', 'streaming', or 'optimized-streaming')")
-        ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution")
+        ("cache-mates", po::bool_switch(&params.cacheMates), "In seeking mode, cache reads across loci to speed up execution. Also applies to RareRepeat loci that list OfftargetRegions in optimized-streaming mode, since they are genotyped as in seeking mode")
         ("threads", po::value(&params.threadCount)->default_value(1), "Number of threads to use")
         ("log-level", po::value<string>(&params.logLevel)->default_value("info"), "'trace', 'debug', 'info', 'warn', or 'error'")
         ("dont-output-quality-metrics", po::bool_switch(&params.disableQualityMetrics), "Disable per-allele quality metrics in JSON output")
         ("dont-output-consensus-sequences", po::bool_switch(&params.disableConsensusSequences), "Disable consensus allele sequences (ConsensusSequences and ConsensusSequencesReadSupport) in JSON output")
         ("enable-bamlet-output", po::bool_switch(&params.enableBamletOutput), "Enable bamlet output (BAM file of realigned reads)")
-        ("genotyping-approach", po::value<string>(&params.genotypingApproach)->default_value("auto"), "In optimized-streaming mode, which genotyper(s) run on each locus. 'auto': the quick spanning-read heuristic where it can confidently resolve the locus, and the full graph-based genotyper for larger or more complex alleles. 'only-quick': the quick heuristic only; loci with reads that it cannot resolve get a skipped record (mainly for benchmarking and debugging). 'only-full': the full genotyper on every locus (the former low-mem-streaming analysis mode)")
-        ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In optimized-streaming mode, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). 0 disables the cap")
+        ("genotyping-approach", po::value<string>(&params.genotypingApproach)->default_value("auto"), "In optimized-streaming mode, which genotyper(s) run on each locus. 'auto': the quick spanning-read heuristic where it can confidently resolve the locus, and the full graph-based genotyper for larger or more complex alleles. 'only-quick': the quick heuristic only; loci with reads that it cannot resolve get a skipped record (mainly for benchmarking and debugging). 'only-full': the full genotyper on every locus (the former low-mem-streaming analysis mode). RareRepeat loci that list OfftargetRegions are always genotyped as in seeking mode")
+        ("max-depth", po::value<int>(&params.maxDepth)->default_value(150), "In optimized-streaming mode, cap the average base-level depth processed per locus (reads * read length / locus-window width) using reservoir sampling, to bound memory and runtime at pathological high-coverage loci (e.g. centromeric/satellite repeats). Not applied to RareRepeat loci that list OfftargetRegions, which are genotyped as in seeking mode. 0 disables the cap")
         ("output-genotype-timing", po::bool_switch(&params.outputGenotypeTiming), "Record each locus's thread-CPU genotyping time, in milliseconds, in the output JSON as GenotypingTimeMillis. Applies only to optimized-streaming mode.")
         ("genotype-quality-model", po::value<string>(&params.genotypeQualityModelPath), "Path to a genotype-quality model (.json or .json.gz) used to add per-allele PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong fields. Overrides the model compiled into the binary.")
         ("resume", po::bool_switch(&params.resume), "Make an interrupted run restartable: keep the per-contig temp output files (<output-prefix>.contig<N>.{json,vcf}) and a list of finished loci (<output-prefix>.processed_loci.txt) up to date as the run proceeds, and, if they are already present from an interrupted run, skip the loci the list names and continue from there. These files are deleted once the final output files have been written. Only works in optimized-streaming mode.")
@@ -337,11 +337,11 @@ void assertValidity(const UserParameters& userParameters)
                 + userParameters.motifCompositionMode + "'");
         }
         // Motif composition is counted from each read's original alignment (its CIGAR string). Streaming mode does
-        // not keep it, and seeking mode is not supported yet.
-        if (userParameters.analysisMode != "optimized-streaming")
+        // not keep it.
+        if (userParameters.analysisMode != "optimized-streaming" && userParameters.analysisMode != "seeking")
         {
             throw std::invalid_argument(
-                "--output-motif-composition only works in optimized-streaming mode, not in "
+                "--output-motif-composition only works in seeking and optimized-streaming modes, not in "
                 + userParameters.analysisMode + " mode");
         }
     }

@@ -215,6 +215,8 @@ AnalyzerFinder::AnalyzerFinder(vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers
     }
 }
 
+// Used only by optimized-streaming mode, as a read filter. OfftargetRegions are left out for the reason given at
+// initializeGenomeMask in GenomeQueryCollection.cpp.
 AnalyzerFinder::AnalyzerFinder(const LocusDescriptionCatalog& locusDescriptions)
 {
     using IntervalWithLocusTypeAndAnalyzer = Interval<std::size_t, AnalyzerBundle>;
@@ -228,11 +230,6 @@ AnalyzerFinder::AnalyzerFinder(const LocusDescriptionCatalog& locusDescriptions)
         AnalyzerBundle bundle(RegionType::kTarget, locusIndex);
         contigToIntervals[locusDescription.locusContigIndex()].emplace_back(
 			locusDescription.locusAndFlanksStart(), locusDescription.locusAndFlanksEnd(), bundle);
-        for (const auto& region : locusDescription.offtargetRegions())
-        {
-            AnalyzerBundle bundle(RegionType::kOfftarget, locusIndex);
-            contigToIntervals[region.contigIndex()].emplace_back(region.start(), region.end(), bundle);
-        }
     }
 
     for (auto& contigAndIntervals : contigToIntervals)

@@ -5,7 +5,6 @@ TODO: profiling using heaptrack and time profiling using gprof and perf or callg
 TODO: stop after all loci have been processed and all mates have been collected
 TODO: downsample reads?
 
-TODO: implement off-target regions (using stripy to infer off-targets?)
 TODO: implement bamlet writing?
 TODO: speed up alignment:  lower coverage, narrower reference region, only process reads with signal
 TODO: add multithreading
@@ -66,7 +65,9 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include "sample/AnalyzerFinder.hh"
 #include "sample/GenomeQueryCollection.hh"
 #include "sample/HtsFileStreamer.hh"
+#include "sample/HtsFileSeeker.hh"
 #include "sample/HtsLowMemStreamingHelpers.hh"
+#include "sample/HtsSeekingSampleAnalysis.hh"
 #include "sample/HtsStreamingReadPairQueue.hh"
 #include "sample/MateExtractor.hh"
 
@@ -252,6 +253,47 @@ bool readIsContainedInAnyExtractionRegion(
 }
 
 
+// Apply the plot policy from the --disable-all-plots / --plot-all flags to one locus.
+void applyPlotPolicyFromCommandLine(const ProgramParameters& params, LocusSpecification& locusSpec)
+{
+    if (params.disableAllPlots())
+    {
+        locusSpec.setPlotPolicy(PlotPolicy::kNone);
+    }
+    else if (params.plotAll())
+    {
+        locusSpec.setPlotPolicy(PlotPolicy::kAll);
+    }
+}
+
+
+// Milliseconds of this thread's CPU time since `start`. Thread CPU time is immune to contention from the
+// other --threads workers.
+double threadCpuMillisecondsSince(const timespec& start)
+{
+    timespec end{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+    return (end.tv_sec - start.tv_sec) * 1e3 + (end.tv_nsec - start.tv_nsec) / 1e6;
+}
+
+
+// Annotate each repeat variant's findings: ReservoirSampling when the locus's read set was capped by
+// --max-depth (mirrors the fast path's setReservoirSampling), and GenotypingTimeMillis when timing is on.
+void annotateRepeatFindings(
+    LocusFindings& findings, bool reservoirSampled, const boost::optional<double>& genotypingTimeMillis)
+{
+    if (!reservoirSampled && !genotypingTimeMillis) {
+        return;
+    }
+    for (auto& variantIdAndFindings : findings.findingsForEachVariant) {
+        if (auto* repeatFindings = dynamic_cast<RepeatFindings*>(variantIdAndFindings.second.get())) {
+            if (reservoirSampled) { repeatFindings->setReservoirSampling(true); }
+            if (genotypingTimeMillis) { repeatFindings->setGenotypingTimeMillis(*genotypingTimeMillis); }
+        }
+    }
+}
+
+
 // Genotype a single locus and return the result instead of writing it inline, so the call can run on a
 // worker thread while the json/vcf writes happen later on the single-threaded writer (preserving output
 // order). Exceptions are captured into the result (kError) rather than thrown, matching the per-locus
@@ -276,26 +318,12 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         const Sex& sampleSex = params.sample().sex();
         // convert the lite-weight LocusDescription object into the heavier LocusSpecification
         LocusSpecification locusSpec = decodeLocusSpecification(locusDescription, reference, params.heuristics(), true);
-
-        // Apply plot policy from CLI flags
-        if (params.disableAllPlots())
-        {
-            locusSpec.setPlotPolicy(PlotPolicy::kNone);
-        }
-        else if (params.plotAll())
-        {
-            locusSpec.setPlotPolicy(PlotPolicy::kAll);
-        }
+        applyPlotPolicyFromCommandLine(params, locusSpec);
 
         // analyze the read data
         //
-        // TODO(off-target IRRs): every read pair is dispatched with RegionType::kTarget here, and
-        // the per-locus assignment loop in `doTheAnalysis` only checks reads against
-        // locusAndFlanksStart()/End() — never against locusDescription.offtargetRegions().
-        // As a result, IRRs that mismap to off-target regions (e.g. C9ORF72, FMR1) are not
-        // routed to the RepeatAnalyzer in optimized-streaming mode. Users
-        // needing accurate calls at off-target-dependent loci should currently use seeking
-        // or streaming mode. See docs/03_Usage.md "Known limitations" section.
+        // Every read pair is dispatched with RegionType::kTarget: loci whose OfftargetRegions are used never get
+        // here (see locusUsesOfftargetRegions and genotypeLocusWithOfftargetRegions).
         // Heap-allocate the analyzer and keep it alive in the result so its locusSpec() backs the
         // json/vcf writes performed later (possibly on the writer thread) without copying the heavy,
         // graph-bearing LocusSpecification across the thread boundary. The constructor already
@@ -364,26 +392,12 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         // genotype the locus
         out.findings = out.analyzer->analyze(sampleSex, boost::none, params.outputPaths().outputPrefix());
 
-        // Thread-CPU genotyping time for this locus (immune to contention from the other --threads workers),
-        // measured only under --output-genotype-timing.
+        // Thread-CPU genotyping time for this locus, measured only under --output-genotype-timing.
         boost::optional<double> genotypingTimeMillis;
         if (recordGenotypingTime) {
-            timespec genotypingEnd{};
-            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingEnd);
-            genotypingTimeMillis = (genotypingEnd.tv_sec - genotypingStart.tv_sec) * 1e3
-                + (genotypingEnd.tv_nsec - genotypingStart.tv_nsec) / 1e6;
+            genotypingTimeMillis = threadCpuMillisecondsSince(genotypingStart);
         }
-
-        // Annotate each repeat variant's findings: ReservoirSampling when this locus's read set was capped by
-        // --max-depth (mirrors the fast path's setReservoirSampling), and GenotypingTimeMillis when timing is on.
-        if (reservoirSampled || genotypingTimeMillis) {
-            for (auto& variantIdAndFindings : out.findings.findingsForEachVariant) {
-                if (auto* repeatFindings = dynamic_cast<RepeatFindings*>(variantIdAndFindings.second.get())) {
-                    if (reservoirSampled) { repeatFindings->setReservoirSampling(true); }
-                    if (genotypingTimeMillis) { repeatFindings->setGenotypingTimeMillis(*genotypingTimeMillis); }
-                }
-            }
-        }
+        annotateRepeatFindings(out.findings, reservoirSampled, genotypingTimeMillis);
 
         // --skip-hom-ref / --skip-missing-genotypes: genotyped but emit no record (still counts as full-genotyped)
         out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
@@ -395,6 +409,73 @@ LocusOutput genotypeLocusFull(const ProgramParameters& params, Reference& refere
         if (out.kind == LocusOutput::Kind::kGenotyped) {
             addMotifComposition(params, reference, out.analyzer->locusSpec(), out.findings, readPairs, typicalReadLength);
         }
+    } catch (const std::exception& e) {
+        out.kind = LocusOutput::Kind::kError;
+        out.message = e.what();
+        out.analyzer.reset();
+    }
+
+    return out;
+}
+
+
+// True for a locus whose OfftargetRegions are used: one that lists them and has a RareRepeat variant. In-repeat read
+// pairs from off-target regions count only toward a rare repeat (LocusAnalyzer::processOfftargetMates), and for any
+// other locus seeking mode throws on them. A locus that lists OfftargetRegions but has no RareRepeat variant is
+// therefore genotyped from its streamed reads, ignoring the regions.
+bool locusUsesOfftargetRegions(const LocusDescription& locusDescription)
+{
+    const std::vector<VariantTypeFromUser>& variantTypes = locusDescription.variantTypesFromUser();
+    return !locusDescription.offtargetRegions().empty()
+        && std::find(variantTypes.begin(), variantTypes.end(), VariantTypeFromUser::kRareRepeat) != variantTypes.end();
+}
+
+
+// Genotype a locus that uses OfftargetRegions (see locusUsesOfftargetRegions) exactly the way seeking mode does, so
+// its record matches seeking mode's. The streamed reads cannot be used for such a locus: they hold only reads near the locus, not the
+// in-repeat read pairs that mapped to its off-target regions elsewhere in the genome. Instead this collects the
+// locus's reads the way seeking mode does (index seeks into its target and off-target regions, then the mates of
+// far-apart pairs; see genotypeLocusWithSeekingModeReads). None of optimized-streaming's own departures from
+// seeking mode apply to it: no heuristic genotyper, no --max-depth cap, and the genotyper does not cap the repeat
+// at one read length in the per-allele read-yield weight (isOptimizedStreamingMode is switched off).
+LocusOutput genotypeLocusWithOfftargetRegions(const ProgramParameters& params, Reference& reference,
+    unsigned locusIndex, const LocusDescription& locusDescription, int typicalReadLength,
+    htshelpers::HtsFileSeeker& htsFileSeeker, htshelpers::MateExtractor& mateExtractor,
+    graphtools::AlignerSelector& alignerSelector, BamletWriterPtr bamletWriter)
+{
+    LocusOutput out;
+    out.locusIndex = locusIndex;
+    out.locusId = locusDescription.locusId();
+
+    try {
+        // Covers graph decode, read collection, alignment, analyze() and motif composition; only sampled under
+        // --output-genotype-timing.
+        const bool recordGenotypingTime = params.outputGenotypeTiming();
+        timespec genotypingStart{};
+        if (recordGenotypingTime) { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &genotypingStart); }
+
+        HeuristicParameters seekingModeHeuristics = params.heuristics();
+        seekingModeHeuristics.setIsOptimizedStreamingMode(false);
+        LocusSpecification locusSpec
+            = decodeLocusSpecification(locusDescription, reference, seekingModeHeuristics, true);
+        applyPlotPolicyFromCommandLine(params, locusSpec);
+
+        std::vector<std::unique_ptr<LocusAnalyzer>> locusAnalyzers;
+        locusAnalyzers.push_back(std::make_unique<LocusAnalyzer>(std::move(locusSpec), seekingModeHeuristics,
+            bamletWriter, params.enableAlleleQualityMetrics(), params.enableConsensusSequences()));
+        out.findings = genotypeLocusWithSeekingModeReads(
+            params, locusAnalyzers, htsFileSeeker, mateExtractor, alignerSelector, reference, typicalReadLength);
+        out.analyzer = std::move(locusAnalyzers.front());
+
+        boost::optional<double> genotypingTimeMillis;
+        if (recordGenotypingTime) {
+            genotypingTimeMillis = threadCpuMillisecondsSince(genotypingStart);
+        }
+        annotateRepeatFindings(out.findings, false, genotypingTimeMillis);
+
+        out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
+            ? LocusOutput::Kind::kFilteredOut
+            : LocusOutput::Kind::kGenotyped;
     } catch (const std::exception& e) {
         out.kind = LocusOutput::Kind::kError;
         out.message = e.what();
@@ -696,6 +777,12 @@ void doTheAnalysis(
     // buffers warm instead of reallocating ~hundreds of KB per locus.
     graphtools::AlignerSelector alignerSelector(params.heuristics().alignerType());
 
+    // Index-seeking readers for loci that use OfftargetRegions (see genotypeLocusWithOfftargetRegions). They are
+    // opened only when the first such locus is reached, since most catalogs have none. Like seeking mode's, the
+    // mate extractor is separate from `mateExtractor` and caches mates only under --cache-mates.
+    std::unique_ptr<htshelpers::HtsFileSeeker> offtargetLocusSeeker;
+    std::unique_ptr<htshelpers::MateExtractor> offtargetLocusMateExtractor;
+
     // Genotyping runs serially within this call (one contig / whole-file sweep per call); cross-contig
     // parallelism is handled by the caller. genotypeLocusFull copies each Read before processMates instead
     // of passing the shared FullReadPair members by reference. Since align() mutates a Read in place
@@ -746,6 +833,24 @@ void doTheAnalysis(
             return;
         }
         for (auto const& locusIndex : locusIndicesReadyForAnalysis) {
+            // A locus that uses OfftargetRegions is genotyped from reads collected the way seeking mode collects
+            // them, not from its streamed reads (see genotypeLocusWithOfftargetRegions). This applies under every
+            // --genotyping-approach, including only-quick, and even when no reads were streamed for the locus.
+            if (locusUsesOfftargetRegions(locusDescriptionCatalog[locusIndex])) {
+                if (!offtargetLocusSeeker) {
+                    offtargetLocusSeeker = std::make_unique<htshelpers::HtsFileSeeker>(
+                        inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference());
+                    offtargetLocusMateExtractor = std::make_unique<htshelpers::MateExtractor>(
+                        inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), params.cacheMates());
+                }
+                LocusOutput out = genotypeLocusWithOfftargetRegions(params, reference, locusIndex,
+                    locusDescriptionCatalog[locusIndex], typicalReadLength, *offtargetLocusSeeker,
+                    *offtargetLocusMateExtractor, alignerSelector, bamletWriter);
+                writeOutput(out);
+                locusCachesMap.erase(locusIndex);
+                continue;
+            }
+
             if (locusCachesMap.find(locusIndex) == locusCachesMap.end()) {
                 // Locus has zero coverage; emit a no-call record identical to seeking/streaming mode (see
                 // writeZeroCoverageRecord) so the output is consistent across analysis modes.

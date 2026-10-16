@@ -333,6 +333,36 @@ std::unordered_set<string> computeCanonicalRotations(const vector<string>& motif
     return canonicalRotations;
 }
 
+// The number of motifSize-long windows of upperSequence that are rotations of the motif whose canonical rotation is
+// motifCanonicalRotation.
+int countWindowsThatAreRotationsOfMotif(const string& upperSequence, const string& motifCanonicalRotation, int motifSize)
+{
+    int count = 0;
+    for (size_t start = 0; start + motifSize <= upperSequence.size(); ++start)
+    {
+        count += computeCanonicalRotation(upperSequence.substr(start, motifSize)) == motifCanonicalRotation;
+    }
+    return count;
+}
+
+// A read placed away from the locus, turned to the locus's strand by its own sequence: as is when more of its windows
+// are rotations of the catalog motif than in its reverse complement, reverse-complemented when fewer, and boost::none
+// when the counts are equal. `bases` keeps the case that marks base quality.
+boost::optional<string> orientToCatalogMotifStrand(const string& bases, const string& catalogMotifCanonicalRotation)
+{
+    const int motifSize = catalogMotifCanonicalRotation.size();
+    const string reverseComplement = graphtools::reverseComplement(bases);
+    const int forwardCount = countWindowsThatAreRotationsOfMotif(
+        toUpperSequence(bases), catalogMotifCanonicalRotation, motifSize);
+    const int reverseCount = countWindowsThatAreRotationsOfMotif(
+        toUpperSequence(reverseComplement), catalogMotifCanonicalRotation, motifSize);
+    if (forwardCount == reverseCount)
+    {
+        return boost::none;
+    }
+    return forwardCount > reverseCount ? bases : reverseComplement;
+}
+
 // See splitIntoMotifs for the arguments. `tractUpperCased` is `tract` in upper case; `tract` keeps the
 // case that marks base quality. knownMotifRotations holds the canonical rotations of the catalog's KnownMotifs.
 // Returns the length of the partial repeat unit at the end of the tract.
@@ -552,10 +582,13 @@ int countDifferences(const string& left, const string& right)
 struct RepeatTract
 {
     string bases; // reference orientation; lower case marks low-quality bases
-    int readPairIndex; // the read pair's position in computeMotifComposition's readPairs list
-    // Judged from the read's BAM/CRAM alignment, not its graph alignment. kRepeat covers both reads mapped inside the
-    // locus, reaching neither edge of the repeat sequence, and in-repeat reads (IRRs) placed elsewhere with a mate
-    // anchored next to the locus. kOther marks a read not classified yet; no kept tract has it.
+    // The read pair's position in computeMotifComposition's readPairs list, or, for an off-target read pair,
+    // readPairs.size() plus its position in offtargetReadPairs.
+    int readPairIndex;
+    // Judged from the read's BAM/CRAM alignment, not its graph alignment. kRepeat covers reads mapped inside the locus,
+    // reaching neither edge of the repeat sequence, in-repeat reads (IRRs) placed elsewhere with a mate anchored next
+    // to the locus, and the reads of off-target read pairs, which are oriented by their own sequence. kOther marks a
+    // read not classified yet; no kept tract has it.
     ReadType readType;
     // Repeat length in bp used to assign the read to an allele: for a spanning read, the allele length it shows; for a
     // flanking read, the repeat bases it shows, a lower bound on the allele length; not used for kRepeat reads.
@@ -1356,7 +1389,7 @@ vector<string> validateKnownMotifs(const vector<string>& knownMotifs, int motifS
 boost::optional<MotifComposition> computeMotifComposition(
     const MotifCompositionLocus& locus, int flankLength,
     const vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
-    bool onlyLociWithNonRefMotifs)
+    bool onlyLociWithNonRefMotifs, const vector<const FullReadPair*>& offtargetReadPairs)
 {
     const string& catalogMotif = locus.catalogMotif;
     const int motifSize = catalogMotif.size();
@@ -1458,6 +1491,28 @@ boost::optional<MotifComposition> computeMotifComposition(
             return mateStart < locusStart && mateEnd <= locusEnd && locusStart - mateStart <= anchorDistance;
         }
         return mateEnd > locusEnd && mateStart >= locusStart && mateEnd - locusEnd <= anchorDistance;
+    };
+
+    // An in-repeat read can still hold some flank at either end: cuts the tract's bases at the innermost flank anchor
+    // matches. Returns false when nothing is left.
+    auto cutInrepeatTractAtFlankAnchors = [&](string& tractBases)
+    {
+        int start = 0;
+        int end = tractBases.size();
+        if (rightAnchor)
+        {
+            end = cutAtRightAnchorInnermost(tractBases, *rightAnchor);
+        }
+        if (leftAnchor && end > start)
+        {
+            start = cutAtLeftAnchorInnermost(tractBases, end, *leftAnchor);
+        }
+        if (end <= start)
+        {
+            return false;
+        }
+        tractBases = tractBases.substr(start, end - start);
+        return true;
     };
 
     vector<RepeatTract> tracts;
@@ -1649,25 +1704,52 @@ boost::optional<MotifComposition> computeMotifComposition(
             }
             tract.readType = ReadType::kRepeat;
             tract.bases = mate->r.isReversed() == read->r.isReversed() ? graphtools::reverseComplement(bases) : bases;
+            if (cutInrepeatTractAtFlankAnchors(tract.bases))
             {
-                // An in-repeat read can still hold some flank at either end.
-                int start = 0;
-                int end = tract.bases.size();
-                if (rightAnchor)
-                {
-                    end = cutAtRightAnchorInnermost(tract.bases, *rightAnchor);
-                }
-                if (leftAnchor && end > start)
-                {
-                    start = cutAtLeftAnchorInnermost(tract.bases, end, *leftAnchor);
-                }
-                if (end <= start)
+                inrepeatTracts.push_back(std::move(tract));
+            }
+        }
+    }
+
+    // Off-target in-repeat read pairs: both reads made of repeat sequence and placed in the locus's off-target regions.
+    // No mate next to the locus gives their orientation, so each read is turned to the locus's strand by its own
+    // sequence; a catalog motif with IUPAC codes cannot do that. Placement in an off-target region says nothing about
+    // a read's origin, so MAPQ is not judged. The pairs are numbered after readPairs.
+    if (catalogMotifIsConcrete)
+    {
+        const string catalogMotifCanonicalRotation = computeCanonicalRotation(catalogMotif);
+        for (size_t offtargetPairIndex = 0; offtargetPairIndex != offtargetReadPairs.size(); ++offtargetPairIndex)
+        {
+            const FullReadPair& readPair = *offtargetReadPairs[offtargetPairIndex];
+            if (!readPair.firstMate || !readPair.secondMate
+                || !passesPeriodTest(
+                    readPair.firstMate->r.sequence(), motifSize, kMotifCompositionMinInrepeatReadPeriodScore)
+                || !passesPeriodTest(
+                    readPair.secondMate->r.sequence(), motifSize, kMotifCompositionMinInrepeatReadPeriodScore))
+            {
+                continue;
+            }
+            for (const FullRead* read : { &*readPair.firstMate, &*readPair.secondMate })
+            {
+                boost::optional<string> orientedBases
+                    = orientToCatalogMotifStrand(read->r.sequence(), catalogMotifCanonicalRotation);
+                if (!orientedBases)
                 {
                     continue;
                 }
-                tract.bases = tract.bases.substr(start, end - start);
+                RepeatTract tract;
+                tract.readPairIndex = static_cast<int>(readPairs.size() + offtargetPairIndex);
+                tract.readType = ReadType::kRepeat;
+                tract.alleleLengthSupportedByThisRead = 0;
+                tract.startsAtEdgeOfRepeatSequence = false;
+                tract.endsAtEdgeOfRepeatSequence = false;
+                tract.startOffset = -1;
+                tract.bases = std::move(*orientedBases);
+                if (cutInrepeatTractAtFlankAnchors(tract.bases))
+                {
+                    inrepeatTracts.push_back(std::move(tract));
+                }
             }
-            inrepeatTracts.push_back(std::move(tract));
         }
     }
     const size_t mappedTractCount = tracts.size();
@@ -1695,7 +1777,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     };
 
     std::unordered_map<string, vector<RepeatUnitLocation>> motifCandidates;
-    vector<char> readPairHasRepeatUnits(readPairs.size(), false);
+    vector<char> readPairHasRepeatUnits(readPairs.size() + offtargetReadPairs.size(), false);
     int readPairsWithRepeatUnits = 0;
     vector<SequenceSubstring> sequenceSubstrings;
     auto parseForDiscovery = [&](size_t firstTract, size_t lastTract, const MotifList& motifList)

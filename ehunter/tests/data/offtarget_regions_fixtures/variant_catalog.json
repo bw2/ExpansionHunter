@@ -1,0 +1,18 @@
+[
+    {
+        "LocusId": "C9LIKE",
+        "LocusStructure": "(GGCCCC)*",
+        "ReferenceRegion": "chr1:1500-1530",
+        "VariantType": "RareRepeat",
+        "OfftargetRegions": [
+            "chr2:1000-1500",
+            "chr3:1000-1500"
+        ]
+    },
+    {
+        "LocusId": "CHR2_CAG",
+        "LocusStructure": "(CAG)*",
+        "ReferenceRegion": "chr2:3236-3281",
+        "VariantType": "Repeat"
+    }
+]

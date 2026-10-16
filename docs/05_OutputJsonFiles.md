@@ -336,7 +336,13 @@ How it works, in brief:
   locus graph. A read made of a different motif than the catalog motif usually fails graph
   alignment, but it is kept here.
 * The bases aligned between the two edges of the reference repeat sequence are extracted, along
-  with in-repeat reads.
+  with in-repeat reads. An in-repeat read placed away from the locus is used when its mate lies in
+  a flank next to the locus, which also gives the read's orientation. At `RareRepeat` loci that list
+  `OfftargetRegions`, the read pairs placed in those regions with both reads made of repeat sequence
+  are used too. Their orientation comes from their own sequence (the strand on which more of the
+  read is made of the catalog motif); for a motif whose reverse complement is one of its rotations,
+  such as `AATT`, they cannot be oriented and are skipped. Pairs from another genomic copy of the
+  same motif can land in these regions, so they can add motifs that the locus does not have.
 * The repeat sequence is split into motif-sized repeat units. Where a repeat unit does not match an
   accepted motif, the splitter looks ahead up to one motif length so that an indel or a partial
   repeat unit does not disrupt every subsequent repeat unit. Bases skipped this way are not counted.
@@ -353,7 +359,7 @@ How it works, in brief:
 
 Limitations:
 
-* Only `--analysis-mode optimized-streaming` is supported.
+* Only `--analysis-mode seeking` and `--analysis-mode optimized-streaming` are supported.
 * Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not
   supported.
 * Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units

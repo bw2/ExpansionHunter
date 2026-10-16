@@ -260,7 +260,8 @@ int main(int argc, char** argv)
         // Skip loci that cannot be reliably genotyped at this sample's read length: those whose repeat
         // motif is larger than half the read length, or whose reference region is wider than 2x the read
         // length. Mirrors the >5-Ns-in-flanks catalog filter and applies to all analysis modes.
-        filterLociByReadLength(locusDescriptionCatalog, probeTypicalReadLength(inputPaths));
+        const int typicalReadLength = probeTypicalReadLength(inputPaths);
+        filterLociByReadLength(locusDescriptionCatalog, typicalReadLength);
         if (locusDescriptionCatalog.empty())
         {
             throw std::runtime_error(
@@ -314,7 +315,8 @@ int main(int argc, char** argv)
         if (params.analysisMode() == AnalysisMode::kSeeking)
         {
             spdlog::info("Running sample analysis in seeking mode");
-            sampleFindings = htsSeekingSampleAnalysis(params, heuristicParams, regionCatalog, bamletWriter);
+            sampleFindings = htsSeekingSampleAnalysis(
+                params, heuristicParams, regionCatalog, bamletWriter, reference.contigInfo(), typicalReadLength);
         }
         else
         {

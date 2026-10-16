@@ -48,6 +48,8 @@ void initializeGenomeMask(GenomeMask& genomeMask, vector<unique_ptr<locus::Locus
     }
 }
 
+// Used only by optimized-streaming mode, which gives a locus only the read pairs with a read inside the locus and its
+// flanks. OfftargetRegions are left out: loci that use them collect their reads the way seeking mode does.
 void initializeGenomeMask(GenomeMask& genomeMask, const LocusDescriptionCatalog& locusDescriptions)
 {
     for (const auto& locusDescription : locusDescriptions)
@@ -56,11 +58,6 @@ void initializeGenomeMask(GenomeMask& genomeMask, const LocusDescriptionCatalog&
                locusDescription.locusContigIndex(),
                locusDescription.locusAndFlanksStart(),
                locusDescription.locusAndFlanksEnd());
-
-        for (const auto& region : locusDescription.offtargetRegions())
-        {
-               genomeMask.addRegion(region.contigIndex(), region.start(), region.end());
-        }
     }
 }
 }

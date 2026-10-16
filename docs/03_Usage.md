@@ -46,6 +46,7 @@ optional arguments.
    this sets a limit on the number of reads processed per locus using reservoir sampling.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
+   `RareRepeat` loci that list `OfftargetRegions` are not capped, since they are genotyped as in `seeking` mode.
    Set to 150 by default (500 when `--output-motif-composition` is used); set to 0 to disable the cap.
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
   path or URL explicitly, instead of auto-detecting it from the `--reads` path.
@@ -60,7 +61,8 @@ optional arguments.
   complex alleles. `only-quick` runs only the quick heuristic and writes a `skipped` record for every locus that it
   is unable to genotype using only spanning reads; it is provided mainly for benchmarking and
   debugging. `only-full` runs the full genotyper on every locus (previously this was called the `low-mem-streaming`
-  analysis mode). See [Optimized-streaming mode](#optimized-streaming-mode) below.
+  analysis mode). Under every approach, `RareRepeat` loci that list `OfftargetRegions` are genotyped as in `seeking`
+  mode. See [Optimized-streaming mode](#optimized-streaming-mode) below.
 * `--dont-output-quality-metrics` Disable per-allele quality metrics computation. By
   default, ExpansionHunter computes quality metrics (QD, strand bias, flank depth,
   etc.) for each allele and outputs them in the JSON file. Use this flag to skip
@@ -80,8 +82,8 @@ optional arguments.
   input catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
   Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
-  `optimized-streaming` analysis mode. When this flag is used and `--max-depth` is not specified, the
-  default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
+  `seeking` and `optimized-streaming` analysis modes (not `streaming`). In `optimized-streaming` mode, when this flag is used and
+  `--max-depth` is not specified, the default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
   Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
   file size increases by 5% to 10%.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming`
@@ -126,6 +128,12 @@ described above, `only-quick` uses only the heuristic approach and skips loci wh
 Conversely, `only-full` always runs the full genotyper on every locus (this was previously called the
 `low-mem-streaming` analysis mode). `optimized-streaming` mode (unlike regular `streaming` mode)
 requires that the input BAM or CRAM file is sorted and indexed.
+
+`RareRepeat` loci that list `OfftargetRegions` in the variant catalog, such as **C9orf72** and **FMR1**, are
+handled differently: their reads are collected the way `seeking` mode collects them (using the index to read the locus and
+each of its off-target regions, then the mates of read pairs whose mates map far apart), and they are genotyped
+exactly as in `seeking` mode, so their records match `seeking` mode's. This applies under every
+`--genotyping-approach`, including `only-quick`, and these loci are not subject to the `--max-depth` cap.
 
 ### Resuming an interrupted run
 
@@ -180,10 +188,6 @@ Things worth knowing:
   one holding only the loci that run genotyped.
 
 #### Known limitations of `optimized-streaming`
-
-This mode ignores `OfftargetRegions` entries in the variant catalog. This can affect loci that do
-explicitly list off-target regions in the catalog, such as **C9orf72**, **FMR1**. For these loci,
-`--analysis-mode seeking` or `--analysis-mode streaming` are recommended.
 
 Its VCF output is not always sorted by position within a chromosome. Loci are written in the order
 they finish. `bcftools index` and `tabix` require sorted input, so sort the VCF before indexing it:

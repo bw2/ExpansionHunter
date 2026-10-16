@@ -1071,7 +1071,8 @@ bool processLocusFast(
 
 void addMotifComposition(
     const ProgramParameters& params, Reference& reference, const LocusSpecification& locusSpec,
-    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength)
+    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength,
+    const std::vector<std::shared_ptr<FullReadPair>>& offtargetReadPairs)
 {
     if (params.motifCompositionMode() == MotifCompositionMode::kOff)
     {
@@ -1117,7 +1118,7 @@ void addMotifComposition(
 
     const bool onlyLociWithNonRefMotifs
         = params.motifCompositionMode() == MotifCompositionMode::kLociWithNonRefMotifs;
-    if (readPairs.empty())
+    if (readPairs.empty() && offtargetReadPairs.empty())
     {
         if (!onlyLociWithNonRefMotifs)
         {
@@ -1144,16 +1145,20 @@ void addMotifComposition(
         std::min<int64_t>(contigSize, locus.locusEnd + kFlankLength)));
     locus.meanFragmentLength = locusFindings.stats.meanFragLength();
 
-    std::vector<const FullReadPair*> readPairPointers;
-    readPairPointers.reserve(readPairs.size());
-    for (const auto& readPair : readPairs)
+    auto toPointers = [](const std::vector<std::shared_ptr<FullReadPair>>& pairs)
     {
-        readPairPointers.push_back(readPair.get());
-    }
+        std::vector<const FullReadPair*> pointers;
+        pointers.reserve(pairs.size());
+        for (const auto& pair : pairs)
+        {
+            pointers.push_back(pair.get());
+        }
+        return pointers;
+    };
 
     boost::optional<MotifComposition> motifComposition = computeMotifComposition(
-        locus, params.heuristics().regionExtensionLength(), readPairPointers, repeatFindings->optionalGenotype(),
-        onlyLociWithNonRefMotifs);
+        locus, params.heuristics().regionExtensionLength(), toPointers(readPairs), repeatFindings->optionalGenotype(),
+        onlyLociWithNonRefMotifs, toPointers(offtargetReadPairs));
     if (motifComposition)
     {
         repeatFindings->setMotifComposition(std::move(*motifComposition));

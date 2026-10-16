@@ -102,10 +102,17 @@ std::vector<std::string> validateKnownMotifs(
 //
 // flankLength is how far from the locus the locus's reads were collected (--region-extension-length): a read BWA
 // placed confidently within this distance of the locus, but not in it, is never an in-repeat read.
+//
+// offtargetReadPairs are the locus's off-target read pairs: pairs that the genotyper checks as possible in-repeat read
+// pairs from the locus's OfftargetRegions (no read in the locus's target region, at least one in an off-target
+// region). A pair is used when both of its reads pass the in-repeat period test. Each read is then counted as an
+// in-repeat read, turned to the locus's strand by its own sequence: as is when more of its repeat-unit-sized windows
+// are rotations of the catalog motif than in its reverse complement, reverse-complemented when fewer. A read with
+// equal counts (always the case for a motif whose reverse complement is one of its rotations) is skipped.
 boost::optional<MotifComposition> computeMotifComposition(
     const MotifCompositionLocus& locus, int flankLength,
     const std::vector<const FullReadPair*>& readPairs, const boost::optional<RepeatGenotype>& genotype,
-    bool onlyLociWithNonRefMotifs);
+    bool onlyLociWithNonRefMotifs, const std::vector<const FullReadPair*>& offtargetReadPairs = {});
 
 // The building blocks below are exposed for unit testing.
 namespace motifcomposition

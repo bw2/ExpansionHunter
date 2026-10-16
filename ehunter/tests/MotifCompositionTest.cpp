@@ -606,6 +606,76 @@ TEST(MotifComposition, InrepeatReadTakesItsOrientationFromTheAnchoredMate)
     EXPECT_EQ(std::make_pair(4 * 10, 4), unanchored->locus.motifs.at(1));
 }
 
+// An off-target read pair: both reads mapped with MAPQ 0 in an off-target region on another contig. The sequences are
+// stored as BAM records store them, in the orientation of that region.
+FullReadPair makeOfftargetReadPair(const string& name, const string& firstMateSequence, const string& secondMateSequence)
+{
+    FullReadPair pair;
+    pair.firstMate = makeMappedRead(
+        name, MateNumber::kFirstMate, firstMateSequence, 5000, { cigarOp(firstMateSequence.size(), BAM_CMATCH) },
+        false, 0);
+    pair.secondMate = makeMappedRead(
+        name, MateNumber::kSecondMate, secondMateSequence, 5100, { cigarOp(secondMateSequence.size(), BAM_CMATCH) },
+        true, 0);
+    pair.firstMate->s.chromId = 3;
+    pair.secondMate->s.chromId = 3;
+    return pair;
+}
+
+TEST(MotifComposition, OfftargetReadsAreTurnedToTheLocusStrandByTheirSequence)
+{
+    ReadSet reads;
+    for (int index = 0; index != 4; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    // The second off-target region holds the repeat on the other strand, so its reads read CTG.
+    ReadSet offtargetReads;
+    offtargetReads.pairs.push_back(makeOfftargetReadPair("off0", repeatMotif("CAG", 20), repeatMotif("CAG", 20)));
+    offtargetReads.pairs.push_back(makeOfftargetReadPair("off1", repeatMotif("CTG", 20), repeatMotif("CTG", 20)));
+    const auto composition = computeMotifComposition(
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 30 }), false,
+        offtargetReads.pointers());
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
+    EXPECT_EQ(std::make_pair(4 * 10 + 4 * 20, 8), composition->locus.motifs.at(1));
+    // Each read is longer than the short allele, so all four count toward the long one.
+    ASSERT_TRUE(composition->hasAlleleBlocks);
+    EXPECT_EQ(std::make_pair(4 * 20, 4), composition->allele2.motifs.at(1));
+}
+
+TEST(MotifComposition, OfftargetReadPairIsUsedOnlyIfBothReadsAreRepeatSequence)
+{
+    ReadSet reads;
+    reads.pairs.push_back(makeSpanningRead("ref", repeatMotif("CAG", 10)));
+    ReadSet offtargetReads;
+    offtargetReads.pairs.push_back(
+        makeOfftargetReadPair("off", repeatMotif("CAG", 20), "ACGTTGCATGACCTAGGTCAATCGGATCCAGTTACGATGCATCGAACTGTGA"));
+    const auto composition = computeMotifComposition(
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 30 }), false,
+        offtargetReads.pointers());
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(std::make_pair(10, 1), composition->locus.motifs.at(1));
+}
+
+TEST(MotifComposition, OfftargetReadIsSkippedWhenItsSequenceDoesNotTellTheStrand)
+{
+    // AATT is its own reverse complement, so a read of it looks the same on both strands.
+    MotifCompositionLocus locus;
+    locus.contigIndex = 0;
+    locus.locusStart = 100;
+    locus.locusEnd = 132;
+    locus.catalogMotif = "AATT";
+    locus.referenceRepeatSequence = repeatMotif("AATT", 8);
+    locus.meanFragmentLength = 300;
+    ReadSet offtargetReads;
+    offtargetReads.pairs.push_back(makeOfftargetReadPair("off", repeatMotif("AATT", 15), repeatMotif("AATT", 15)));
+    const auto composition = computeMotifComposition(
+        locus, kRegionExtensionLength, { }, RepeatGenotype(4, { 8, 30 }), false, offtargetReads.pointers());
+    ASSERT_TRUE(composition);
+    EXPECT_TRUE(composition->locus.motifs.empty());
+}
+
 TEST(MotifComposition, InrepeatReadIsCutAtTheInnermostFlankAnchorMatch)
 {
     // HG002's chr22:23881827-23881841 (AC x 7) lies in a tandem array of ~120bp units, each holding an AC repeat and

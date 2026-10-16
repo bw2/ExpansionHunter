@@ -44,6 +44,7 @@
 #include "locus/LocusAnalyzer.hh"
 #include "sample/AnalyzerFinder.hh"
 #include "sample/HtsFileSeeker.hh"
+#include "sample/HtsLowMemStreamingHelpers.hh"
 #include "sample/MateExtractor.hh"
 
 using boost::optional;
@@ -233,6 +234,32 @@ void analyzeRead(
     locusAnalyzers[analyzer.locusIndex]->processMates(read.r, nullptr, analyzer.regionType, alignerSelector);
 }
 
+// The region type with which processReads gives a read pair, or a lone read, to the locus's analyzer, or boost::none
+// when it gives it to no analyzer (for example when no read lies fully inside one of the locus's regions).
+boost::optional<locus::RegionType> findRegionTypeGivenToAnalyzer(
+    const AnalyzerFinder& analyzerFinder, const FullReadPair& readPair)
+{
+    vector<AnalyzerBundle> analyzers;
+    if (readPair.numMatesSet() == 2)
+    {
+        const FullRead& read = *readPair.firstMate;
+        const FullRead& mate = *readPair.secondMate;
+        analyzers = analyzerFinder.query(
+            read.s.chromId, read.s.pos, read.s.pos + read.r.sequence().length(), mate.s.chromId, mate.s.pos,
+            mate.s.pos + mate.r.sequence().length());
+    }
+    else
+    {
+        const FullRead& read = readPair.firstMate ? *readPair.firstMate : *readPair.secondMate;
+        analyzers = analyzerFinder.query(read.s.chromId, read.s.pos, read.s.pos + read.r.sequence().length());
+    }
+    if (analyzers.empty())
+    {
+        return boost::none;
+    }
+    return analyzers.front().regionType;
+}
+
 void processReads(
     vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers, FullReadPairs& candidateReadPairs,
     AnalyzerFinder& analyzerFinder, graphtools::AlignerSelector& alignerSelector)
@@ -282,16 +309,18 @@ void processLocus(
     const int threadIndex, const ProgramParameters& programParams,
     const HeuristicParameters& heuristicParams, const RegionCatalog& regionCatalog,
     BamletWriterPtr alignmentWriter, SampleFindings& sampleFindings, LocusThreadSharedData& locusThreadSharedData,
-    std::vector<LocusThreadLocalData>& locusThreadLocalDataPool)
+    std::vector<LocusThreadLocalData>& locusThreadLocalDataPool, const ReferenceContigInfo& contigInfo,
+    int typicalReadLength)
 {
     const InputPaths& inputPaths = programParams.inputPaths();
-    const Sex& sampleSex = programParams.sample().sex();
 
     LocusThreadLocalData& locusThreadData(locusThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
 
     try
     {
+        // A reference reader per thread for motif composition (a FastaReference is not safe to share across threads).
+        FastaReference reference(inputPaths.reference(), contigInfo);
         HtsFileSeeker htsFileSeeker(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference());
         htshelpers::MateExtractor mateExtractor(inputPaths.htsFile(), inputPaths.htsIndexFile(), inputPaths.reference(), programParams.cacheMates());
         graphtools::AlignerSelector alignerSelector(heuristicParams.alignerType());
@@ -329,16 +358,8 @@ void processLocus(
                                                           programParams.enableAlleleQualityMetrics(),
                                                           programParams.enableConsensusSequences()));
             locusAnalyzers.emplace_back(std::move(analyzer));
-            AnalyzerFinder analyzerFinder(locusAnalyzers);
-
-            FullReadPairs readPairs = collectCandidateReads(
-                locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(),
-                htsFileSeeker, mateExtractor);
-
-            processReads(locusAnalyzers, readPairs, analyzerFinder, alignerSelector);
-            sampleFindings[locusIndex] = locusAnalyzers.front()->analyze(
-                sampleSex, boost::none,
-                programParams.outputPaths().outputPrefix());
+            sampleFindings[locusIndex] = genotypeLocusWithSeekingModeReads(programParams, locusAnalyzers,
+                htsFileSeeker, mateExtractor, alignerSelector, reference, typicalReadLength);
         }
     }
     catch (const std::exception& e)
@@ -360,9 +381,55 @@ void processLocus(
 }
 }
 
+LocusFindings genotypeLocusWithSeekingModeReads(
+    const ProgramParameters& programParams, vector<unique_ptr<LocusAnalyzer>>& locusAnalyzers,
+    HtsFileSeeker& htsFileSeeker, htshelpers::MateExtractor& mateExtractor,
+    graphtools::AlignerSelector& alignerSelector, Reference& reference, int typicalReadLength)
+{
+    LocusAnalyzer& locusAnalyzer = *locusAnalyzers.front();
+    const LocusSpecification& locusSpec = locusAnalyzer.locusSpec();
+    AnalyzerFinder analyzerFinder(locusAnalyzers);
+
+    FullReadPairs readPairs = collectCandidateReads(
+        locusSpec.targetReadExtractionRegions(), locusSpec.offtargetReadExtractionRegions(), htsFileSeeker,
+        mateExtractor);
+
+    // Copies of the reads for motif composition, taken before graph alignment reverse-complements them in place. Only
+    // the reads the analyzer uses are copied (see findRegionTypeGivenToAnalyzer): the ones it is given as target
+    // reads, and the pairs it is given as off-target pairs, which are kept apart since motif composition treats them
+    // differently. The analyzer ignores a lone read given as an off-target read (LocusAnalyzer::processMates).
+    vector<std::shared_ptr<FullReadPair>> readPairsForMotifComposition;
+    vector<std::shared_ptr<FullReadPair>> offtargetReadPairsForMotifComposition;
+    if (programParams.motifCompositionMode() != MotifCompositionMode::kOff)
+    {
+        for (const auto& fragmentIdAndReadPair : readPairs)
+        {
+            const FullReadPair& readPair = fragmentIdAndReadPair.second;
+            const boost::optional<locus::RegionType> regionType
+                = findRegionTypeGivenToAnalyzer(analyzerFinder, readPair);
+            if (regionType == locus::RegionType::kTarget)
+            {
+                readPairsForMotifComposition.push_back(std::make_shared<FullReadPair>(readPair));
+            }
+            else if (regionType == locus::RegionType::kOfftarget && readPair.numMatesSet() == 2)
+            {
+                offtargetReadPairsForMotifComposition.push_back(std::make_shared<FullReadPair>(readPair));
+            }
+        }
+    }
+
+    processReads(locusAnalyzers, readPairs, analyzerFinder, alignerSelector);
+    LocusFindings locusFindings = locusAnalyzer.analyze(
+        programParams.sample().sex(), boost::none, programParams.outputPaths().outputPrefix());
+    addMotifComposition(programParams, reference, locusSpec, locusFindings, readPairsForMotifComposition,
+        typicalReadLength, offtargetReadPairsForMotifComposition);
+    return locusFindings;
+}
+
 SampleFindings htsSeekingSampleAnalysis(
     const ProgramParameters& programParams, const HeuristicParameters& heuristicParams,
-    const RegionCatalog& regionCatalog, BamletWriterPtr alignmentWriter)
+    const RegionCatalog& regionCatalog, BamletWriterPtr alignmentWriter, const ReferenceContigInfo& contigInfo,
+    int typicalReadLength)
 {
     const int threadCount = programParams.threadCount;
     if (threadCount > 1)
@@ -391,7 +458,7 @@ SampleFindings htsSeekingSampleAnalysis(
         locusThreads.emplace_back(
             processLocus, threadIndex, std::cref(programParams), std::cref(heuristicParams),
             std::cref(regionCatalog), alignmentWriter, std::ref(sampleFindings), std::ref(locusThreadSharedData),
-            std::ref(locusThreadLocalDataPool));
+            std::ref(locusThreadLocalDataPool), std::cref(contigInfo), typicalReadLength);
     }
 
     // Rethrow exceptions from worker pool in thread order:

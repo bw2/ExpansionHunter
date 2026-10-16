@@ -71,10 +71,12 @@ bool processLocusFast(
 // alongside it) whose motif is between 2 bp and a third of typicalReadLength; other loci are left unchanged. In
 // loci-with-known-motifs mode, loci whose catalog record has no KnownMotifs are also left unchanged. With no reads,
 // all-loci and loci-with-known-motifs modes attach an empty composition (no reference access), so every eligible locus
-// written to the JSON carries the field.
+// written to the JSON carries the field. offtargetReadPairs are the locus's off-target read pairs (see
+// computeMotifComposition); only loci genotyped from seeking-mode reads have them.
 void addMotifComposition(
     const ProgramParameters& params, Reference& reference, const LocusSpecification& locusSpec,
-    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength);
+    LocusFindings& locusFindings, const std::vector<std::shared_ptr<FullReadPair>>& readPairs, int typicalReadLength,
+    const std::vector<std::shared_ptr<FullReadPair>>& offtargetReadPairs = {});
 
 // Emit a no-call record for a locus with zero coverage, identical to what seeking/streaming mode produce,
 // without running genotyping. For single-region loci it builds a flankless stub LocusSpecification
