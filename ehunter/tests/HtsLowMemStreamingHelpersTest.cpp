@@ -318,3 +318,82 @@ TEST(ProcessRead, RepeatTractIsUnusableWhenLocusEndIsNotReached)
     EXPECT_FALSE(result.is_spanning_read);
     EXPECT_EQ(-1, result.repeat_tract_length);
 }
+
+namespace
+{
+std::vector<std::shared_ptr<FullReadPair>> makeReadPairs(const std::vector<std::pair<std::string, std::string>>& sequences)
+{
+    std::vector<std::shared_ptr<FullReadPair>> readPairs;
+    for (const auto& [firstMateSequence, secondMateSequence] : sequences) {
+        auto readPair = std::make_shared<FullReadPair>();
+        readPair->firstMate = makeRead(firstMateSequence, /*pos=*/100, {cigarOp(firstMateSequence.size(), BAM_CMATCH)});
+        if (!secondMateSequence.empty()) {
+            readPair->secondMate = makeRead(secondMateSequence, /*pos=*/400, {cigarOp(secondMateSequence.size(), BAM_CMATCH)});
+        }
+        readPairs.push_back(readPair);
+    }
+    return readPairs;
+}
+
+std::string repeat(const std::string& motif, int count)
+{
+    std::string sequence;
+    for (int i = 0; i < count; ++i) {
+        sequence += motif;
+    }
+    return sequence;
+}
+} // namespace
+
+// Two in-repeat reads anchored by flanking mates are the signature of an allele longer than a read, so the
+// fast path must hand the locus to the full genotyper. The second one is on the other strand (CTG for a CAG
+// locus) and starts mid-motif, which the purity test also accepts.
+TEST(HasEnoughInRepeatReadsForFullGenotyping, TwoInRepeatReadsAreEnough)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    const auto readPairs = makeReadPairs({
+        {flank, repeat("CAG", 50)},
+        {flank, "TG" + repeat("CTG", 49) + "C"},
+        {flank, flank}});
+    EXPECT_TRUE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "CAG"));
+}
+
+TEST(HasEnoughInRepeatReadsForFullGenotyping, OneInRepeatReadIsNotEnough)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    const auto readPairs = makeReadPairs({{flank, repeat("CAG", 50)}, {flank, flank}, {flank, ""}});
+    EXPECT_FALSE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "CAG"));
+}
+
+// A short locus inside a reference stretch of the motif longer than a read: such loci get in-repeat reads
+// from the reference itself, so the fast path keeps them.
+TEST(HasReadLengthStretchOfInRepeatSequence, LongReferenceRepeatIsFound)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    EXPECT_TRUE(hasReadLengthStretchOfInRepeatSequence(flank + repeat("ACC", 70) + flank, "CCA", 150));
+}
+
+// An imperfect VNTR like chr22:20,162,000-20,164,800 (ACC with an ATCACT every 21 bases): reads from it pass the
+// in-repeat read test, so it must count as a stretch of repeat too.
+TEST(HasReadLengthStretchOfInRepeatSequence, ImperfectReferenceRepeatIsFound)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    EXPECT_TRUE(hasReadLengthStretchOfInRepeatSequence(flank + repeat("ACCACCACCACCACCATCACT", 12) + flank, "ACC", 150));
+}
+
+TEST(HasReadLengthStretchOfInRepeatSequence, ShortReferenceRepeatIsNotFound)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    EXPECT_FALSE(hasReadLengthStretchOfInRepeatSequence(flank + flank + repeat("CAG", 10) + flank + flank, "CAG", 150));
+    EXPECT_FALSE(hasReadLengthStretchOfInRepeatSequence(repeat("CAG", 10), "CAG", 150));
+}
+
+// Reads that are only partly repeat (a flank plus a normal-length allele) don't count.
+TEST(HasEnoughInRepeatReadsForFullGenotyping, ReadsWithFlanksAreNotInRepeatReads)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    const auto readPairs = makeReadPairs({
+        {flank + repeat("CAG", 20), repeat("CAG", 20) + flank},
+        {flank + repeat("CAG", 25), repeat("CAG", 25) + flank}});
+    EXPECT_FALSE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "CAG"));
+}

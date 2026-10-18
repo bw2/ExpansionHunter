@@ -61,6 +61,16 @@ bool shouldFilterLocus(
 FastReadAnalysisResult processRead(
     const FullRead& read, int64_t locus_start_0based, int64_t locus_end_0based, const std::string& locus_motif);
 
+// Says whether at least two of the reads (both mates of every pair, wherever they're aligned) are in-repeat reads for
+// the motif, i.e. evidence of an allele longer than a read, which processLocusFast can't size. Exposed for unit tests.
+bool hasEnoughInRepeatReadsForFullGenotyping(
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, const std::string& locusMotif);
+
+// Says whether some read-length window of the reference sequence is nearly pure repeat of the motif (weighted purity
+// at least 0.75), in which case in-repeat reads at the locus aren't evidence of an expansion. Exposed for unit tests.
+bool hasReadLengthStretchOfInRepeatSequence(
+    const std::string& referenceSequence, const std::string& locusMotif, int readLength);
+
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled, int typicalReadLength,

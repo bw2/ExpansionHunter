@@ -17,6 +17,7 @@
 #include "core/LocusStats.hh"
 #include "core/Read.hh"
 #include "core/RepeatPurity.hh"
+#include "core/WeightedPurityCalculator.hh"
 #include "genotyping/RepeatGenotype.hh"
 #include "io/LocusSpecDecoding.hh"
 #include "io/ParameterLoading.hh"
@@ -511,6 +512,71 @@ FastReadAnalysisResult processRead(
 }
 
 
+// the same weighted-purity test IrrPairFinder uses to recognize in-repeat reads
+constexpr double kMinWeightedPurityOfInRepeatRead = 0.90;
+
+bool hasEnoughInRepeatReadsForFullGenotyping(
+    const std::vector<std::shared_ptr<FullReadPair>>& readPairs, const std::string& locusMotif)
+{
+    // two, so that a single read from another copy of the motif elsewhere in the genome isn't enough
+    constexpr int kMinInRepeatReads = 2;
+
+    // Scoring whole reads against every rotation of the motif at every locus added 14% to optimized-streaming's CPU
+    // time, so each read's first kPrefixLength bases are scored first. Since a base scores at most 1, a read of
+    // length L that scores >= kMinWeightedPurityOfInRepeatRead * L in total scores at least that minus (L - kPrefixLength)
+    // in its prefix, under the read's best rotation and so under the prefix's own best one too: a prefix scoring
+    // less can't belong to an in-repeat read, and skipping such reads changes no result.
+    constexpr int kPrefixLength = 30;
+
+    const WeightedPurityCalculator purityCalculator(locusMotif);
+    int numInRepeatReads = 0;
+    for (const auto& readPair : readPairs) {
+        for (const auto* read : { readPair->firstMate ? &*readPair->firstMate : nullptr,
+                                  readPair->secondMate ? &*readPair->secondMate : nullptr }) {
+            if (read == nullptr) {
+                continue;
+            }
+            const std::string& sequence = read->r.sequence();
+            const int readLength = sequence.size();
+            if (readLength > kPrefixLength) {
+                const double minPrefixPurity
+                    = (kMinWeightedPurityOfInRepeatRead * readLength - (readLength - kPrefixLength)) / kPrefixLength;
+                if (purityCalculator.score(sequence.substr(0, kPrefixLength)) < minPrefixPurity) {
+                    continue;
+                }
+            }
+            if (purityCalculator.score(sequence) >= kMinWeightedPurityOfInRepeatRead
+                    && ++numInRepeatReads >= kMinInRepeatReads) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+
+bool hasReadLengthStretchOfInRepeatSequence(
+    const std::string& referenceSequence, const std::string& locusMotif, const int readLength)
+{
+    if (readLength <= 0 || static_cast<int>(referenceSequence.size()) < readLength) {
+        return false;
+    }
+    // Lower than kMinWeightedPurityOfInRepeatRead: reads from an imperfect repeat score higher than the reference does
+    // (low-quality bases are lowercase, which never scores as a mismatch), so in a VNTR whose reference windows score
+    // 0.80-0.85 reads already pass 0.90. Near the known disease loci, reference windows score at most 0.64 (except FGF14).
+    constexpr double kMinWeightedPurityOfReferenceStretch = 0.75;
+    const WeightedPurityCalculator purityCalculator(locusMotif);
+    // windows a tenth of a read apart, so any in-repeat stretch at least that much longer than a read is found
+    const int step = std::max(1, readLength / 10);
+    for (size_t start = 0; start + readLength <= referenceSequence.size(); start += step) {
+        if (purityCalculator.score(referenceSequence.substr(start, readLength)) >= kMinWeightedPurityOfReferenceStretch) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
 bool processLocusFast(
     const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled, int typicalReadLength,
@@ -702,6 +768,23 @@ bool processLocusFast(
 
 	if (num_soft_clipped_reads_supporting_larger_allele_than_any_spanning_read >= 2) {
         return false;
+    }
+
+    // The votes above come only from reads anchored in a flank, so they can't show an allele longer than a read.
+    // The evidence for such an allele is in-repeat reads, which the full genotyper uses and this fast path doesn't:
+    // without this check, expansions such as a 67-repeat ATXN3 allele were called homozygous for the normal allele.
+    // In-repeat reads mean nothing, though, where the reference near the locus is itself a stretch of the motif
+    // longer than a read (e.g. a short locus inside a long VNTR), since every read from that stretch is one.
+    if (hasEnoughInRepeatReadsForFullGenotyping(readPairs, locusMotif)) {
+        const int64_t regionExtensionLength = params.heuristics().regionExtensionLength();
+        const int64_t contigSize = reference.contigInfo().getContigSize(locusReferenceRegion.contigIndex());
+        const GenomicRegion locusWithFlanks(
+            locusReferenceRegion.contigIndex(),
+            std::max<int64_t>(0, locusReferenceRegion.start() - regionExtensionLength),
+            std::min<int64_t>(contigSize, locusReferenceRegion.end() + regionExtensionLength));
+        if (!hasReadLengthStretchOfInRepeatSequence(reference.getSequence(locusWithFlanks), locusMotif, typicalReadLength)) {
+            return false;
+        }
     }
 
     // combine spanning and soft-clipped read votes
