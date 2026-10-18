@@ -60,14 +60,19 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
         // Optionally buffer fragments for specialized caller extensions (RFC1, REViewer):
         if (alignmentBuffer_)
         {
+            // Store read 1 in the read slot, as AlignedFragment documents. The strand bias metric and the RFC1 motif
+            // analysis use only that read, and streaming mode passes the read of the pair it decoded last, not read 1.
+            const bool isMateRead1 = mate->isFirstMate() && !read.isFirstMate();
+            const Read& read1 = isMateRead1 ? *mate : read;
+            const Read& read2 = isMateRead1 ? read : *mate;
             AlignedFragment fragment {
-                read.fragmentId(),
-                read.sequence(),
-                *readAlign,
-                !read.isReversed(),
-                mate->sequence(),
-                *mateAlign,
-                !mate->isReversed()
+                read1.fragmentId(),
+                read1.sequence(),
+                isMateRead1 ? *mateAlign : *readAlign,
+                !read1.isReversed(),
+                read2.sequence(),
+                isMateRead1 ? *readAlign : *mateAlign,
+                !read2.isReversed()
             };
             alignmentBuffer_->tryInsertFragment(std::move(fragment));
         }

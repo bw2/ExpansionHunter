@@ -4,8 +4,9 @@ Two things are checked against the simulated read sets in
 ``../PolymorphicTandemRepeatFinder/simulated_data``:
 
 1. ``seeking`` and ``streaming`` modes must produce identical genotype calls
-   (GT / REPCN / REPCI) for every sample. These two modes share the genotyping
-   core and are expected to agree exactly.
+   (GT / REPCN / REPCI), and the same strand bias and pOk for each allele, for
+   every sample. These two modes share the genotyping core and are expected to
+   agree exactly.
 
 2. The accuracy of ``seeking`` vs ``optimized-streaming`` (with the default
    ``--genotyping-approach auto`` and with ``only-full``) is compared against the
@@ -169,11 +170,23 @@ def parse_repcn(repcn):
     return tuple(sorted(int(p) for p in parts))
 
 
+def read_strand_bias_and_pOk_per_allele(json_path):
+    """Returns a (StrandBiasBinomialPhred, pOk) tuple for each allele in an ExpansionHunter JSON output, in output
+    order."""
+    with open(json_path) as f:
+        locus_results = json.load(f)["LocusResults"]
+    return [(allele.get("StrandBiasBinomialPhred"), allele.get("pOk"))
+            for locus_result in locus_results.values()
+            for variant in locus_result.get("Variants", {}).values()
+            for allele in (variant.get("AlleleQualityMetrics") or {}).get("Alleles", [])]
+
+
 def run_expansion_hunter(reads_bam, reference, catalog, output_prefix, mode):
     """Runs ExpansionHunter and returns the parsed call dict for the single locus.
 
-    The dict has keys: ``GT``, ``REPCN`` (raw string), ``REPCI``, and ``alleles``
-    (sorted int tuple or None for a no-call). Raises CalledProcessError on a non-zero exit.
+    The dict has keys: ``GT``, ``REPCN`` (raw string), ``REPCI``, ``alleles``
+    (sorted int tuple or None for a no-call), and ``strand_bias_and_pOk_per_allele``
+    (see read_strand_bias_and_pOk_per_allele). Raises CalledProcessError on a non-zero exit.
     """
     subprocess.run(
         [EH_BINARY, "--reads", reads_bam, "--reference", reference,
@@ -191,6 +204,7 @@ def run_expansion_hunter(reads_bam, reference, catalog, output_prefix, mode):
                 "REPCN": sample.get("REPCN"),
                 "REPCI": sample.get("REPCI"),
                 "alleles": parse_repcn(sample.get("REPCN", "./.")),
+                "strand_bias_and_pOk_per_allele": read_strand_bias_and_pOk_per_allele(output_prefix + ".json"),
             }
     raise AssertionError(f"No VCF record produced for mode={mode} prefix={output_prefix}")
 
@@ -288,16 +302,18 @@ class ModeConsistencyAndAccuracyTest(unittest.TestCase):
             self.skipTest("no simulated samples were genotyped")
 
     def test_seeking_and_streaming_produce_identical_calls(self):
-        """seeking and streaming must agree on GT/REPCN/REPCI per locus."""
+        """seeking and streaming must agree on GT/REPCN/REPCI and on each allele's strand bias and pOk per locus."""
         mismatches = 0
         for key in sorted(self.RESULTS):
             locus_id, n1, n2 = key
             with self.subTest(locus=locus_id, truth=f"{n1}/{n2}"):
                 calls = {m: self.RESULTS[key][m] for m in IDENTICAL_MODES}
                 reference_call = calls["seeking"]
-                signature = (reference_call["GT"], reference_call["REPCN"], reference_call["REPCI"])
+                signature = (reference_call["GT"], reference_call["REPCN"], reference_call["REPCI"],
+                             reference_call["strand_bias_and_pOk_per_allele"])
                 for mode in IDENTICAL_MODES[1:]:
-                    other = (calls[mode]["GT"], calls[mode]["REPCN"], calls[mode]["REPCI"])
+                    other = (calls[mode]["GT"], calls[mode]["REPCN"], calls[mode]["REPCI"],
+                             calls[mode]["strand_bias_and_pOk_per_allele"])
                     if other != signature:
                         mismatches += 1
                     self.assertEqual(
