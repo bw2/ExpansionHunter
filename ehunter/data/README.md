@@ -1,6 +1,6 @@
 # Genotype quality model data
 
-`genotype_quality_model_from_HG002_and_CHM1_CHM13_plus50.20261008.json.gz` specifies a pretrained gradient-boosted decision tree model 
+`genotype_quality_model_from_HG002_and_CHM1_CHM13_plus50.20261017.json.gz` specifies a pretrained gradient-boosted decision tree model 
 that ExpansionHunter uses to generate the `PredictedLengthCorrectionFactor`,
 `pOk`, `pTooShort`, and `pTooLong` fields within the output JSON `AlleleQualityMetrics` section.
 
@@ -17,8 +17,13 @@ The truth data was generated from T2T assemblies as described in [[Weisburd 2023
 https://github.com/broadinstitute/str-truth-set-v2
 
 The truth genotypes count repeat insertions that DipCall's left-alignment placed up to one motif length before a
-locus (str-analysis bd68a2a). The previous model (`..._plus50.20261006`) was trained on truth that reported the
+locus (str-analysis bd68a2a). The earlier `..._plus50.20261006` model was trained on truth that reported the
 reference length there.
+
+The full genotyper's models don't use the allele's `StrandBiasBinomialPhred`. Until 2026-10-17, the full genotyper in
+streaming and optimized-streaming modes counted the strand of whichever read of a pair it decoded last instead of read
+1, and the training data was made that way, so the previous model (`..._plus50.20261008`) learned values that the fixed
+binary no longer produces. The fast-path model still uses strand bias, which the fast path computes with its own code.
 
 
 
