@@ -15,6 +15,14 @@
 
 #include "gmock/gmock.h"
 
+#include "core/ReferenceContigInfo.hh"
+#include "genotyping/RepeatGenotype.hh"
+#include "io/GraphBlueprint.hh"
+#include "io/JsonWriter.hh"
+#include "io/RegionGraph.hh"
+#include "locus/LocusSpecification.hh"
+#include "locus/VariantFindings.hh"
+
 using namespace ehunter;
 using namespace ehunter::gq;
 
@@ -269,5 +277,71 @@ TEST(GenotypeQualityAnnotator, CurrentlyUnconsumedFeaturesReachTheModelWithTheRi
             = predictAllele(modelSplittingOn(index, value + 0.5), true, ctx, 0, 20, 18, 24, makeAqm());
         EXPECT_NEAR(above.lengthCorrectionFactor, std::exp(0.2), 1e-12)
             << nameAndValue.first << " did not route left of " << (value + 0.5);
+    }
+}
+
+namespace
+{
+
+// Returns the JSON record VariantJsonWriter writes for a heterozygous 3/7 CAG call of the given repeat subtype, at a
+// locus with or without OfftargetRegions.
+nlohmann::json writeHeterozygousCallRecord(VariantSubtype repeatSubtype, bool locusListsOfftargetRegions)
+{
+    const ReferenceContigInfo contigInfo({ { "chr1", 1000 } });
+    LocusSpecification locusSpec(
+        "LOCUS", ChromType::kAutosome, { GenomicRegion(0, 100, 200) },
+        makeRegionGraph(decodeFeaturesFromRegex("ATTCGA(CAG)*ATGTCG")), {}, GenotyperParameters(10), false, {});
+    locusSpec.addVariantSpecification(
+        "LOCUS", VariantClassification(VariantType::kRepeat, repeatSubtype), GenomicRegion(0, 106, 115), { 1 },
+        boost::none);
+    if (locusListsOfftargetRegions)
+    {
+        locusSpec.setOfftargetReadExtractionRegions({ GenomicRegion(0, 500, 600) });
+    }
+
+    RepeatFindings findings(
+        CountTable(), CountTable(), CountTable(), AlleleCount::kTwo, RepeatGenotype(3, { 3, 7 }),
+        static_cast<GenotypeFilter>(0));
+    RepeatAlleleQualityMetrics metrics;
+    metrics.variantId = "LOCUS";
+    metrics.hasMetrics = true;
+    for (const int alleleSize : { 3, 7 })
+    {
+        AlleleMetrics allele = makeAqm();
+        allele.alleleNumber = static_cast<int>(metrics.alleles.size()) + 1;
+        allele.alleleSize = alleleSize;
+        metrics.alleles.push_back(allele);
+    }
+    findings.setAlleleQualityMetrics(metrics);
+
+    const GenotypeQualityModel qualityModel = model();
+    VariantJsonWriter writer(contigInfo, locusSpec, locusSpec.variantSpecs().front(), &qualityModel, 30.0);
+    writer.visit(&findings);
+    return writer.record();
+}
+
+} // namespace
+
+TEST(GenotypeQualityAnnotator, JsonLeavesOutModelPredictionsForRareRepeatsAtLociWithOfftargetRegions)
+{
+    for (const VariantSubtype repeatSubtype : { VariantSubtype::kCommonRepeat, VariantSubtype::kRareRepeat })
+    {
+        for (const bool locusListsOfftargetRegions : { false, true })
+        {
+            const bool expectPredictions
+                = !(repeatSubtype == VariantSubtype::kRareRepeat && locusListsOfftargetRegions);
+            const nlohmann::json alleles = writeHeterozygousCallRecord(
+                repeatSubtype, locusListsOfftargetRegions)["AlleleQualityMetrics"]["Alleles"];
+            ASSERT_EQ(2u, alleles.size());
+            for (const auto& allele : alleles)
+            {
+                EXPECT_TRUE(allele.contains("AlleleSize"));
+                EXPECT_TRUE(allele.contains("StrandBiasBinomialPhred"));
+                EXPECT_EQ(expectPredictions, allele.contains("PredictedLengthCorrectionFactor"));
+                EXPECT_EQ(expectPredictions, allele.contains("pOk"));
+                EXPECT_EQ(expectPredictions, allele.contains("pTooShort"));
+                EXPECT_EQ(expectPredictions, allele.contains("pTooLong"));
+            }
+        }
     }
 }

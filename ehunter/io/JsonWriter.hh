@@ -41,8 +41,9 @@ class VariantJsonWriter : public VariantFindingsVisitor
 {
 public:
     // When qualityModel is non-null, per-allele genotype-quality fields
-    // (PredictedLengthCorrectionFactor / pTooShort / pTooLong) are added to each
-    // AlleleQualityMetrics allele record. A null model leaves output unchanged.
+    // (PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong) are added to each
+    // AlleleQualityMetrics allele record, except for a RareRepeat at a locus that specifies OfftargetRegions.
+    // A null model leaves output unchanged.
     // locusCoverage is the model's `coverage` feature and must be the same value the caller
     // emits as the locus record's Coverage field; NaN when it is not available.
     VariantJsonWriter(

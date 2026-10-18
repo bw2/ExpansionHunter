@@ -328,7 +328,14 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
             alleleRecord["ConfidenceIntervalDividedByAlleleSize"] = round3(allele.confidenceIntervalDividedByAlleleSize);
 
             // Genotype-quality model predictions (only when a model is loaded and the genotype is present).
-            if (qualityModel_ != nullptr && repeatFindings.optionalGenotype())
+            // Not generated for a RareRepeat at a locus that specifies OfftargetRegions, the only kind of variant whose
+            // genotype counts in-repeat read pairs from those regions: the model was trained without such variants,
+            // and there it labeled known pathogenic expansions as too long and predicted corrections that shrink them
+            // below the pathogenic range.
+            const bool genotypeCountsOfftargetReads
+                = variantSpec_.classification().subtype == VariantSubtype::kRareRepeat
+                && !locusSpec_.offtargetReadExtractionRegions().empty();
+            if (qualityModel_ != nullptr && repeatFindings.optionalGenotype() && !genotypeCountsOfftargetReads)
             {
                 const RepeatGenotype& genotype = *repeatFindings.optionalGenotype();
                 const int alleleRank = allele.alleleNumber - 1;

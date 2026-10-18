@@ -3,7 +3,8 @@
 //
 // Glue that composes the genotype-quality feature assembler and model evaluator
 // into a single per-allele prediction. The JSON writer calls predictAllele for
-// each called allele and emits PredictedLengthCorrectionFactor / pTooShort / pTooLong.
+// each called allele, except for a RareRepeat at a locus that specifies OfftargetRegions,
+// and emits PredictedLengthCorrectionFactor / pOk / pTooShort / pTooLong.
 // Kept separate so this composition is unit-testable without the writer.
 //
 

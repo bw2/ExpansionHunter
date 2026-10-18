@@ -206,6 +206,11 @@ These four fields are added to each allele object:
 
 `pOk + pTooShort + pTooLong` sum to 1 (up to rounding).
 
+These four fields are not generated for `RareRepeat` variants at loci that specify `OfftargetRegions` in the catalog,
+the only variants whose genotypes count in-repeat read pairs from those regions. The model was trained without such
+variants, and there it labeled known pathogenic expansions as too long and predicted corrections that shrink them below
+the pathogenic range.
+
 ### PredictedLengthCorrectionFactor
 
 The model's estimate of the called size divided by the true size (`called / true`):
