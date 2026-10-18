@@ -28,6 +28,11 @@
 #include <string>
 #include <utility>
 
+extern "C"
+{
+#include "htslib/cram.h"
+}
+
 #include "spdlog/spdlog.h"
 
 using std::pair;
@@ -154,6 +159,38 @@ LinearAlignmentStats decodeAlignmentStats(bam1_t* htsAlignPtr)
 bool isPrimaryAlignment(bam1_t* htsAlignPtr)
 {
     return !((htsAlignPtr->core.flag & BAM_FSECONDARY) || (htsAlignPtr->core.flag & BAM_FSUPPLEMENTARY));
+}
+
+bool isReadFailure(htsFile* htsFilePtr, const int samReadReturnCode)
+{
+    if (samReadReturnCode < -1)
+    {
+        return true;
+    }
+
+    // For a CRAM, a failed read of the next container's header also returns -1, like a normal end of the region or
+    // file, but leaves cram_eof at 2 instead of 1 (hts_close then warns that "EOF marker is absent")
+    return samReadReturnCode == -1 && htsFilePtr->format.format == cram && cram_eof(htsFilePtr->fp.cram) == 2;
+}
+
+bool isWholeFileReadFailure(htsFile* htsFilePtr, const int samReadReturnCode)
+{
+    if (isReadFailure(htsFilePtr, samReadReturnCode))
+    {
+        return true;
+    }
+
+    if (samReadReturnCode != -1 || htsFilePtr->format.format != cram)
+    {
+        return false;
+    }
+
+    // With a thread pool, htslib sets cram_eof to 1 once the pool's queue is empty, even after a failed read, so
+    // check instead that the last container read was the EOF container that ends every CRAM since version 2.1
+    cram_fd* cramFdPtr = htsFilePtr->fp.cram;
+    const bool cramVersionEndsWithEofContainer
+        = cram_major_vers(cramFdPtr) > 2 || (cram_major_vers(cramFdPtr) == 2 && cram_minor_vers(cramFdPtr) >= 1);
+    return cramVersionEndsWithEofContainer && !cram_container_is_empty(cramFdPtr);
 }
 
 /// Lower-case version of htslib seq_nt16_str table;

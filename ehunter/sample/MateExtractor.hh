@@ -85,6 +85,8 @@ private:
     void openFile();
     void loadHeader();
     void loadIndex();
+    // Throws if sam_itr_next's last return code means a read failed rather than the end of the region
+    void throwIfReadingRecordFailed(int32_t samItrNextReturnCode) const;
 
     std::string htsFilePath_;
     std::string htsReferencePath_;

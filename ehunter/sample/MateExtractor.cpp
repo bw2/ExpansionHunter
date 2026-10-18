@@ -120,6 +120,16 @@ void MateExtractor::loadIndex()
     }
 }
 
+void MateExtractor::throwIfReadingRecordFailed(const int32_t samItrNextReturnCode) const
+{
+    // Treating a failed read (for example when the connection to a gs:// file drops) like the end of the region would
+    // silently leave out the mates not found yet, so fail instead, as HtsFileSeeker does for the reads at the locus.
+    if (isReadFailure(htsFilePtr_, samItrNextReturnCode))
+    {
+        throw ReadFailureError("Failed to extract a record from " + htsFilePath_ + " while recovering mates");
+    }
+}
+
 
 void MateExtractor::addMateToCache(const ReadId& mateReadId, FullRead mate) {
     if (localCache_.count(mateReadId) > 0) {
@@ -180,7 +190,8 @@ boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, c
     std::unique_ptr<hts_itr_t, decltype(&hts_itr_destroy)> htsRegionGuard(htsRegionPtr_, hts_itr_destroy);
 
     boost::optional<FullRead> mate = boost::none;
-    while (sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_) >= 0)
+    int32_t returnCode = 0;
+    while ((returnCode = sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_)) >= 0)
     {
         const bool isSecondaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSECONDARY;
         const bool isSupplementaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSUPPLEMENTARY;
@@ -216,6 +227,8 @@ boost::optional<FullRead> MateExtractor::extractMate(const ReadId& mateReadId, c
             }
         }
     }
+
+    throwIfReadingRecordFailed(returnCode);
 
     if (mate == boost::none) {
         spdlog::warn("Failed to recover mate: {}", mateReadId.fragmentId());
@@ -262,7 +275,8 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
     // RAII guard so the iterator is released on any exit path (including exceptions thrown while decoding reads)
     std::unique_ptr<hts_itr_t, decltype(&hts_itr_destroy)> htsRegionGuard(htsRegionPtr_, hts_itr_destroy);
 
-    while (sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_) >= 0)
+    int32_t returnCode = 0;
+    while ((returnCode = sam_itr_next(htsFilePtr_, htsRegionPtr_, htsAlignmentPtr_)) >= 0)
     {
         const bool isSecondaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSECONDARY;
         const bool isSupplementaryAlignment = htsAlignmentPtr_->core.flag & BAM_FSUPPLEMENTARY;
@@ -303,6 +317,8 @@ std::vector<FullRead> MateExtractor::extractMates(const MateRegionToRecover& mat
 
         }
     }
+
+    throwIfReadingRecordFailed(returnCode);
 
     if (mateReadIdsNotFoundYet.size() > 0) {
         std::ostringstream out;

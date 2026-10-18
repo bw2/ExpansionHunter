@@ -145,9 +145,9 @@ bool HtsFileSeeker::trySeekingToNextPrimaryAlignment()
 
     status_ = Status::kFinishedStreaming;
 
-    if (returnCode < -1)
+    if (isReadFailure(htsFilePtr_, returnCode))
     {
-        throw std::runtime_error("Failed to extract a record from " + htsFilePath_);
+        throw ReadFailureError("Failed to extract a record from " + htsFilePath_);
     }
 
     return false;

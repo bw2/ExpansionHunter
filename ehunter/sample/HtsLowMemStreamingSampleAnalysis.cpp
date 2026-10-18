@@ -476,6 +476,10 @@ LocusOutput genotypeLocusWithOfftargetRegions(const ProgramParameters& params, R
         out.kind = shouldFilterLocus(out.analyzer->locusSpec(), out.findings, params.skipHomRef(), params.skipMissingGenotypes())
             ? LocusOutput::Kind::kFilteredOut
             : LocusOutput::Kind::kGenotyped;
+    } catch (const htshelpers::ReadFailureError&) {
+        // Stop the run, as seeking mode does: logging this as the locus's error would write no record for it, list it
+        // as done for --resume, and let the run succeed
+        throw;
     } catch (const std::exception& e) {
         out.kind = LocusOutput::Kind::kError;
         out.message = e.what();

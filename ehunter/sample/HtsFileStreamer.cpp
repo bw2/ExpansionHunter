@@ -124,9 +124,9 @@ bool HtsFileStreamer::tryReadingNextPrimaryAlignment()
                     return true;
             }
 
-            if (returnCode < -1)
+            if (isReadFailure(htsFilePtr_, returnCode))
             {
-                throw std::runtime_error("Failed to extract a record from " + htsFilePath_);
+                throw ReadFailureError("Failed to extract a record from " + htsFilePath_);
             }
 
             // Current region exhausted: release its iterator and advance to the next region (if any).
@@ -160,9 +160,9 @@ bool HtsFileStreamer::tryReadingNextPrimaryAlignment()
 
     status_ = Status::kFinishedStreaming;
 
-    if (returnCode < -1)
+    if (isWholeFileReadFailure(htsFilePtr_, returnCode))
     {
-        throw std::runtime_error("Failed to extract a record from " + htsFilePath_);
+        throw ReadFailureError("Failed to extract a record from " + htsFilePath_);
     }
 
     return false;
