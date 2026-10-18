@@ -601,6 +601,13 @@ bool processLocusFast(
         return false;
     }
 
+    // The RFC1 motif analysis (on by default at the RFC1 locus, see decodeUseRFC1MotifAnalysis) reads the motifs from
+    // the reads' alignments to the locus graph, which the fast path doesn't compute, so a fast-path genotype would
+    // silently lack its call. Decline so the full genotyper runs it, except under only-quick, as for --plot-all above.
+    if (locusDescription.useRFC1MotifAnalysis() && !onlyQuick) {
+        return false;
+    }
+
     if (locusDescription.referenceRegions().size() != 1) {
         // fast processing is only implemented for loci with a single repeat region
         return false;

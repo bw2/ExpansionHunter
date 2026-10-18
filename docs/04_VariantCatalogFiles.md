@@ -144,6 +144,25 @@ itself.
   has a non-empty `KnownMotifs` list get a `MotifComposition` record. See
   [Motif composition](05_OutputJsonFiles.md#motif-composition).
 
+* `RFC1MotifAnalysis` Optional. The RFC1 motif analysis runs by default on the
+  RFC1 locus, which is recognized by its definition in Illumina's catalog: a single
+  `Repeat` variant with `"LocusStructure": "(AARRG)*"` at
+  `chr4:39348424-39348479` (hg38), `chr4:39350044-39350099` (hg19, its
+  liftover) or `chr4:39318077-39318132` (CHM13 v2.0, its liftover), with or
+  without the `chr` prefix. Set this field to `false` to turn the analysis off
+  at that locus. Other values are ignored, so unlike in the original
+  ExpansionHunter, `true` doesn't turn the analysis on at other loci. The
+  analysis classifies the sample as `normal`, `potential carrier`, `carrier` or
+  `affected` from the motifs in the reads, counting `AAGGG` and `ACAGG` as
+  pathogenic, and adds an `RFC1MotifAnalysis` record with `Call` and
+  `Description` to the variant's JSON output. The method and its validation
+  against repeat-primed PCR and Southern blot in the 100,000 Genomes Project are
+  described in [Sullivan et al. 2024](https://doi.org/10.1101/2024.02.28.24303510)
+  (medRxiv preprint). In `--analysis-mode optimized-streaming` this locus is
+  always genotyped by the full genotyper, since the analysis needs the reads'
+  alignments to the locus graph (except with `--genotyping-approach only-quick`,
+  where it gets no `RFC1MotifAnalysis` record).
+
 
 ## Using regular expressions to define locus structure
 

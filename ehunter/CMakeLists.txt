@@ -338,6 +338,7 @@ add_executable(UnitTests
         tests/AlleleCheckerTest.cpp
         tests/CatalogLoadingKnownMotifsTest.cpp
         tests/CatalogLoadingPlotTest.cpp
+        tests/CatalogLoadingRFC1MotifAnalysisTest.cpp
         tests/ChromosomeStrideTest.cpp
         tests/ClassifierOfAlignmentsToVariantTest.cpp
         tests/ConcurrentQueueTest.cpp

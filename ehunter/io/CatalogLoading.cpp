@@ -202,6 +202,45 @@ std::vector<std::string> decodeKnownMotifs(const Json& locusJson, const std::str
     return knownMotifs;
 }
 
+// The repeat region of the RFC1 locus in Illumina's hg38 catalog, and its liftover (UCSC chain files) to hg19 and
+// CHM13 v2.0, each with and without the "chr" prefix.
+static const std::set<std::string> kRFC1ReferenceRegions = {
+    "chr4:39348424-39348479", "4:39348424-39348479", // hg38, GRCh38
+    "chr4:39350044-39350099", "4:39350044-39350099", // hg19, GRCh37
+    "chr4:39318077-39318132", "4:39318077-39318132", // CHM13 v2.0
+};
+
+// Returns the value of a field that holds one string, either on its own or as the only element of an array, or ""
+// if the field is missing or holds anything else.
+static std::string getSingleString(const Json& locusJson, const string& fieldName)
+{
+    if (!checkIfFieldExists(locusJson, fieldName))
+    {
+        return "";
+    }
+    const Json& value = locusJson[fieldName];
+    if (value.is_string())
+    {
+        return value.get<string>();
+    }
+    if (value.is_array() && value.size() == 1 && value[0].is_string())
+    {
+        return value[0].get<string>();
+    }
+    return "";
+}
+
+bool decodeUseRFC1MotifAnalysis(const Json& locusJson)
+{
+    const bool isRFC1Locus = getSingleString(locusJson, "LocusStructure") == "(AARRG)*"
+        && getSingleString(locusJson, "VariantType") == "Repeat"
+        && kRFC1ReferenceRegions.count(getSingleString(locusJson, "ReferenceRegion")) > 0;
+    const auto rfc1MotifAnalysisField = locusJson.find("RFC1MotifAnalysis");
+    const bool isTurnedOff = rfc1MotifAnalysisField != locusJson.end() && rfc1MotifAnalysisField->is_boolean()
+        && !rfc1MotifAnalysisField->get<bool>();
+    return isRFC1Locus && !isTurnedOff;
+}
+
 /// \brief Translate a single locus from the catalog file json structure into an intermediate locus configuration
 ///
 static LocusDescription loadLocusDescription(
@@ -294,28 +333,7 @@ static LocusDescription loadLocusDescription(
         minimalLocusCoverage = locusJson["MinimalLocusCoverage"].get<double>();
     }
 
-    bool useRFC1MotifAnalysis = false;
-    static const std::string rfc1MotifAnalysisKey("RFC1MotifAnalysis");
-    if (checkIfFieldExists(locusJson, rfc1MotifAnalysisKey))
-    {
-        const Json& record(locusJson[rfc1MotifAnalysisKey]);
-        if (record.type() == Json::value_t::boolean)
-        {
-            useRFC1MotifAnalysis = record.get<bool>();
-        }
-        else if (record.type() == Json::value_t::object)
-        {
-            useRFC1MotifAnalysis = true;
-        }
-        else
-        {
-            std::stringstream out;
-            out << record;
-            throw std::logic_error(
-                "Key '" + rfc1MotifAnalysisKey
-                + "' must have either a boolean or object value type, observed value is '" + out.str() + "'");
-        }
-    }
+    const bool useRFC1MotifAnalysis = decodeUseRFC1MotifAnalysis(locusJson);
 
     std::vector<PlotReadVisualization> plotConditions;
     static const std::string plotReadVisualizationKey("PlotReadVisualization");

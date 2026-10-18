@@ -46,4 +46,10 @@ RegionCatalog convertLocusDescriptionsToLocusSpecs(
 // not an array of strings.
 std::vector<std::string> decodeKnownMotifs(const nlohmann::json& locusJson, const std::string& locusId);
 
+// Whether to run the RFC1 motif analysis at a catalog locus: true for the RFC1 locus as defined in Illumina's catalog
+// (a single "Repeat" variant with LocusStructure "(AARRG)*" at its hg38 coordinates, or their liftover to hg19 or
+// CHM13 v2.0, with or without the "chr" prefix), unless the record sets "RFC1MotifAnalysis": false. Other values of
+// that older field are ignored, so it can no longer turn the analysis on at other loci.
+bool decodeUseRFC1MotifAnalysis(const nlohmann::json& locusJson);
+
 }

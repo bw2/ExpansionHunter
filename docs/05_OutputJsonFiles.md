@@ -55,6 +55,11 @@ Repeat records contain the following fields.
   [AlleleQualityMetrics](07_AlleleQualityMetrics.md) for details.
 * `ReferenceRegion` 0-based half-open reference coordinates of the repeat region
   (`chrom:start-end`)
+* `RFC1MotifAnalysis` (optional) Only at the RFC1 locus (see `RFC1MotifAnalysis` in
+  [Variant catalog files](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
+  An object with `Call` (`normal`, `potential carrier`, `carrier` or `affected`)
+  and `Description` (the reason for the call, e.g. `2 expanded pathogenic alleles`).
+  It is absent when the locus has no genotype (e.g. low coverage).
 * `ConsensusSequences` (optional) Array of consensus sequences, one per allele.
   See [Consensus sequences](#consensus-sequences) below for details.
 * `ConsensusSequencesReadSupport` (optional) Array of read support strings
