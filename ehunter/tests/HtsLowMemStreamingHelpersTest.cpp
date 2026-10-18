@@ -397,3 +397,13 @@ TEST(HasEnoughInRepeatReadsForFullGenotyping, ReadsWithFlanksAreNotInRepeatReads
         {flank + repeat("CAG", 25), repeat("CAG", 25) + flank}});
     EXPECT_FALSE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "CAG"));
 }
+
+// Reads are sized in bp, so with a 12 bp motif reads of 24, 30 and 35 bp all count toward 2 repeat units. Their counts
+// must add up rather than the last size's count replacing the others (CSTB once reported 1 spanning read instead of 31).
+TEST(CountReadsByRepeatSizeInUnits, CountsOfSizesInTheSameUnitAddUp)
+{
+    const CountTable readCountsByRepeatSizeInUnits = countReadsByRepeatSizeInUnits({{24, 28}, {30, 2}, {35, 1}, {36, 4}}, 12);
+    EXPECT_EQ(31, readCountsByRepeatSizeInUnits.countOf(2));
+    EXPECT_EQ(4, readCountsByRepeatSizeInUnits.countOf(3));
+    EXPECT_EQ(std::vector<int32_t>({2, 3}), readCountsByRepeatSizeInUnits.getElementsWithNonzeroCounts());
+}

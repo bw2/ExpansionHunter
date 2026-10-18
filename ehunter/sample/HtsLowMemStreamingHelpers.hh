@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+
+#include "core/CountTable.hh"
 #include "core/GenomicRegion.hh"
 #include "core/Parameters.hh"
 #include "core/Read.hh"
@@ -70,6 +73,11 @@ bool hasEnoughInRepeatReadsForFullGenotyping(
 // at least 0.75), in which case in-repeat reads at the locus aren't evidence of an expansion. Exposed for unit tests.
 bool hasReadLengthStretchOfInRepeatSequence(
     const std::string& referenceSequence, const std::string& locusMotif, int readLength);
+
+// Converts read counts keyed by repeat size in bp into a table keyed by repeat size in whole units (bp / motif size,
+// rounded down, the way processLocusFast sizes alleles). Counts of bp sizes that round to the same number of units are
+// added up. Exposed for unit tests.
+CountTable countReadsByRepeatSizeInUnits(const std::map<int, int>& readCountsByRepeatSizeInBasePairs, int motifSize);
 
 bool processLocusFast(
 	const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,

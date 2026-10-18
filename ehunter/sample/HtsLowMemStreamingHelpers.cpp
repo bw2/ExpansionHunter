@@ -577,6 +577,15 @@ bool hasReadLengthStretchOfInRepeatSequence(
 }
 
 
+CountTable countReadsByRepeatSizeInUnits(const std::map<int, int>& readCountsByRepeatSizeInBasePairs, int motifSize) {
+    CountTable readCountsByRepeatSizeInUnits;
+    for (const auto& repeatSizeAndReadCount : readCountsByRepeatSizeInBasePairs) {
+        readCountsByRepeatSizeInUnits.incrementCountOf(repeatSizeAndReadCount.first / motifSize, repeatSizeAndReadCount.second);
+    }
+    return readCountsByRepeatSizeInUnits;
+}
+
+
 bool processLocusFast(
     const ProgramParameters& params, Reference& reference, LocusDescription& locusDescription,
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, bool reservoirSampled, int typicalReadLength,
@@ -881,17 +890,10 @@ bool processLocusFast(
 
     const auto& variantId = locusDescription.variantIds().front(); // Access the first and only variant ID
 
-	CountTable countsOfSpanningReads;
-	CountTable countsOfFlankingReads;
+	const CountTable countsOfSpanningReads = countReadsByRepeatSizeInUnits(allele_size_spanning_read_votes, locusMotifSize);
+	// one-flank-anchored reads; see read loop above
+	const CountTable countsOfFlankingReads = countReadsByRepeatSizeInUnits(allele_size_flanking_read_votes, locusMotifSize);
 	CountTable countsOfInrepeatReads;
-	// Initialize spanning reads count table
-	for (const auto& alleleVote : allele_size_spanning_read_votes) {
-		countsOfSpanningReads.setCountOf(alleleVote.first / locusMotifSize, alleleVote.second);
-	}
-	// Initialize flanking reads count table (one-flank-anchored reads; see read loop above)
-	for (const auto& alleleVote : allele_size_flanking_read_votes) {
-		countsOfFlankingReads.setCountOf(alleleVote.first / locusMotifSize, alleleVote.second);
-	}
 
 	boost::optional<RepeatGenotype> repeatGenotype;
 	if (!num_repeats.empty()) {
