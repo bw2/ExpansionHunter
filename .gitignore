@@ -13,3 +13,6 @@ __pycache__/
 # MateExtractorMergeTest and resume_tests.py open them at clone time.
 /ehunter/tests/data/parallel_processing_fixtures/reads.cram
 /ehunter/tests/data/parallel_processing_fixtures/reads.cram.crai
+
+# Local test runs on samples with known pathogenic repeat expansions (CRAM paths, sample IDs, results).
+/test_local_cases_with_known_pathogenic_expansions/
