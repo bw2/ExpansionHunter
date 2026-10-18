@@ -172,6 +172,39 @@ TEST(MotifCompositionPeriod, HomopolymersAndShorterPeriodsAreRejected)
     EXPECT_DOUBLE_EQ(0.0, computePeriodScore(string(12, 'N'), 3));
 }
 
+TEST(MotifCompositionPeriod, RepeatSequenceWithAPeriodOfSeveralMotifLengthsPasses)
+{
+    // GCCCCCGGGCCC repeats every 12 bases, two lengths of the GGCCCC motif. One motif length back, only 4 bases in 6
+    // match.
+    const string compositeRepeatSequence = repeatMotif("GCCCCCGGGCCC", 3);
+    EXPECT_DOUBLE_EQ(4.0 / 6, computePeriodScore(compositeRepeatSequence, 6));
+    EXPECT_TRUE(passesPeriodTest(compositeRepeatSequence, 6, 0.75));
+    // The period must fit in the sequence 3 times: 30 bases are too few for a period of 12.
+    EXPECT_FALSE(passesPeriodTest(repeatMotif("GCCCCCGGGCCC", 2) + "GCCCCC", 6, 0.75));
+    // (CAG)n scores 1.0 at lags 6 and 12, but also at lag 3, a divisor of both.
+    EXPECT_FALSE(passesPeriodTest(repeatMotif("CAG", 16), 6, 0.75));
+    // (ACGTTGCAAGTC)n scores 1.0 at lag 12, and no divisor of 12 comes close, but one motif length back only 1 base in 6
+    // matches, too few for its repeat units to resemble each other.
+    const string repeatSequenceWithDissimilarHalves = repeatMotif("ACGTTGCAAGTC", 4);
+    EXPECT_LT(computePeriodScore(repeatSequenceWithDissimilarHalves, 6), 0.6);
+    EXPECT_FALSE(passesPeriodTest(repeatSequenceWithDissimilarHalves, 6, 0.75));
+    // A 30 bp VNTR found next to a CCA locus (chr22:21183230) repeats every 10 motif lengths, but its 3-mers do not
+    // resemble each other: one motif length back, fewer than half of its bases match.
+    const string vntr = repeatMotif("ACACGACATCGCTAACGAGGACGCCACACG", 5);
+    EXPECT_LT(computePeriodScore(vntr, 3), 0.5);
+    EXPECT_FALSE(passesPeriodTest(vntr, 3, 0.75));
+}
+
+TEST(MotifCompositionPeriod, TwoBaseMotifsUseOnlyTheirOwnLength)
+{
+    // (TATATG)n, as in the AT-rich arrays around many TA loci, repeats every 6 bases, and more than 60% of its bases
+    // match two bases back, so with a 3 bp motif's rules it would pass at a TA locus.
+    const string tatatgRepeatSequence = repeatMotif("TATATG", 6);
+    EXPECT_GT(computePeriodScore(tatatgRepeatSequence, 2), 0.6);
+    EXPECT_DOUBLE_EQ(1.0, computePeriodScore(tatatgRepeatSequence, 6));
+    EXPECT_FALSE(passesPeriodTest(tatatgRepeatSequence, 2, 0.75));
+}
+
 TEST(MotifCompositionFrame, OffsetOfTheBestTiling)
 {
     EXPECT_EQ(0, computeReferenceRepeatSequenceFrame(repeatMotif("CAG", 5), "CAG"));
@@ -401,6 +434,70 @@ TEST(MotifCompositionSplitting, CatalogKnownMotifsReplaceTheInFrameTest)
     EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[2].type);
 }
 
+TEST(MotifCompositionSplitting, MotifCandidateThatRecursOneAndTwoPeriodsAwayIsKeptAtAnUntrustedEnd)
+{
+    // GCCCCC and GGGCCC alternate (a period of 12, two lengths of the GGCCCC motif) up to a read end that is not
+    // trusted. The anchoring rule alone would remove them all, starting from that end.
+    vector<SequenceSubstring> sequenceSubstrings = splitIntoMotifs(
+        repeatMotif("GCCCCCGGGCCC", 3) + "GCC", "GGCCCC", { "GGCCCC" }, 0, true, false, string());
+    ASSERT_EQ(7u, sequenceSubstrings.size());
+    for (size_t index = 0; index != 6; ++index)
+    {
+        EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[index].type) << index;
+    }
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[6].type);
+
+    // A run of a single new motif has a period of one motif length.
+    sequenceSubstrings = splitIntoMotifs(
+        "GGCCCC" + repeatMotif("GGGCCC", 3) + "GG", "GGCCCC", { "GGCCCC" }, 0, true, false, string());
+    ASSERT_EQ(5u, sequenceSubstrings.size());
+    for (size_t index = 1; index != 4; ++index)
+    {
+        EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[index].type) << index;
+    }
+
+    // Two copies do not show a period: the second is removed for its untrusted end, then the first for touching the
+    // gap left behind.
+    sequenceSubstrings = splitIntoMotifs(
+        "GGCCCC" + repeatMotif("GGGCCC", 2) + "GG", "GGCCCC", { "GGCCCC" }, 0, true, false, string());
+    ASSERT_EQ(2u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[1].type);
+    EXPECT_EQ(14, sequenceSubstrings[1].length);
+
+    // GTGT recurs every 4 bases, but it is made of GT: a run of it is a dinucleotide repeat, such as one next to a
+    // GTGC locus, not repeat units of the locus's motif length.
+    sequenceSubstrings = splitIntoMotifs(
+        repeatMotif("GTGT", 3) + "GTGCGTGC", "GTGC", { "GTGC" }, 0, false, true, string());
+    ASSERT_EQ(3u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
+    EXPECT_EQ(12, sequenceSubstrings[0].length);
+
+    // The rule is off for an in-repeat read placed away from the locus, which can come from another repeat nearby.
+    sequenceSubstrings = splitIntoMotifs(
+        "GGCCCC" + repeatMotif("GGGCCC", 3) + "GG", "GGCCCC", { "GGCCCC" }, 0, true, false, string(), { }, false,
+        false);
+    ASSERT_EQ(2u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[1].type);
+
+    // It is also off toward a flank with no anchor, such as a CCA repeat next to a CAG locus, which a soft clip can
+    // carry into the tract. The CCA run sits at an untrusted start, cut as three CAC repeat units between a 1-base
+    // and a 2-base gap.
+    const string tractStartingInARepeatLikeFlank = repeatMotif("CCA", 4) + repeatMotif("CAG", 3);
+    sequenceSubstrings = splitIntoMotifs(
+        tractStartingInARepeatLikeFlank, "CAG", { "CAG" }, 0, false, true, string(), { }, false, true);
+    ASSERT_EQ(4u, sequenceSubstrings.size());
+    EXPECT_EQ(SequenceSubstringType::kGap, sequenceSubstrings[0].type);
+    EXPECT_EQ(12, sequenceSubstrings[0].length);
+    // With an anchor on the left, the three CAC repeat units are kept.
+    sequenceSubstrings
+        = splitIntoMotifs(tractStartingInARepeatLikeFlank, "CAG", { "CAG" }, 0, false, true, string(), { }, true, true);
+    ASSERT_EQ(8u, sequenceSubstrings.size());
+    for (size_t index = 1; index != 4; ++index)
+    {
+        EXPECT_EQ(SequenceSubstringType::kNewMotifCandidate, sequenceSubstrings[index].type) << index;
+    }
+}
+
 TEST(MotifCompositionSoftClip, KeepsRepeatSequenceAndDropsWhatFollowsIt)
 {
     // Aligned repeat "CAGCAGCAG", then a clip of 9 more repeat bases followed by 15 non-repeat bases.
@@ -419,6 +516,16 @@ TEST(MotifCompositionSoftClip, KeepsRepeatSequenceAndDropsWhatFollowsIt)
     const int keptOnLeft = computeSoftClipBasesToKeep(leftClipped, 0, 0, 24, leftClipped.size(), false, 3, 0.75);
     EXPECT_GE(keptOnLeft, 9);
     EXPECT_LE(keptOnLeft, 12);
+}
+
+TEST(MotifCompositionSoftClip, KeepsRepeatSequenceWithAPeriodOfSeveralMotifLengths)
+{
+    // Aligned "GCCCCCGGGCCC", then a clip of 36 more bases of it followed by 15 non-repeat bases. One motif length
+    // back only 4 bases in 6 match, so the clip is kept by comparing it 12 bases back.
+    const string read = repeatMotif("GCCCCCGGGCCC", 4) + "TTGACCTAGGATCCA";
+    const int kept = computeSoftClipBasesToKeep(read, 0, 12, read.size(), 0, true, 6, 0.75);
+    EXPECT_GE(kept, 36);
+    EXPECT_LT(kept, 36 + 15);
 }
 
 TEST(MotifCompositionPoisson, UpperTail)
@@ -642,6 +749,39 @@ TEST(MotifComposition, OfftargetReadsAreTurnedToTheLocusStrandByTheirSequence)
     // Each read is longer than the short allele, so all four count toward the long one.
     ASSERT_TRUE(composition->hasAlleleBlocks);
     EXPECT_EQ(std::make_pair(4 * 20, 4), composition->allele2.motifs.at(1));
+}
+
+TEST(MotifComposition, OfftargetReadsAreNotUsedWhenEveryAlleleFitsInARead)
+{
+    // The reads of OfftargetReadsAreTurnedToTheLocusStrandByTheirSequence, but the genotype's long allele (30 bases) is
+    // shorter than the locus's reads (70 bases), so no read of this locus can be made of repeat sequence alone.
+    ReadSet reads;
+    for (int index = 0; index != 4; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    ReadSet offtargetReads;
+    offtargetReads.pairs.push_back(makeOfftargetReadPair("off0", repeatMotif("CAG", 20), repeatMotif("CAG", 20)));
+    const auto composition = computeMotifComposition(
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 10 }), false,
+        offtargetReads.pointers());
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(std::make_pair(4 * 10, 4), composition->locus.motifs.at(1));
+}
+
+TEST(MotifComposition, OfftargetReadPairIsUsedOnlyIfBothReadsAreMostlyHighQuality)
+{
+    ReadSet reads;
+    reads.pairs.push_back(makeSpanningRead("ref", repeatMotif("CAG", 10)));
+    // Low-quality bases are lower case. Half of the second read is low quality, below the 60% minimum.
+    ReadSet offtargetReads;
+    offtargetReads.pairs.push_back(
+        makeOfftargetReadPair("off", repeatMotif("CAG", 20), repeatMotif("CAG", 10) + repeatMotif("cag", 10)));
+    const auto composition = computeMotifComposition(
+        makeCagLocus(), kRegionExtensionLength, reads.pointers(), RepeatGenotype(3, { 10, 30 }), false,
+        offtargetReads.pointers());
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(std::make_pair(10, 1), composition->locus.motifs.at(1));
 }
 
 TEST(MotifComposition, OfftargetReadPairIsUsedOnlyIfBothReadsAreRepeatSequence)
@@ -1014,6 +1154,66 @@ TEST(MotifComposition, SoftClippedRepeatSequenceExtendsAFlankingRead)
         makeCagLocus(), kRegionExtensionLength, reads.pointers(), boost::none, false);
     ASSERT_TRUE(composition);
     EXPECT_EQ(std::make_pair(10, 1), composition->locus.motifs.at(1));
+}
+
+TEST(MotifComposition, MotifMadeOfTwoRepeatUnitsIsFoundInFlankingReads)
+{
+    // CAACAT (CAA and CAT alternating, each one base from CAG and from each other) continues past the read ends, so no
+    // read is trusted at both ends. Each read aligns through the left flank and soft-clips the repeat sequence.
+    ReadSet reads;
+    for (int index = 0; index != 10; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    for (int index = 0; index != 4; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "alt" + std::to_string(index), MateNumber::kFirstMate, kLeftFlank + repeatMotif("CAACAT", 6), 80,
+            { cigarOp(20, BAM_CMATCH), cigarOp(36, BAM_CSOFT_CLIP) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    // Flanks with anchors, so that repeat units that recur at a read end can be kept.
+    MotifCompositionLocus locus = makeCagLocus();
+    locus.leftFlankSequence = kLeftFlank;
+    locus.rightFlankSequence = kRightFlank;
+    const auto composition
+        = computeMotifComposition(locus, kRegionExtensionLength, reads.pointers(), boost::none, false);
+    ASSERT_TRUE(composition);
+    ASSERT_EQ(3u, composition->motifs.size());
+    EXPECT_EQ("CAG", composition->motifs[0]);
+    vector<string> newMotifs(composition->motifs.begin() + 1, composition->motifs.end());
+    std::sort(newMotifs.begin(), newMotifs.end());
+    EXPECT_EQ(vector<string>({ "CAA", "CAT" }), newMotifs);
+    // 6 of each per read.
+    EXPECT_EQ(std::make_pair(24, 4), composition->locus.motifs.at(2));
+    EXPECT_EQ(std::make_pair(24, 4), composition->locus.motifs.at(3));
+}
+
+TEST(MotifComposition, MotifCandidatesThatRepeatInAReferenceFlankAreNotKeptAtAnUntrustedEnd)
+{
+    // The reads of MotifMadeOfTwoRepeatUnitsIsFoundInFlankingReads, at a locus whose right flank has CAACAT units a
+    // few bases past its anchor: CAA and CAT at the reads' untrusted ends can be that flank's repeat units.
+    ReadSet reads;
+    for (int index = 0; index != 10; ++index)
+    {
+        reads.pairs.push_back(makeSpanningRead("ref" + std::to_string(index), repeatMotif("CAG", 10)));
+    }
+    for (int index = 0; index != 4; ++index)
+    {
+        FullReadPair pair;
+        pair.firstMate = makeMappedRead(
+            "alt" + std::to_string(index), MateNumber::kFirstMate, kLeftFlank + repeatMotif("CAACAT", 6), 80,
+            { cigarOp(20, BAM_CMATCH), cigarOp(36, BAM_CSOFT_CLIP) });
+        reads.pairs.push_back(std::move(pair));
+    }
+    MotifCompositionLocus locus = makeCagLocus();
+    locus.leftFlankSequence = kLeftFlank;
+    locus.rightFlankSequence = "TTAGGCTA" + repeatMotif("CAACAT", 3) + "ACGT";
+    const auto composition
+        = computeMotifComposition(locus, kRegionExtensionLength, reads.pointers(), boost::none, false);
+    ASSERT_TRUE(composition);
+    EXPECT_EQ(vector<string>({ "CAG" }), composition->motifs);
 }
 
 TEST(MotifComposition, NoReadsGiveAnEmptyComposition)

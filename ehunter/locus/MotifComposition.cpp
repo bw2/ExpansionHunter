@@ -64,10 +64,31 @@ const int kMotifCompositionMinReadPairs = 2;
 const double kMotifCompositionMinReadPairFraction = 0.005;
 // A read counts as spanning only with at least this many aligned bases on each side of the locus.
 const int kMotifCompositionMinFlankBases = 10;
-// Minimum fraction of bases that equal the base one motif length earlier, for a read to count as an in-repeat read,
-// and for a soft clip to be kept as repeat sequence.
+// Minimum fraction of bases that equal the base one period earlier, for a read to count as an in-repeat read, and for
+// a soft clip to be kept as repeat sequence. The period is the motif length or a whole number of motif lengths (see
+// passesPeriodTest and computeSoftClipBasesToKeep).
 const double kMotifCompositionMinInrepeatReadPeriodScore = 0.75;
 const double kMotifCompositionMinSoftClipPeriodScore = 0.75;
+// For the period test (passesPeriodTest) and the soft-clip extension (computeSoftClipBasesToKeep), repeat sequence with
+// a period of several motif lengths counts only if its repeat units resemble each other: at least this fraction of its
+// bases must equal the base one motif length earlier. GCCCCC and GGGCCC alternating at a GGCCCC
+// locus score 4 in 6, while a neighboring repeat whose period merely is a multiple of the motif length scores lower: a
+// 30 bp VNTR next to a CCA locus about as low as unrelated sequence (around 0.3), a GATA repeat at a GA locus exactly
+// half. On HG002 chromosomes 15-20, 0.6 rather than 0.5 removed 22 loci with motifs of 3 bp or more reported with a
+// non-reference motif that the truth assemblies do not have, at a cost of 5 that they have.
+const double kMotifCompositionMinMotifLengthScoreForLongerPeriods = 0.6;
+// The period test and the soft-clip extension try periods of several motif lengths only for motifs at least this long.
+// At 2 bp loci they let in reads of nearby repeats with a 4 or 6 bp period (TATATG units at TA loci) and, on HG002
+// chromosomes 15-20, found none of the non-reference motifs that the truth assemblies have. The recurrence rule in
+// splitTract keeps every such period at every motif size: a run of a new motif recurs at all of them, and there it
+// cost little.
+const int kMotifCompositionMinMotifSizeForLongerPeriods = 3;
+// An off-target read is used only if at least this fraction of its bases are high quality (above Q20). At FMR1 in
+// HG002, the off-target reads that are not from the locus are G-rich reads with half their bases low quality (median
+// 0.57): 0.6 left 202 of their 1,635 AGG units and none of their other motifs, 0.8 none at all. But this locus's own
+// reads are often low quality too (GC-rich at FMR1, where a tenth of them are below 0.65; at the CACNA1C VNTR, 10% are
+// below 0.6 and 37% below 0.8), and dropping them only costs counts, not composition, so the bar is set low.
+const double kMotifCompositionMinOfftargetReadHighQualityBaseFraction = 0.6;
 // A motif candidate passes the in-frame test (see passesInFrameTest) only if at most this fraction of its bases,
 // rounded down, differ from the closest motif it is compared with in frame.
 const double kMotifCompositionInFrameMaxMismatchFraction = 0.10;
@@ -365,12 +386,15 @@ boost::optional<string> orientToCatalogMotifStrand(const string& bases, const st
 
 // See splitIntoMotifs for the arguments. `tractUpperCased` is `tract` in upper case; `tract` keeps the
 // case that marks base quality. knownMotifRotations holds the canonical rotations of the catalog's KnownMotifs.
+// motifCandidatesThatRecurInTheFlanks are upper-case motif-length sequences that the recurrence rule never keeps
+// (computeMotifComposition fills it from the reference flanks; empty when splitting the reference repeat sequence).
 // Returns the length of the partial repeat unit at the end of the tract.
 int splitTract(
     const string& tract, const string& tractUpperCased, const string& catalogMotif, const MotifList& acceptedMotifs,
     const std::unordered_set<string>& knownMotifRotations, int startOffset, bool startsAtEdgeOfRepeatSequence,
     bool endsAtEdgeOfRepeatSequence, const boost::optional<string>& referenceEndPartialRepeatUnit,
-    vector<SequenceSubstring>& sequenceSubstrings)
+    bool keepRecurringMotifCandidatesUnanchoredOnTheLeft, bool keepRecurringMotifCandidatesUnanchoredOnTheRight,
+    const std::unordered_set<string>& motifCandidatesThatRecurInTheFlanks, vector<SequenceSubstring>& sequenceSubstrings)
 {
     sequenceSubstrings.clear();
     const int motifSize = catalogMotif.size();
@@ -522,9 +546,72 @@ int splitTract(
     // is 0 below 10 bp, and a motif candidate always differs from every motif it is compared with, so motifs shorter
     // than 10 bp keep the plain anchoring rule. At a locus whose catalog entry lists KnownMotifs, the list replaces the
     // in-frame test: a motif candidate the anchoring rule would remove is kept only if it is a rotation of a listed
-    // motif, at any motif size. A motif candidate kept either way stays a motif candidate, so it anchors its neighbors
-    // like any other repeat unit. Loop until nothing changes, since removing a motif candidate can leave its neighbor
-    // unanchored.
+    // motif, at any motif size. Either way, a motif candidate the anchoring rule would remove is also kept if it is a
+    // repeat unit of a repeat sequence whose period is a whole number of motif lengths
+    // (checkIfMotifCandidateRecursPeriodically): a run of a new motif, or a motif made of several repeat units, such as
+    // GCCCCCGGGCCC at a GGCCCC locus. Without this, a read that ends inside such a repeat sequence would lose every one
+    // of its repeat units, since its end is not a trusted edge. This rule must be allowed on each side where the motif
+    // candidate is not anchored (keepRecurringMotifCandidatesUnanchoredOnTheLeft / ...OnTheRight). It is not allowed
+    // for an in-repeat read placed away from the locus, which can come from another repeat nearby, so a repeat unit that
+    // only this rule would keep is never taken from such a read. Nor is it allowed toward a flank with no anchor
+    // (findFlankAnchorSequence): such a flank is repeat sequence itself, which a soft clip can carry into the tract
+    // with no anchor to cut it off. A motif candidate kept any of these ways stays a motif candidate, so it anchors its
+    // neighbors like any other repeat unit. Loop until nothing changes, since removing a motif candidate can leave its
+    // neighbor unanchored.
+    //
+    // True if the motif candidate's bases recur exactly one and two periods away within the tract (both before it,
+    // both after it, or one on each side), for a period of a whole number of motif lengths: three copies, the fewest
+    // that show a period. A few bases of flank at a read's end almost never recur that way. A motif candidate made of a
+    // shorter repeated unit, such as GTGT at a GTGC locus, does not count: a run of it is a repeat with that shorter
+    // period, such as a dinucleotide repeat next to the locus, whose bases a soft clip can carry into the tract. Nor
+    // does one in motifCandidatesThatRecurInTheFlanks, a repeat unit of a repeat in a reference flank. The answer
+    // depends only on the tract's bases, so it is worked out at most once per motif candidate
+    // (motifCandidateRecursPeriodically), not on every pass of the loop below.
+    auto checkIfMotifCandidateRecursPeriodically = [&](int offset)
+    {
+        if (motifCandidatesThatRecurInTheFlanks.count(tractUpperCased.substr(offset, motifSize)) != 0)
+        {
+            return false;
+        }
+        for (int shorterPeriod = 1; shorterPeriod < motifSize; ++shorterPeriod)
+        {
+            if (motifSize % shorterPeriod == 0
+                && tractUpperCased.compare(offset, motifSize - shorterPeriod, tractUpperCased, offset + shorterPeriod,
+                                           motifSize - shorterPeriod)
+                    == 0)
+            {
+                return false;
+            }
+        }
+        auto matchesMotifCandidateAt = [&](int otherOffset)
+        {
+            if (otherOffset < 0 || otherOffset + motifSize > length)
+            {
+                return false;
+            }
+            for (int index = 0; index != motifSize; ++index)
+            {
+                if (!basesMatch(tractUpperCased[otherOffset + index], tractUpperCased[offset + index]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        for (int period = motifSize; 2 * period + motifSize <= length; period += motifSize)
+        {
+            const bool recursOnePeriodBefore = matchesMotifCandidateAt(offset - period);
+            const bool recursOnePeriodAfter = matchesMotifCandidateAt(offset + period);
+            if ((recursOnePeriodBefore && (recursOnePeriodAfter || matchesMotifCandidateAt(offset - 2 * period)))
+                || (recursOnePeriodAfter && matchesMotifCandidateAt(offset + 2 * period)))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    // By index in sequenceSubstrings: 1 or 0 once worked out, -1 before.
+    vector<signed char> motifCandidateRecursPeriodically(sequenceSubstrings.size(), -1);
     auto isNotAGap = [](SequenceSubstringType type) { return type != SequenceSubstringType::kGap; };
     bool changed = true;
     while (changed)
@@ -549,10 +636,19 @@ int splitTract(
             {
                 continue;
             }
+            const bool recurrenceIsAllowed = (leftSideIsAnchored || keepRecurringMotifCandidatesUnanchoredOnTheLeft)
+                && (rightSideIsAnchored || keepRecurringMotifCandidatesUnanchoredOnTheRight);
+            if (recurrenceIsAllowed && motifCandidateRecursPeriodically[index] < 0)
+            {
+                motifCandidateRecursPeriodically[index]
+                    = checkIfMotifCandidateRecursPeriodically(sequenceSubstring.offsetWithinRepeatTract);
+            }
             const char* motifCandidateStart = tractUpperCased.data() + sequenceSubstring.offsetWithinRepeatTract;
-            const bool isKept = knownMotifRotations.empty()
-                ? passesInFrameTest(motifCandidateStart, catalogMotif, orderedMotifs)
-                : knownMotifRotations.count(computeCanonicalRotation(string(motifCandidateStart, motifSize))) != 0;
+            const bool isKept = (recurrenceIsAllowed && motifCandidateRecursPeriodically[index] == 1)
+                || (knownMotifRotations.empty()
+                        ? passesInFrameTest(motifCandidateStart, catalogMotif, orderedMotifs)
+                        : knownMotifRotations.count(computeCanonicalRotation(string(motifCandidateStart, motifSize)))
+                            != 0);
             if (!isKept)
             {
                 sequenceSubstring.type = SequenceSubstringType::kGap;
@@ -1232,21 +1328,47 @@ double computePeriodScore(const string& sequence, int lag)
 
 bool passesPeriodTest(const string& sequence, int motifSize, double minScore)
 {
-    const double score = computePeriodScore(sequence, motifSize);
-    if (score < minScore)
-    {
-        return false;
-    }
     // The small tolerance keeps a margin of exactly 0.1 from failing on rounding.
     const double kMinMarginOverDivisors = 0.1 - 1e-9;
-    for (int divisor = 1; divisor < motifSize; ++divisor)
+    // Scores by lag, computed once each: the periods tried share divisors.
+    vector<double> scoresByLag;
+    auto computeScoreAtLag = [&](int lag)
     {
-        if (motifSize % divisor == 0 && score - computePeriodScore(sequence, divisor) < kMinMarginOverDivisors)
+        if (static_cast<int>(scoresByLag.size()) <= lag)
         {
-            return false;
+            scoresByLag.resize(lag + 1, -1.0);
+        }
+        if (scoresByLag[lag] < 0)
+        {
+            scoresByLag[lag] = computePeriodScore(sequence, lag);
+        }
+        return scoresByLag[lag];
+    };
+    const bool triesLongerPeriods = motifSize >= kMotifCompositionMinMotifSizeForLongerPeriods;
+    for (int period = motifSize;
+         period == motifSize || (triesLongerPeriods && 3 * period <= static_cast<int>(sequence.size()));
+         period += motifSize)
+    {
+        if (period != motifSize && computeScoreAtLag(motifSize) < kMotifCompositionMinMotifLengthScoreForLongerPeriods)
+        {
+            break;
+        }
+        const double score = computeScoreAtLag(period);
+        if (score < minScore)
+        {
+            continue;
+        }
+        bool beatsEveryDivisor = true;
+        for (int divisor = 1; divisor < period && beatsEveryDivisor; ++divisor)
+        {
+            beatsEveryDivisor = period % divisor != 0 || score - computeScoreAtLag(divisor) >= kMinMarginOverDivisors;
+        }
+        if (beatsEveryDivisor)
+        {
+            return true;
         }
     }
-    return true;
+    return false;
 }
 
 int computeReferenceRepeatSequenceFrame(const string& sequence, const string& motif)
@@ -1263,60 +1385,108 @@ int computeSoftClipBasesToKeep(
     {
         return 0;
     }
+    // The number of clip bases kept when each is compared with the base `period` positions back. Every period uses the
+    // motif length's window: a longer one fills later, and a clip too short to fill it is judged leniently (below).
     const int windowSize = std::max(2 * motifSize, 12);
-    vector<char> window(windowSize, 0);
-    int windowHead = 0;
-    int comparisons = 0;
-    int matchesInWindow = 0;
-    int basesThroughLastMatch = 0;
-    for (int step = 0; step != clipLength; ++step)
+    auto countBasesKeptWithPeriod = [&](int period)
     {
-        const int position = clipOnRight ? clipStart + step : clipEnd - 1 - step;
-        const int earlierPosition = clipOnRight ? position - motifSize : position + motifSize;
-        const bool isComparable = clipOnRight ? earlierPosition >= tractStart : earlierPosition < tractEnd;
-        if (!isComparable)
+        vector<char> window(windowSize, 0);
+        int windowHead = 0;
+        int comparisons = 0;
+        int matchesInWindow = 0;
+        int basesThroughLastMatch = 0;
+        for (int step = 0; step != clipLength; ++step)
         {
-            continue;
+            const int position = clipOnRight ? clipStart + step : clipEnd - 1 - step;
+            const int earlierPosition = clipOnRight ? position - period : position + period;
+            const bool isComparable = clipOnRight ? earlierPosition >= tractStart : earlierPosition < tractEnd;
+            if (!isComparable)
+            {
+                continue;
+            }
+            const bool isMatch = basesMatch(sequence[position], sequence[earlierPosition]);
+            if (comparisons == windowSize)
+            {
+                matchesInWindow -= window[windowHead];
+            }
+            else
+            {
+                ++comparisons;
+            }
+            window[windowHead] = isMatch;
+            matchesInWindow += isMatch;
+            windowHead = (windowHead + 1) % windowSize;
+            if (isMatch)
+            {
+                basesThroughLastMatch = step + 1;
+            }
+            if (comparisons == windowSize && matchesInWindow < minScore * windowSize)
+            {
+                return basesThroughLastMatch;
+            }
         }
-        const bool isMatch = basesMatch(sequence[position], sequence[earlierPosition]);
-        if (comparisons == windowSize)
-        {
-            matchesInWindow -= window[windowHead];
-        }
-        else
-        {
-            ++comparisons;
-        }
-        window[windowHead] = isMatch;
-        matchesInWindow += isMatch;
-        windowHead = (windowHead + 1) % windowSize;
-        if (isMatch)
-        {
-            basesThroughLastMatch = step + 1;
-        }
-        if (comparisons == windowSize && matchesInWindow < minScore * windowSize)
+        // A clip too short to fill the window: drop trailing bases that do not continue the repeat sequence.
+        if (comparisons > 0 && matchesInWindow < minScore * comparisons)
         {
             return basesThroughLastMatch;
         }
-    }
-    // A clip too short to fill the window: drop trailing bases that do not continue the repeat sequence.
-    if (comparisons > 0 && matchesInWindow < minScore * comparisons)
+        return clipLength;
+    };
+
+    // The fraction of the clip bases in steps [firstStep, lastStep) that equal the base one motif length back.
+    auto computeMotifLengthScoreOfClipBases = [&](int firstStep, int lastStep)
     {
-        return basesThroughLastMatch;
+        int comparisons = 0;
+        int matches = 0;
+        for (int step = firstStep; step != lastStep; ++step)
+        {
+            const int position = clipOnRight ? clipStart + step : clipEnd - 1 - step;
+            const int earlierPosition = clipOnRight ? position - motifSize : position + motifSize;
+            if (clipOnRight ? earlierPosition >= tractStart : earlierPosition < tractEnd)
+            {
+                ++comparisons;
+                matches += basesMatch(sequence[position], sequence[earlierPosition]);
+            }
+        }
+        return comparisons == 0 ? 0.0 : static_cast<double>(matches) / comparisons;
+    };
+
+    // A repeat sequence can also repeat with a period of several motif lengths, such as GCCCCCGGGCCC at a GGCCCC
+    // locus, whose bases equal the base one motif length back only 4 times in 6. Such a period, at most a third of the
+    // read length, is used only when it keeps more of the clip than every shorter period by at least a whole period and
+    // a whole window (past the end of the repeat sequence, chance matches can make one period keep a few more bases
+    // than another, but not that many), and when the bases it adds resemble repeat units of the motif length
+    // (kMotifCompositionMinMotifLengthScoreForLongerPeriods). Motifs shorter than
+    // kMotifCompositionMinMotifSizeForLongerPeriods use only their own length.
+    int basesToKeep = countBasesKeptWithPeriod(motifSize);
+    const bool triesLongerPeriods = motifSize >= kMotifCompositionMinMotifSizeForLongerPeriods;
+    for (int period = 2 * motifSize;
+         triesLongerPeriods && basesToKeep < clipLength && 3 * period <= static_cast<int>(sequence.size());
+         period += motifSize)
+    {
+        const int basesKeptWithPeriod = countBasesKeptWithPeriod(period);
+        if (basesKeptWithPeriod >= basesToKeep + std::max(period, windowSize)
+            && computeMotifLengthScoreOfClipBases(basesToKeep, basesKeptWithPeriod)
+                >= kMotifCompositionMinMotifLengthScoreForLongerPeriods)
+        {
+            basesToKeep = basesKeptWithPeriod;
+        }
     }
-    return clipLength;
+    return basesToKeep;
 }
 
 vector<SequenceSubstring> splitIntoMotifs(
     const string& tract, const string& catalogMotif, const vector<string>& acceptedMotifs, int startOffset,
     bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
-    const boost::optional<string>& referenceEndPartialRepeatUnit, const vector<string>& knownMotifs)
+    const boost::optional<string>& referenceEndPartialRepeatUnit, const vector<string>& knownMotifs,
+    bool keepRecurringMotifCandidatesUnanchoredOnTheLeft, bool keepRecurringMotifCandidatesUnanchoredOnTheRight)
 {
     vector<SequenceSubstring> sequenceSubstrings;
     splitTract(
         tract, toUpperSequence(tract), catalogMotif, MotifList(acceptedMotifs, catalogMotif.size()),
         computeCanonicalRotations(knownMotifs), startOffset, startsAtEdgeOfRepeatSequence,
-        endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+        endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, keepRecurringMotifCandidatesUnanchoredOnTheLeft,
+        keepRecurringMotifCandidatesUnanchoredOnTheRight, {}, sequenceSubstrings);
     return sequenceSubstrings;
 }
 
@@ -1407,7 +1577,7 @@ boost::optional<MotifComposition> computeMotifComposition(
         vector<SequenceSubstring> sequenceSubstrings;
         splitTract(
             locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif,
-            MotifList(seedMotifs, motifSize), knownMotifRotations, frameOffset, true, true, boost::none,
+            MotifList(seedMotifs, motifSize), knownMotifRotations, frameOffset, true, true, boost::none, true, true, {},
             sequenceSubstrings);
         for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
         {
@@ -1451,7 +1621,7 @@ boost::optional<MotifComposition> computeMotifComposition(
         vector<SequenceSubstring> referenceRepeatUnits;
         const int partialRepeatUnitLength = splitTract(
             locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, acceptedMotifs,
-            knownMotifRotations, frameOffset, true, true, boost::none, referenceRepeatUnits);
+            knownMotifRotations, frameOffset, true, true, boost::none, true, true, {}, referenceRepeatUnits);
         return boost::optional<string>(locus.referenceRepeatSequence.substr(
             locus.referenceRepeatSequence.size() - partialRepeatUnitLength));
     };
@@ -1715,17 +1885,37 @@ boost::optional<MotifComposition> computeMotifComposition(
     // No mate next to the locus gives their orientation, so each read is turned to the locus's strand by its own
     // sequence; a catalog motif with IUPAC codes cannot do that. Placement in an off-target region says nothing about
     // a read's origin, so MAPQ is not judged. The pairs are numbered after readPairs.
-    if (catalogMotifIsConcrete)
+    //
+    // They are used only when the genotype has an allele at least as long as the locus's longest read, the only case in
+    // which a read of this locus can be made of repeat sequence from end to end. Otherwise they come from other repeats:
+    // at FMR1 in HG002, a normal allele of about 30 CGG units, G-rich off-target reads made AGG its most common motif.
+    size_t longestReadLength = 0;
+    for (const FullReadPair* readPair : readPairs)
+    {
+        for (const std::optional<FullRead>* mate : { &readPair->firstMate, &readPair->secondMate })
+        {
+            if (*mate)
+            {
+                longestReadLength = std::max(longestReadLength, (*mate)->r.sequence().size());
+            }
+        }
+    }
+    const bool genotypeHasAnAlleleAsLongAsTheReads
+        = genotype && static_cast<size_t>(genotype->longAlleleSizeInUnits()) * motifSize >= longestReadLength;
+    if (catalogMotifIsConcrete && genotypeHasAnAlleleAsLongAsTheReads)
     {
         const string catalogMotifCanonicalRotation = computeCanonicalRotation(catalogMotif);
+        auto isUsableOfftargetRead = [&](const string& bases)
+        {
+            const auto highQualityBaseCount = std::count_if(bases.begin(), bases.end(), isHighQualityBase);
+            return highQualityBaseCount >= kMotifCompositionMinOfftargetReadHighQualityBaseFraction * bases.size()
+                && passesPeriodTest(bases, motifSize, kMotifCompositionMinInrepeatReadPeriodScore);
+        };
         for (size_t offtargetPairIndex = 0; offtargetPairIndex != offtargetReadPairs.size(); ++offtargetPairIndex)
         {
             const FullReadPair& readPair = *offtargetReadPairs[offtargetPairIndex];
-            if (!readPair.firstMate || !readPair.secondMate
-                || !passesPeriodTest(
-                    readPair.firstMate->r.sequence(), motifSize, kMotifCompositionMinInrepeatReadPeriodScore)
-                || !passesPeriodTest(
-                    readPair.secondMate->r.sequence(), motifSize, kMotifCompositionMinInrepeatReadPeriodScore))
+            if (!readPair.firstMate || !readPair.secondMate || !isUsableOfftargetRead(readPair.firstMate->r.sequence())
+                || !isUsableOfftargetRead(readPair.secondMate->r.sequence()))
             {
                 continue;
             }
@@ -1758,6 +1948,33 @@ boost::optional<MotifComposition> computeMotifComposition(
         tracts.push_back(std::move(tract));
     }
     inrepeatTracts.clear();
+    // Where splitTract may keep motif candidates that recur periodically: in reads mapped to the locus, toward a flank
+    // that has an anchor.
+    auto keepRecurringMotifCandidatesUnanchoredOnTheLeft
+        = [&](size_t tractIndex) { return tractIndex < mappedTractCount && leftAnchor; };
+    auto keepRecurringMotifCandidatesUnanchoredOnTheRight
+        = [&](size_t tractIndex) { return tractIndex < mappedTractCount && rightAnchor; };
+    // Motif candidates that splitTract never keeps for recurring periodically: motif-length sequences whose bases recur
+    // exactly one and two periods away within a reference flank, for a period of a whole number of motif lengths. They
+    // are repeat units of a repeat in the flank (GA units next to an AC repeat at chr22:25997932-25997978, ATCC units
+    // next to a GTCC repeat at chr22:46680543-46680567), which a soft clip that runs on into the flank, or a read placed
+    // a few repeat units off, carries into a tract.
+    std::unordered_set<string> motifCandidatesThatRecurInTheFlanks;
+    for (const string* flank : { &locus.leftFlankSequence, &locus.rightFlankSequence })
+    {
+        const int flankLength = flank->size();
+        for (int period = motifSize; 2 * period + motifSize <= flankLength; period += motifSize)
+        {
+            for (int offset = 0; offset + 2 * period + motifSize <= flankLength; ++offset)
+            {
+                if (flank->compare(offset, motifSize, *flank, offset + period, motifSize) == 0
+                    && flank->compare(offset, motifSize, *flank, offset + 2 * period, motifSize) == 0)
+                {
+                    motifCandidatesThatRecurInTheFlanks.insert(flank->substr(offset, motifSize));
+                }
+            }
+        }
+    }
 
     const bool isHeterozygousWithDistinctAlleles = genotype && genotype->numAlleles() == 2
         && genotype->longAlleleSizeInUnits() - genotype->shortAlleleSizeInUnits() >= 2;
@@ -1789,7 +2006,10 @@ boost::optional<MotifComposition> computeMotifComposition(
             splitTract(
                 tract.bases, tractsUpperCased[tractIndex], catalogMotif, motifList, knownMotifRotations,
                 startOffsetOf(tractIndex, motifList.motifs()), tract.startsAtEdgeOfRepeatSequence,
-                tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+                tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit,
+                keepRecurringMotifCandidatesUnanchoredOnTheLeft(tractIndex),
+                keepRecurringMotifCandidatesUnanchoredOnTheRight(tractIndex), motifCandidatesThatRecurInTheFlanks,
+                sequenceSubstrings);
             for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
             {
                 if (sequenceSubstring.type == SequenceSubstringType::kGap)
@@ -1991,7 +2211,10 @@ boost::optional<MotifComposition> computeMotifComposition(
         splitTract(
             tract.bases, tractsUpperCased[tractIndex], catalogMotif, finalMotifList, knownMotifRotations,
             startOffsetOf(tractIndex, finalMotifs), tract.startsAtEdgeOfRepeatSequence,
-            tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit, sequenceSubstrings);
+            tract.endsAtEdgeOfRepeatSequence, referenceEndPartialRepeatUnit,
+            keepRecurringMotifCandidatesUnanchoredOnTheLeft(tractIndex),
+            keepRecurringMotifCandidatesUnanchoredOnTheRight(tractIndex), motifCandidatesThatRecurInTheFlanks,
+            sequenceSubstrings);
 
         int allele = 0;
         if (isHeterozygousWithDistinctAlleles)
@@ -2086,7 +2309,7 @@ boost::optional<MotifComposition> computeMotifComposition(
     {
         splitTract(
             locus.referenceRepeatSequence, locus.referenceRepeatSequence, catalogMotif, finalMotifList,
-            knownMotifRotations, frameOffset, true, true, boost::none, sequenceSubstrings);
+            knownMotifRotations, frameOffset, true, true, boost::none, true, true, {}, sequenceSubstrings);
         for (const SequenceSubstring& sequenceSubstring : sequenceSubstrings)
         {
             if (sequenceSubstring.type != SequenceSubstringType::kGap)

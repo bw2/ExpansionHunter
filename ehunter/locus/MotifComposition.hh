@@ -105,7 +105,9 @@ std::vector<std::string> validateKnownMotifs(
 //
 // offtargetReadPairs are the locus's off-target read pairs: pairs that the genotyper checks as possible in-repeat read
 // pairs from the locus's OfftargetRegions (no read in the locus's target region, at least one in an off-target
-// region). A pair is used when both of its reads pass the in-repeat period test. Each read is then counted as an
+// region). They are used only when the genotype has an allele at least as long as the longest of readPairs' reads; a
+// pair is then used when both of its reads pass the in-repeat period test and have at least 60% high-quality bases
+// (above Q20). Each read is counted as an
 // in-repeat read, turned to the locus's strand by its own sequence: as is when more of its repeat-unit-sized windows
 // are rotations of the catalog motif than in its reverse complement, reverse-complemented when fewer. A read with
 // equal counts (always the case for a motif whose reverse complement is one of its rotations) is skipped.
@@ -121,9 +123,13 @@ namespace motifcomposition
 // Fraction of positions whose base equals the base `lag` positions earlier (case-insensitive; N never matches).
 double computePeriodScore(const std::string& sequence, int lag);
 
-// True if the sequence repeats with period motifSize: its period score at lag motifSize is at least
-// minScore, and beats the score at every proper divisor of motifSize (including 1) by at least 0.1, so that
-// homopolymers and repeats of a shorter period are rejected.
+// True if the sequence repeats with a period of motifSize or of a whole number of motif lengths, such as
+// GCCCCCGGGCCC (period 12) at a GGCCCC locus: for some such period, at most a third of the sequence length unless it
+// is motifSize itself, the period score at that lag is at least minScore and beats the score at every proper divisor
+// of the period (including 1) by at least 0.1, so that homopolymers and repeats of a shorter period are rejected. A
+// period longer than motifSize is tried only for motifs of at least 3 bp, and also needs a period score of at least 0.6
+// at lag motifSize, so that its repeat units resemble each other: a neighboring repeat whose period merely is a
+// multiple of motifSize does not pass.
 bool passesPeriodTest(const std::string& sequence, int motifSize, double minScore);
 
 // The offset in [0, motif length) at which tiling the motif over the sequence gives the most exactly matching
@@ -134,8 +140,11 @@ int computeReferenceRepeatSequenceFrame(const std::string& sequence, const std::
 // Number of soft-clipped bases to keep as repeat sequence, walking away from the aligned part. `sequence` is
 // the read, the clip is [clipStart, clipEnd), and the aligned repeat bases next to it are [tractStart, clipStart)
 // for a clip on the right (clipOnRight) or [clipEnd, tractEnd) for a clip on the left. Bases are kept while the
-// fraction of bases equal to the base one motif length back (toward the aligned part) stays at or above
-// minScore over a window of max(2 * motifSize, 12) comparisons.
+// fraction of bases equal to the base one period back (toward the aligned part) stays at or above minScore over a
+// window of max(2 * motifSize, 12) comparisons. The period is motifSize, or, for motifs of at least 3 bp, a whole
+// number of motif lengths up to a third of the read length when that keeps more of the clip than every shorter period
+// by at least a whole period and a whole window, and at least 60% of the bases it adds equal the base one motif length
+// back.
 int computeSoftClipBasesToKeep(
     const std::string& sequence, int tractStart, int clipStart, int clipEnd, int tractEnd, bool clipOnRight,
     int motifSize, double minScore);
@@ -167,7 +176,14 @@ struct SequenceSubstring
 // differ from the closest one at no more than 10% of their bases (rounded down), and at fewer bases than from any other
 // rotation of those motifs. Below 10 bp that allows no mismatch, so the exception never applies there. knownMotifs are
 // the catalog's KnownMotifs for the locus, as returned by validateKnownMotifs; when there are any, they replace that
-// exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them.
+// exception at every motif size: such a motif candidate is kept only if it is a rotation of one of them. Either way, such
+// a motif candidate is also kept if its bases recur exactly one and two periods away within the tract (both before it,
+// both after it, or one on each side), for a period of a whole number of motif lengths, unless it is made of a shorter
+// repeated unit: it is a repeat unit of a run of a new motif, or of a motif made of several repeat units, such as
+// GCCCCCGGGCCC at a GGCCCC locus. That needs keepRecurringMotifCandidatesUnanchoredOnTheLeft / ...OnTheRight on each
+// side where the motif candidate is not anchored; the caller sets them for a read at the locus, toward a flank that has
+// an anchor. computeMotifComposition also never keeps that way a motif candidate whose bases recur one and two periods
+// apart within a reference flank: it is a repeat unit of a repeat in the flank.
 //
 // Whether an end is trusted: startsAtEdgeOfRepeatSequence / endsAtEdgeOfRepeatSequence mean the read's alignment placed
 // that end of the tract exactly at the edge of the repeat sequence in the reference. referenceEndPartialRepeatUnit is
@@ -179,7 +195,8 @@ std::vector<SequenceSubstring> splitIntoMotifs(
     const std::string& tract, const std::string& catalogMotif, const std::vector<std::string>& acceptedMotifs,
     int startOffset, bool startsAtEdgeOfRepeatSequence, bool endsAtEdgeOfRepeatSequence,
     const boost::optional<std::string>& referenceEndPartialRepeatUnit,
-    const std::vector<std::string>& knownMotifs = { });
+    const std::vector<std::string>& knownMotifs = { }, bool keepRecurringMotifCandidatesUnanchoredOnTheLeft = true,
+    bool keepRecurringMotifCandidatesUnanchoredOnTheRight = true);
 
 // P(X >= count) for X ~ Poisson(mean).
 double computePoissonUpperTail(double mean, int count);
