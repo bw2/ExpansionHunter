@@ -335,20 +335,16 @@ How it works, in brief:
 * Reads are parsed using their original BAM/CRAM alignments rather than their alignments to the
   locus graph. A read made of a different motif than the catalog motif usually fails graph
   alignment, but it is kept here.
-* The bases aligned between the two edges of the reference repeat sequence are extracted, along
-  with in-repeat reads. An in-repeat read placed away from the locus is used when its mate lies in
-  a flank next to the locus, which also gives the read's orientation. At `RareRepeat` loci that list
-  `OfftargetRegions`, the read pairs placed in those regions with both reads made of repeat sequence
-  are used too. Their orientation comes from their own sequence (the strand on which more of the
-  read is made of the catalog motif); for a motif whose reverse complement is one of its rotations,
-  such as `AATT`, they cannot be oriented and are skipped. Pairs from another genomic copy of the
-  same motif can land in these regions, so they can add motifs that the locus does not have.
-* The repeat sequence is split into motif-sized repeat units. Where a repeat unit does not match an
-  accepted motif, the splitter looks ahead up to one motif length so that an indel or a partial
-  repeat unit does not disrupt every subsequent repeat unit. Bases skipped this way are not counted.
-  The accepted motifs are the catalog motif and the motifs from the reference repeat sequence,
-  plus the motifs listed in `KnownMotifs` (see below) that the reads confirm and the new motifs
-  that pass the tests below.
+* The bases aligned between the two edges of the reference repeat sequence are extracted, along with
+  in-repeat reads. An in-repeat read placed away from the locus is used when its mate lies in a
+  flank next to the locus. At `RareRepeat` loci that list `OfftargetRegions`, read pairs that
+  aligned to those regions are used too, as long as a) the genotype at the locus has at least one
+  allele longer than read length, b) both reads are made of repetitive sequence, and c) at least 60%
+  of the bases in each of these reads have base quality above Q20.
+* The repeat sequence is split into repeat units the size of the annotated motif. Where a repeat
+  unit does not match the annotated motif or one of the motifs in the `KnownMotif` list for that
+  locus in the catalog, the splitter looks ahead up to one motif length so that an indel or a
+  partial repeat unit does not disrupt every subsequent repeat unit.
 * A homopolymer repeat unit (such as `GGG` at a CAG locus) is never counted as a new motif.
 * A motif that is not in the reference repeat sequence (a new motif) is counted only if it is seen
   in at least 2 read pairs, in at least 0.5% of the read pairs at the locus, and in enough reads
@@ -359,15 +355,15 @@ How it works, in brief:
 
 Limitations:
 
-* Only `--analysis-mode seeking` and `--analysis-mode optimized-streaming` are supported.
-* Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not
-  supported.
-* Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units
-  in a 30 bp-motif VNTR) are not counted.
+* The motif composition feature is supported only by  `--analysis-mode seeking` and
+  `--analysis-mode optimized-streaming` , not by `--analysis-mode streaming`. Also, it is not
+  supported for compound locus definitions, such as the default HTT definition
+  (`(CAG)*CAACAG(CCG)*`).
+* Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units in
+  a 30 bp-motif VNTR) are not counted.
 
 ## Catalog field passthrough
 
-When `--copy-catalog-fields` is used, any extra fields from the input variant
-catalog will be copied to each locus record in the output JSON. This allows
-annotation fields like `Gene`, `Diseases`, `PathogenicMin`, etc. to flow through
-without a separate join step.
+When `--copy-catalog-fields` is used, any extra fields from the input variant catalog will be copied
+to each locus record in the output JSON. This allows annotation fields like `Gene`, `Diseases`,
+`PathogenicMin`, etc. to flow through without a separate join step.
