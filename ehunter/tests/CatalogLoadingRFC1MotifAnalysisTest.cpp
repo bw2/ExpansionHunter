@@ -41,7 +41,7 @@ Json makeRFC1Record(const string& referenceRegion)
 
 TEST(DecodeUseRFC1MotifAnalysis, RFC1LocusIsRecognizedInEachReferenceWithAndWithoutChrPrefix)
 {
-    for (const string& referenceRegion :
+    for (const char* referenceRegion :
          { "chr4:39348424-39348479", "4:39348424-39348479", "chr4:39350044-39350099", "4:39350044-39350099",
            "chr4:39318077-39318132", "4:39318077-39318132" })
     {
