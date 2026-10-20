@@ -4,7 +4,7 @@
 Latest docker image:
 
 ```
-weisburd/expansion-hunter@sha256:19ea2c3c7c489d4ab24a382c61ad17401f27c587dec3e8aed43b5d020d2e8c18
+weisburd/expansion-hunter@sha256:191091dcca6faab261704c01010ff5f67071045c88b53f4107b1291f5bf48324
 ```
 
 ### ExpansionHunter fork - under active development
