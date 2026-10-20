@@ -47,7 +47,7 @@ optional arguments.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
    `RareRepeat` loci that list `OfftargetRegions` are not capped, since they are genotyped as in `seeking` mode.
-   Set to 150 by default (500 when `--output-motif-composition` is used); set to 0 to disable the cap.
+   Set to 150 by default; set to 0 to disable the cap.
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file
   path or URL explicitly, instead of auto-detecting it from the `--reads` path.
   This is useful when the index file is in a different location than the reads
@@ -82,9 +82,8 @@ optional arguments.
   input catalog record has a non-empty `KnownMotifs` list (see
   [Structure of a locus-specification record](04_VariantCatalogFiles.md#structure-of-a-locus-specification-record)).
   Compound locus definitions, such as the default HTT definition (`(CAG)*CAACAG(CCG)*`), are not supported. This option works with the
-  `seeking` and `optimized-streaming` analysis modes (not `streaming`). In `optimized-streaming` mode, when this flag is used and
-  `--max-depth` is not specified, the default `--max-depth` is raised to 500 in order to better capture rare motifs at high-coverage loci.
-  Enabling motif composition output increases runtime by ~5% and doesn't affect memory usage. The output JSON
+  `seeking` and `optimized-streaming` analysis modes (not `streaming`).
+  Enabling motif composition output increases runtime by ~2% and doesn't affect memory usage. The output JSON
   file size increases by 5% to 10%.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming`
   analysis mode. See [Resuming an interrupted run](#resuming-an-interrupted-run)
