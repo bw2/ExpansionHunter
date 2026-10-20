@@ -45,7 +45,12 @@ LocusAligner::AlignedPair LocusAligner::align(Read& read, Read* mate, graphtools
     auto readAlign = align(read, alignerSelector);
     auto mateAlign = mate ? align(*mate, alignerSelector) : boost::none;
 
-    int numMatchingBases = static_cast<int>(static_cast<double>(read.sequence().length()) / 7.5);
+    // Take the threshold from read 1's length whichever read was passed first. Seeking mode passes read 1 first,
+    // while streaming modes pass the read that comes later in the file, so when the mates differ in length (as after
+    // adapter trimming) using the first read's length kept a pair in one mode and dropped it in another.
+    const Read& readWhoseLengthSetsMinScore = (mate && mate->isFirstMate()) ? *mate : read;
+    int numMatchingBases
+        = static_cast<int>(static_cast<double>(readWhoseLengthSetsMinScore.sequence().length()) / 7.5);
     numMatchingBases = std::max(numMatchingBases, 10);
     LinearAlignmentParameters parameters;
     const int kMinNonRepeatAlignmentScore = numMatchingBases * parameters.matchScore;

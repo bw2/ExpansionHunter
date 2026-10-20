@@ -94,3 +94,39 @@ TEST(AligningReads, NotLocallyPlasedReads_NotAligned)
     ASSERT_FALSE(alignedPair.first);
     ASSERT_FALSE(alignedPair.second);
 }
+
+TEST(AligningReads, MatesOfDifferentLengths_LocallyPlacedPairThresholdComesFromReadOne)
+{
+    // One mate is 150 bp that aligns nowhere; the other is 15 bp matching the left flank, a non-repeat score of 75.
+    // The threshold is 5 * max(10, int(length / 7.5)) for read 1's length: 100 when read 1 is the 150 bp mate, so the
+    // pair is rejected, and 50 when read 1 is the 15 bp mate, so it is kept, in either order of the arguments.
+    const std::string leftFlank = "GACGTCAGTCAGGCTACGAG";
+    auto graph = makeRegionGraph(decodeFeaturesFromRegex(leftFlank + "(CAG)*GGCTACGACGTCAGTCAGGC"));
+    auto aligner = makeStrAligner(&graph);
+    graphtools::AlignerSelector selector(graphtools::AlignerType::DAG_ALIGNER);
+    const std::string unalignableSequence(150, 'T');
+    const std::string leftFlankSequence = leftFlank.substr(0, 15);
+
+    for (const bool isLongMateReadOne : { true, false })
+    {
+        const Read longMate(
+            ReadId("frag1", isLongMateReadOne ? MateNumber::kFirstMate : MateNumber::kSecondMate),
+            unalignableSequence, false);
+        const Read shortMate(
+            ReadId("frag1", isLongMateReadOne ? MateNumber::kSecondMate : MateNumber::kFirstMate), leftFlankSequence,
+            false);
+
+        Read longMatePassedFirst = longMate;
+        Read shortMatePassedSecond = shortMate;
+        auto alignedPairWithLongMateFirst = aligner.align(longMatePassedFirst, &shortMatePassedSecond, selector);
+
+        Read shortMatePassedFirst = shortMate;
+        Read longMatePassedSecond = longMate;
+        auto alignedPairWithShortMateFirst = aligner.align(shortMatePassedFirst, &longMatePassedSecond, selector);
+
+        ASSERT_FALSE(alignedPairWithLongMateFirst.first);
+        ASSERT_FALSE(alignedPairWithShortMateFirst.second);
+        ASSERT_EQ(!isLongMateReadOne, static_cast<bool>(alignedPairWithLongMateFirst.second));
+        ASSERT_EQ(!isLongMateReadOne, static_cast<bool>(alignedPairWithShortMateFirst.first));
+    }
+}
