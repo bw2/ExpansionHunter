@@ -199,7 +199,7 @@ These four fields are added to each allele object:
 
 | Field | Meaning |
 |-------|---------|
-| `PredictedLengthCorrectionFactor` | Estimated `called_size / true_size`. |
+| `PredictedLengthCorrectionFactor` | Estimated `called_size / true_size` where `pOk < 0.5`; 1 elsewhere. |
 | `pOk` | Probability the call is close to the true size. |
 | `pTooShort` | Probability the call under-estimates the true size. |
 | `pTooLong` | Probability the call over-estimates the true size. |
@@ -221,6 +221,11 @@ The model's estimate of the called size divided by the true size (`called / true
 
 A size-corrected estimate can be computed as `AlleleSize / PredictedLengthCorrectionFactor`.
 
+The factor is written only where the model doubts the call (`pOk < 0.5`, as written in the JSON) and is 1
+everywhere else, so dividing every allele's size by it corrects exactly the calls the model expects to be off and
+leaves confident calls unchanged (see the suggested use below). Output from earlier versions of this fork wrote the
+model's estimate for every allele.
+
 ### pOk, pTooShort, pTooLong
 
 A calibrated 3-way probability over whether the call is within tolerance (`pOk`), an
@@ -230,8 +235,10 @@ confidence signal: high `pOk` means the call is probably already correct, while 
 say which way).
 
 **Suggested use (apply gate).** The length correction is most useful exactly where the
-model is unsure the call is right. A reasonable policy is to apply
-`PredictedLengthCorrectionFactor` only when `pOk < 0.5`, leaving confident calls unchanged:
+model is unsure the call is right. ExpansionHunter therefore writes
+`PredictedLengthCorrectionFactor` as 1 wherever `pOk` is 0.5 or more, so it applies only when `pOk < 0.5` and
+confident calls stay unchanged. The check on `pOk` below gives the same result on this output and also on output
+from earlier versions, which wrote the factor for every allele:
 
 ```python
 def corrected_size(allele):
@@ -241,9 +248,9 @@ def corrected_size(allele):
     return eh
 ```
 
-Applying the correction to high-`pOk` calls is generally counter-productive (it moves
-already-correct calls), so gating on `pOk` is recommended rather than correcting every
-allele.
+Applying the model's estimate to high-`pOk` calls is generally counter-productive (it moves
+already-correct calls), which is why the factor is 1 there. On the 81 held-out samples (2026-10-08 model), it
+moved 45% of the confident fast-path calls at non-homopolymer loci further from the truth and only 3% closer.
 
 ## Quick-path (`QuickGenotype: true`) rows
 

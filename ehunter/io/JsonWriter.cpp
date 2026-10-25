@@ -360,8 +360,14 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                 const gq::AllelePrediction pred = gq::predictAllele(
                     *qualityModel_, repeatFindings.quickGenotype(), ctx, alleleRank, allele.alleleSize, ci.start(),
                     ci.end(), allele);
-                alleleRecord["PredictedLengthCorrectionFactor"] = round3(pred.lengthCorrectionFactor);
-                alleleRecord["pOk"] = round3(pred.pOk);
+                // The length correction is meant only for calls the model doubts (pOk < 0.5, see
+                // docs/07_AlleleQualityMetrics.md): its head is trained on such calls alone, and applied to a
+                // confident call it mostly moves a correct size away from the truth. So the factor is written as 1
+                // wherever the written pOk is 0.5 or more, and dividing every AlleleSize by it follows that rule.
+                const double writtenPOk = round3(pred.pOk);
+                alleleRecord["PredictedLengthCorrectionFactor"]
+                    = writtenPOk < 0.5 ? round3(pred.lengthCorrectionFactor) : 1.0;
+                alleleRecord["pOk"] = writtenPOk;
                 alleleRecord["pTooShort"] = round3(pred.pTooShort);
                 alleleRecord["pTooLong"] = round3(pred.pTooLong);
             }

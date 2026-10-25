@@ -283,9 +283,11 @@ TEST(GenotypeQualityAnnotator, CurrentlyUnconsumedFeaturesReachTheModelWithTheRi
 namespace
 {
 
-// Returns the JSON record VariantJsonWriter writes for a heterozygous 3/7 CAG call of the given repeat subtype, at a
-// locus with or without OfftargetRegions.
-nlohmann::json writeHeterozygousCallRecord(VariantSubtype repeatSubtype, bool locusListsOfftargetRegions)
+// Returns the JSON record VariantJsonWriter writes with qualityModel for a heterozygous 3/7 CAG call of the given
+// repeat subtype, at a locus with or without OfftargetRegions. The call has no spanning reads and is not a fast-path
+// call, so its alleles are scored by the full_nonspanning model.
+nlohmann::json writeHeterozygousCallRecord(
+    VariantSubtype repeatSubtype, bool locusListsOfftargetRegions, const GenotypeQualityModel& qualityModel = model())
 {
     const ReferenceContigInfo contigInfo({ { "chr1", 1000 } });
     LocusSpecification locusSpec(
@@ -314,7 +316,6 @@ nlohmann::json writeHeterozygousCallRecord(VariantSubtype repeatSubtype, bool lo
     }
     findings.setAlleleQualityMetrics(metrics);
 
-    const GenotypeQualityModel qualityModel = model();
     VariantJsonWriter writer(contigInfo, locusSpec, locusSpec.variantSpecs().front(), &qualityModel, 30.0);
     writer.visit(&findings);
     return writer.record();
@@ -342,6 +343,38 @@ TEST(GenotypeQualityAnnotator, JsonLeavesOutModelPredictionsForRareRepeatsAtLoci
                 EXPECT_EQ(expectPredictions, allele.contains("pTooShort"));
                 EXPECT_EQ(expectPredictions, allele.contains("pTooLong"));
             }
+        }
+    }
+}
+
+TEST(GenotypeQualityAnnotator, JsonWritesTheLengthCorrectionFactorOnlyWhereTheWrittenPOkIsBelowHalf)
+{
+    // The full_nonspanning model predicts LCF exp(0.2) for every allele, and a pOk set by the OK class's baseline
+    // logit b: with pass-through calibrators, pOk = e^b / (e^b + 2).
+    const auto writtenAlleles = [](double pOk)
+    {
+        nlohmann::json modelJson = nlohmann::json::parse(kModel);
+        nlohmann::json& regime = modelJson["genotyping_regimes"]["full_nonspanning"];
+        regime["q_median"]["baseline"] = 0.2;
+        regime["direction"]["baseline"] = { std::log(2.0 * pOk / (1.0 - pOk)), 0.0, 0.0 };
+        const nlohmann::json passThrough = { { "x", nlohmann::json::array() }, { "y", nlohmann::json::array() } };
+        regime["direction"]["calibrators"] = nlohmann::json::array({ passThrough, passThrough, passThrough });
+        return writeHeterozygousCallRecord(
+            VariantSubtype::kCommonRepeat, false,
+            GenotypeQualityModel::fromJson(modelJson))["AlleleQualityMetrics"]["Alleles"];
+    };
+    const double lcf = std::round(std::exp(0.2) * 1000.0) / 1000.0;
+    // pOk, the pOk written (3 decimals), and the factor written: the model's below 0.5, else 1.
+    const std::vector<std::vector<double>> cases
+        = { { 1.0 / 3.0, 0.333, lcf }, { 0.4994, 0.499, lcf }, { 0.4996, 0.5, 1.0 }, { 0.8, 0.8, 1.0 } };
+    for (const auto& c : cases)
+    {
+        const nlohmann::json alleles = writtenAlleles(c[0]);
+        ASSERT_EQ(2u, alleles.size());
+        for (const auto& allele : alleles)
+        {
+            EXPECT_DOUBLE_EQ(c[1], allele["pOk"].get<double>()) << "pOk " << c[0];
+            EXPECT_DOUBLE_EQ(c[2], allele["PredictedLengthCorrectionFactor"].get<double>()) << "pOk " << c[0];
         }
     }
 }
