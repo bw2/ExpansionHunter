@@ -347,9 +347,10 @@ How it works, in brief:
   allele longer than read length, b) both reads are made of repetitive sequence, and c) at least 60%
   of the bases in each of these reads have base quality above Q20.
 * The repeat sequence is split into repeat units the size of the annotated motif. Where a repeat
-  unit does not match the annotated motif or one of the motifs in the `KnownMotif` list for that
-  locus in the catalog, the splitter looks ahead up to one motif length so that an indel or a
-  partial repeat unit does not disrupt every subsequent repeat unit.
+  unit does not match an accepted motif, the splitter looks ahead up to one motif length so that an
+  indel or a partial repeat unit does not disrupt every subsequent repeat unit. The accepted motifs
+  are the annotated motif, the motifs from the reference repeat sequence, the motifs in the locus's
+  `KnownMotifs` list that the reads confirm, and the new motifs that pass the tests below.
 * A homopolymer repeat unit (such as `GGG` at a CAG locus) is never counted as a new motif.
 * A motif that is not in the reference repeat sequence (a new motif) is counted only if it is seen
   in at least 2 read pairs, in at least 0.5% of the read pairs at the locus, and in enough reads
