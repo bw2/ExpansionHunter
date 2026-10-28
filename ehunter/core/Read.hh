@@ -137,6 +137,8 @@ struct LinearAlignmentStats
     bool isMateMapped = false;
     bool isSupplementaryAlignment = false;
     bool isSecondaryAlignment = false;
+    bool isFlaggedAsDuplicate = false;  // SAM flag 0x400
+    bool isFlaggedAsFailingQualityChecks = false;  // SAM flag 0x200
     std::vector<uint32_t> cigar;
 };
 

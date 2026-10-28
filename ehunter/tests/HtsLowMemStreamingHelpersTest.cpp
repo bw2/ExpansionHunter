@@ -19,6 +19,8 @@
 
 #include "sample/HtsLowMemStreamingHelpers.hh"
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -406,4 +408,150 @@ TEST(CountReadsByRepeatSizeInUnits, CountsOfSizesInTheSameUnitAddUp)
     EXPECT_EQ(31, readCountsByRepeatSizeInUnits.countOf(2));
     EXPECT_EQ(4, readCountsByRepeatSizeInUnits.countOf(3));
     EXPECT_EQ(std::vector<int32_t>({2, 3}), readCountsByRepeatSizeInUnits.getElementsWithNonzeroCounts());
+}
+
+namespace
+{
+// A read pair (read 1 only) of fragment `fragmentId`, with read 1 flagged as a duplicate when isFlaggedAsDuplicate.
+std::shared_ptr<FullReadPair> makeReadPairForLocusCache(const std::string& fragmentId, bool isFlaggedAsDuplicate)
+{
+    LinearAlignmentStats stats;
+    stats.isMapped = true;
+    stats.isFlaggedAsDuplicate = isFlaggedAsDuplicate;
+    auto readPair = std::make_shared<FullReadPair>();
+    readPair->firstMate = FullRead(Read(ReadId(fragmentId, MateNumber::kFirstMate), "ACGT", false), stats);
+    return readPair;
+}
+
+// Offers a read pair the way the optimized-streaming loop does: admitFragment, then offerReadPair if admitted.
+void offerToLocusCache(LocusCache& locusCache, const std::shared_ptr<FullReadPair>& readPair)
+{
+    const bool isFlaggedPair = isFlaggedAsDuplicateOrFailingQualityChecks(readPair->firstMate->s);
+    if (locusCache.admitFragment(readPair->firstMate->r.fragmentId(), isFlaggedPair, locusCache.maxReadPairs()))
+    {
+        locusCache.offerReadPair(readPair, isFlaggedPair, locusCache.maxReadPairs());
+    }
+}
+
+int countFlaggedReadPairsInLocusCache(const LocusCache& locusCache)
+{
+    int count = 0;
+    for (const auto& readPair : locusCache.readPairs)
+    {
+        count += readPair->firstMate->s.isFlaggedAsDuplicate ? 1 : 0;
+    }
+    return count;
+}
+
+std::vector<std::string> sortedFragmentIdsInLocusCache(const LocusCache& locusCache)
+{
+    std::vector<std::string> fragmentIds;
+    for (const auto& readPair : locusCache.readPairs)
+    {
+        fragmentIds.push_back(readPair->firstMate->r.fragmentId());
+    }
+    std::sort(fragmentIds.begin(), fragmentIds.end());
+    return fragmentIds;
+}
+
+// Depth 10 over a 50 bp window with 50 bp reads is 10 * (50 + 50) / 50 = 20 reads, so a cap of 10 read pairs.
+LocusCache makeLocusCacheWithCapOf10ReadPairs() { return LocusCache(0, GenomicRegion(0, 0, 50), "LOCUS", 10, 50); }
+} // namespace
+
+// Past the cap, read pairs without a duplicate or QC-fail flag take the slots of flagged pairs, so a pile of flagged
+// pairs (like the ~5,600 duplicate-flagged pairs seen at ATXN7 in one sample) can't crowd out the other reads.
+TEST(LocusCache, UnflaggedReadPairsDisplaceFlaggedReadPairsPastTheCap)
+{
+    LocusCache locusCache = makeLocusCacheWithCapOf10ReadPairs();
+    ASSERT_EQ(10u, locusCache.maxReadPairs());
+    int unflaggedCount = 0;
+    for (int i = 0; i < 100; ++i)
+    {
+        const bool isFlaggedAsDuplicate = i % 13 != 0;
+        unflaggedCount += isFlaggedAsDuplicate ? 0 : 1;
+        offerToLocusCache(locusCache, makeReadPairForLocusCache("fragment" + std::to_string(i), isFlaggedAsDuplicate));
+    }
+    ASSERT_EQ(8, unflaggedCount);
+    EXPECT_EQ(10u, locusCache.readPairs.size());
+    EXPECT_EQ(2, countFlaggedReadPairsInLocusCache(locusCache));
+    EXPECT_TRUE(locusCache.reservoirSampled());
+    EXPECT_EQ(100u, locusCache.offeredCount());
+}
+
+// With more unflagged read pairs than slots, no flagged pair is kept, and each kept pair is a different fragment.
+TEST(LocusCache, FlaggedReadPairsAreDroppedWhenThereAreEnoughUnflaggedReadPairs)
+{
+    LocusCache locusCache = makeLocusCacheWithCapOf10ReadPairs();
+    for (int i = 0; i < 100; ++i)
+    {
+        offerToLocusCache(locusCache, makeReadPairForLocusCache("fragment" + std::to_string(i), i % 3 != 0));
+    }
+    EXPECT_EQ(0, countFlaggedReadPairsInLocusCache(locusCache));
+    std::vector<std::string> fragmentIds = sortedFragmentIdsInLocusCache(locusCache);
+    EXPECT_EQ(10u, fragmentIds.size());
+    EXPECT_EQ(fragmentIds.end(), std::adjacent_find(fragmentIds.begin(), fragmentIds.end()));
+}
+
+// Without flagged read pairs, and with each fragment offered once, the sample is plain reservoir sampling (Algorithm R)
+// with the locus's random number generator, the same as before the flags were considered.
+TEST(LocusCache, WithoutFlaggedReadPairsTheSampleIsPlainReservoirSampling)
+{
+    LocusCache locusCache = makeLocusCacheWithCapOf10ReadPairs();
+    uint64_t rngState = fnv1a64("LOCUS");
+    auto nextRandom = [&rngState](uint64_t bound) {
+        rngState += 0x9E3779B97F4A7C15ULL;
+        uint64_t z = rngState;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z = z ^ (z >> 31);
+        return z % bound;
+    };
+    std::vector<std::string> expectedFragmentIds;
+    for (int i = 0; i < 200; ++i)
+    {
+        const std::string fragmentId = "fragment" + std::to_string(i);
+        offerToLocusCache(locusCache, makeReadPairForLocusCache(fragmentId, false));
+        if (expectedFragmentIds.size() < 10)
+        {
+            expectedFragmentIds.push_back(fragmentId);
+        }
+        else
+        {
+            const uint64_t j = nextRandom(i + 1);
+            if (j < 10)
+            {
+                expectedFragmentIds[j] = fragmentId;
+            }
+        }
+    }
+    std::sort(expectedFragmentIds.begin(), expectedFragmentIds.end());
+    EXPECT_EQ(expectedFragmentIds, sortedFragmentIdsInLocusCache(locusCache));
+}
+
+// A fragment offered a second time past the cap (a far-away pair whose two ends are both in the locus window) is not
+// admitted again when its first offer took a flagged pair's slot, so it can't fill two slots.
+TEST(LocusCache, AFragmentThatDisplacedAFlaggedReadPairIsNotAdmittedAgain)
+{
+    LocusCache locusCache = makeLocusCacheWithCapOf10ReadPairs();
+    for (int i = 0; i < 10; ++i)
+    {
+        offerToLocusCache(locusCache, makeReadPairForLocusCache("flagged" + std::to_string(i), true));
+    }
+    offerToLocusCache(locusCache, makeReadPairForLocusCache("unflagged", false));
+    EXPECT_EQ(9, countFlaggedReadPairsInLocusCache(locusCache));
+    EXPECT_FALSE(locusCache.admitFragment("unflagged", false, locusCache.maxReadPairs()));
+}
+
+// A fragment first offered below the cap is not admitted again once the cap is reached (the other end of a far-away
+// pair arriving later), so it isn't counted twice and doesn't take part in the sampling a second time.
+TEST(LocusCache, AFragmentOfferedBelowTheCapIsNotAdmittedAgainPastIt)
+{
+    LocusCache locusCache = makeLocusCacheWithCapOf10ReadPairs();
+    for (int i = 0; i < 20; ++i)
+    {
+        offerToLocusCache(locusCache, makeReadPairForLocusCache("fragment" + std::to_string(i), false));
+    }
+    EXPECT_FALSE(locusCache.admitFragment("fragment0", false, locusCache.maxReadPairs()));
+    EXPECT_TRUE(locusCache.admitFragment("fragment20", false, locusCache.maxReadPairs()));
+    EXPECT_EQ(20u, locusCache.offeredCount());
 }

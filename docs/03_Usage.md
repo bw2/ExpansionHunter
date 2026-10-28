@@ -46,6 +46,8 @@ optional arguments.
    this sets a limit on the number of reads processed per locus using reservoir sampling.
    The intention is to bound the memory usage and runtime at extremely high-coverage loci
    (e.g. centromeric/satellite repeats) where millions of reads can pile up and slow down processing.
+   At a locus that reaches the limit, read pairs flagged as duplicates (SAM flag 0x400) or as failing quality
+   checks (0x200) are kept only where there aren't enough read pairs without either flag.
    `RareRepeat` loci that list `OfftargetRegions` are not capped, since they are genotyped as in `seeking` mode.
    Set to 150 by default; set to 0 to disable the cap.
 * `--reads-index <BAM/CRAM index file/URL>` Specifies the BAM/CRAM index file

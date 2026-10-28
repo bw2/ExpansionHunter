@@ -296,7 +296,7 @@ public:
     OptimizedStreamingGenotypingApproach genotypingApproach() const { return genotypingApproach_; }
     // Target max average base-level depth over the locus window in optimized-streaming mode. Each locus's
     // reservoir cap is derived from this depth and the window width (reference repeat regions + flanks), so the
-    // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingSampleAnalysis.
+    // per-locus read cap scales with locus size; 0 = unlimited. See LocusCache in HtsLowMemStreamingHelpers.hh.
     int maxDepth() const { return maxDepth_; }
     // When true (--output-genotype-timing), record each locus's thread-CPU genotyping time (milliseconds) in
     // the JSON as GenotypingTimeMillis, on both the full-genotyper and optimized-streaming fast paths.

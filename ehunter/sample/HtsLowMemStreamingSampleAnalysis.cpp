@@ -93,125 +93,6 @@ FullRead decodeRead(const htshelpers::HtsFileStreamer& readStreamer) {
 }
 
 
-// 64-bit FNV-1a hash, used to derive a per-locus reservoir-sampling seed from the (stable) locusId so the
-// sample a locus retains is independent of catalog subsetting / thread count, keeping output byte-identical
-// across --threads.
-inline uint64_t fnv1a64(const std::string& s)
-{
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (unsigned char c : s) { h ^= c; h *= 0x100000001b3ULL; }
-    return h;
-}
-
-struct LocusCache {
-    // maxReadPairs_ is the per-locus reservoir size, derived from --max-depth so the retained reads bound the
-    // average base-level depth over the locus window (reference repeat regions + flanks) to maxDepth. For a
-    // window of width W and read length L, ~D*(W+L)/L reads achieve depth D — a read overlaps the window if it
-    // starts anywhere in a span of W+L bases — so the pair cap is that read count halved (one reservoir entry
-    // is a read pair). The cap therefore scales with locus width, bounding narrow and wide loci to the same
-    // depth instead of the same absolute read count. maxDepth <= 0 disables the cap (maxReadPairs_ == 0).
-    LocusCache(int locusIndex, const GenomicRegion& locusInterval, const std::string& locusId,
-               int maxDepth, int typicalReadLength)
-    : locusIndex(locusIndex), locusInterval(locusInterval), rngState_(fnv1a64(locusId))
-    {
-        if (maxDepth <= 0) {
-            maxReadPairs_ = 0;
-        } else {
-            const int64_t readLength = std::max<int64_t>(1, typicalReadLength);
-            const int64_t capReads = static_cast<int64_t>(maxDepth) * (locusInterval.length() + readLength) / readLength;
-            maxReadPairs_ = static_cast<std::size_t>(std::max<int64_t>(1, capReads / 2));
-        }
-    }
-
-    // Stores all reads + mates that will be analyzed for a given locus.
-    int locusIndex;
-
-    // the interval spanned by locus reference regions, including flanks
-    GenomicRegion locusInterval;
-
-    //a vector of pointers to FullReadPair objects
-    std::vector<shared_ptr<FullReadPair>> readPairs;
-
-    // fragment ids already added to readPairs, used to avoid double-counting a far-away pair whose
-    // two ends are both contained in this locus window (each end is streamed in a separate iteration).
-    // Bounded by the reservoir: once readPairs reaches the cap, admitFragment() stops inserting here, so
-    // this set never holds more than ~maxReadPairs entries (see admitFragment).
-    std::unordered_set<FragmentId> seenFragmentIds;
-
-    // Decide whether `fragmentId` should be offered to this locus, applying per-locus duplicate suppression.
-    // Returns true (admit) for a fragment not seen before. Once the reservoir is full (readPairs at maxReadPairs)
-    // we stop tracking fragment ids — otherwise seenFragmentIds would grow to O(distinct reads) at the very
-    // pathological loci the cap exists to bound. Past that point a far-away pair whose two ends both land in
-    // this window may be offered twice, which only perturbs already-sampled over-cap loci and stays
-    // deterministic across --threads (the cap is reached at the same offer under any thread count). When the
-    // cap is disabled (maxReadPairs == 0) this is exactly the previous unbounded dedup.
-    bool admitFragment(const FragmentId& fragmentId, std::size_t maxReadPairs)
-    {
-        if (maxReadPairs != 0 && readPairs.size() >= maxReadPairs)
-        {
-            return true;
-        }
-        return seenFragmentIds.insert(fragmentId).second;
-    }
-
-    // Add a (deduped) read pair to this locus, keeping at most `maxReadPairs` entries via reservoir sampling
-    // (Algorithm R). maxReadPairs == 0 means no cap. While the locus is below the cap this is a plain
-    // push_back, so loci that never exceed the cap end up with exactly the same readPairs (in the same
-    // order) as without the cap — only over-cap loci (e.g. centromeric/satellite pileups) get sampled.
-    // The replacement choice uses a per-locus RNG seeded from the locusId, and reads are offered in
-    // coordinate-stream order (the same order under any --threads), so the retained sample is deterministic
-    // and identical across thread counts.
-    void offerReadPair(const shared_ptr<FullReadPair>& readPair, std::size_t maxReadPairs)
-    {
-        if (maxReadPairs == 0 || readPairs.size() < maxReadPairs)
-        {
-            readPairs.push_back(readPair);
-        }
-        else
-        {
-            const uint64_t j = nextRandom(offeredCount_ + 1);  // uniform in [0, offeredCount_]
-            if (j < maxReadPairs)
-            {
-                readPairs[j] = readPair;
-            }
-        }
-        ++offeredCount_;
-    }
-
-    // Per-locus reservoir size in read pairs; 0 = unlimited. Derived from --max-depth (see constructor).
-    std::size_t maxReadPairs() const { return maxReadPairs_; }
-
-    // True if this locus exceeded its reservoir cap — more read pairs were offered than maxReadPairs_, so the
-    // retained set is a reservoir sample (Algorithm R) rather than every read. False when the cap is disabled
-    // (maxReadPairs_ == 0) or the locus stayed at/under the cap (its read set is complete, byte-identical to no cap).
-    bool reservoirSampled() const { return maxReadPairs_ != 0 && offeredCount_ > maxReadPairs_; }
-
-    // Total read pairs offered to this locus (admitted + dropped). Exceeds maxReadPairs() exactly when
-    // reservoir sampling was triggered.
-    uint64_t offeredCount() const { return offeredCount_; }
-
-private:
-    // number of read pairs offered so far (before the current one); drives the reservoir replacement odds
-    uint64_t offeredCount_ = 0;
-    uint64_t rngState_;
-    std::size_t maxReadPairs_ = 0;
-
-    // splitmix64, returning a value uniform in [0, bound). The modulo bias is negligible here (bound is at
-    // most a few million while the generator is full 64-bit), and avoiding <random> keeps the per-locus
-    // state at 8 bytes — important since one LocusCache exists per active locus.
-    uint64_t nextRandom(uint64_t bound)
-    {
-        rngState_ += 0x9E3779B97F4A7C15ULL;
-        uint64_t z = rngState_;
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-        z = z ^ (z >> 31);
-        return z % bound;
-    }
-};
-
-
-
 // the UnpairedReadsCache is used to store reads for which the mate is yet to be found
 using UnpairedReadsCache = std::unordered_map<FragmentId, FullRead>;
 
@@ -1065,6 +946,7 @@ void doTheAnalysis(
         // handling of such singletons.
         if (!isMateMapped) {
             shared_ptr<FullReadPair> singleEndedRead = nullptr;
+            const bool isFlaggedPair = isFlaggedAsDuplicateOrFailingQualityChecks(fullRead.s);
             for (auto const& locusIndex : locusIndicesCollectingReads) {
                 const LocusDescription* locusDescription = &locusDescriptionCatalog[locusIndex];
                 if (!doesAcontainB(
@@ -1084,14 +966,14 @@ void doTheAnalysis(
                 }
                 shared_ptr<LocusCache> locusCache = locusCachesMap[locusIndex];
                 // de-duplicate in case the same fragment is encountered more than once for this locus
-                if (!locusCache->admitFragment(fullRead.r.fragmentId(), locusCache->maxReadPairs())) {
+                if (!locusCache->admitFragment(fullRead.r.fragmentId(), isFlaggedPair, locusCache->maxReadPairs())) {
                     continue;
                 }
                 if (singleEndedRead == nullptr) {
                     singleEndedRead = std::make_shared<FullReadPair>();
                     singleEndedRead->firstMate = fullRead;
                 }
-                locusCache->offerReadPair(singleEndedRead, locusCache->maxReadPairs());
+                locusCache->offerReadPair(singleEndedRead, isFlaggedPair, locusCache->maxReadPairs());
             }
             continue;
         }
@@ -1158,6 +1040,8 @@ void doTheAnalysis(
 
         // iterate over locusIndicesCollectingReads and, for each locus, add the current read pair to its LocusCache
         shared_ptr<FullReadPair> readPair = nullptr;
+        const bool isFlaggedPair = isFlaggedAsDuplicateOrFailingQualityChecks(fullRead.s)
+            || isFlaggedAsDuplicateOrFailingQualityChecks(fullMate.s);
         for (auto const& locusIndex : locusIndicesCollectingReads) {
             const LocusDescription* locusDescription = &locusDescriptionCatalog[locusIndex];
 
@@ -1190,7 +1074,7 @@ void doTheAnalysis(
             // skip if this fragment's pair was already added to this locus (e.g. a far-away pair whose
             // upstream and downstream ends are both contained in this locus window are streamed, and
             // processed, in two separate iterations)
-            if (!locusCache->admitFragment(fullRead.r.fragmentId(), locusCache->maxReadPairs())) {
+            if (!locusCache->admitFragment(fullRead.r.fragmentId(), isFlaggedPair, locusCache->maxReadPairs())) {
                 continue;
             }
 
@@ -1198,7 +1082,7 @@ void doTheAnalysis(
                 readPair = std::make_shared<FullReadPair>(fullRead, fullMate);
             }
 
-            locusCache->offerReadPair(readPair, locusCache->maxReadPairs());
+            locusCache->offerReadPair(readPair, isFlaggedPair, locusCache->maxReadPairs());
         }
 
 		// if all loci have been processed, break out of the loop

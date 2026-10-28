@@ -145,6 +145,8 @@ LinearAlignmentStats decodeAlignmentStats(bam1_t* htsAlignPtr)
     alignmentStats.isMateMapped = !(samFlag & BAM_FMUNMAP);
     alignmentStats.isSecondaryAlignment = samFlag & BAM_FSECONDARY;
     alignmentStats.isSupplementaryAlignment = samFlag & BAM_FSUPPLEMENTARY;
+    alignmentStats.isFlaggedAsDuplicate = samFlag & BAM_FDUP;
+    alignmentStats.isFlaggedAsFailingQualityChecks = samFlag & BAM_FQCFAIL;
 
     if (alignmentStats.isMapped && htsAlignPtr->core.n_cigar > 0) {
         const uint32_t* cigarPtr = bam_get_cigar(htsAlignPtr);

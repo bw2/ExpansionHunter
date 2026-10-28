@@ -117,7 +117,7 @@ public:
     bool quickGenotype() const { return quickGenotype_; }
 
     // True when this locus's read set was reservoir-sampled because it exceeded the --max-depth cap
-    // (see LocusCache in HtsLowMemStreamingSampleAnalysis.cpp). Emitted as "ReservoirSampling": true.
+    // (see LocusCache in HtsLowMemStreamingHelpers.hh). Emitted as "ReservoirSampling": true.
     void setReservoirSampling(bool reservoirSampling) { reservoirSampling_ = reservoirSampling; }
 
     bool reservoirSampling() const { return reservoirSampling_; }
