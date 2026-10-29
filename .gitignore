@@ -16,3 +16,5 @@ __pycache__/
 
 # Local test runs on samples with known pathogenic repeat expansions (CRAM paths, sample IDs, results).
 /test_local_cases_with_known_pathogenic_expansions/
+
+/mode_consistency_and_accuracy_tests.py
