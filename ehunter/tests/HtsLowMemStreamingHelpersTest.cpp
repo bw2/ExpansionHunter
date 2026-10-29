@@ -360,6 +360,16 @@ TEST(HasEnoughInRepeatReadsForFullGenotyping, TwoInRepeatReadsAreEnough)
     EXPECT_TRUE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "CAG"));
 }
 
+// On two-color sequencers, reads whose signal fails become runs of G, which look like in-repeat reads at C and G
+// homopolymers (G is the reverse complement of C), so homopolymers never go to the full genotyper this way.
+TEST(HasEnoughInRepeatReadsForFullGenotyping, HomopolymersNeverQualify)
+{
+    const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";
+    const auto readPairs = makeReadPairs({{flank, repeat("G", 150)}, {flank, repeat("G", 150)}});
+    EXPECT_FALSE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "G"));
+    EXPECT_FALSE(hasEnoughInRepeatReadsForFullGenotyping(readPairs, "C"));
+}
+
 TEST(HasEnoughInRepeatReadsForFullGenotyping, OneInRepeatReadIsNotEnough)
 {
     const std::string flank = "ACGTTGCAAGTCCATGGTACCTTAGACGTACGATCGGATCCTAGCTAGGTACCATGGTTAACG";

@@ -518,6 +518,15 @@ constexpr double kMinWeightedPurityOfInRepeatRead = 0.90;
 bool hasEnoughInRepeatReadsForFullGenotyping(
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, const std::string& locusMotif)
 {
+    // Never at homopolymers: on two-color sequencers, reads whose signal fails become runs of G, which pass as
+    // in-repeat reads at C and G homopolymers (at about a quarter of them in many 1000 Genomes samples), and the
+    // full genotyper then called alleles of 200-300 repeats where the fast path's call was right. A and T
+    // homopolymers are left out too, on purpose, so that every homopolymer keeps the routing it had before this check
+    // was added; none of the known disease loci is a homopolymer.
+    if (locusMotif.size() == 1) {
+        return false;
+    }
+
     // two, so that a single read from another copy of the motif elsewhere in the genome isn't enough
     constexpr int kMinInRepeatReads = 2;
 

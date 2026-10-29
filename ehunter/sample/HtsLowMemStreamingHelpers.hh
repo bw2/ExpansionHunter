@@ -240,7 +240,9 @@ FastReadAnalysisResult processRead(
     const FullRead& read, int64_t locus_start_0based, int64_t locus_end_0based, const std::string& locus_motif);
 
 // Says whether at least two of the reads (both mates of every pair, wherever they're aligned) are in-repeat reads for
-// the motif, i.e. evidence of an allele longer than a read, which processLocusFast can't size. Exposed for unit tests.
+// the motif, i.e. evidence of an allele longer than a read, which processLocusFast can't size. Always false for a
+// homopolymer motif: poly-G artifact reads look like in-repeat reads at C and G, and A and T are left out on purpose
+// too (see the .cpp). Exposed for unit tests.
 bool hasEnoughInRepeatReadsForFullGenotyping(
     const std::vector<std::shared_ptr<FullReadPair>>& readPairs, const std::string& locusMotif);
 
