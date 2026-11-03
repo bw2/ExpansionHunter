@@ -419,8 +419,8 @@ TEST_F(ResumeTest, WritersReportTheirFileSizeAfterFlushing)
     // Reopened in append mode, as a resumed run reopens a temp file it cut back. Before anything new is
     // written, the size still has to count what the file already holds.
     boost::filesystem::resize_file(jsonPath, jsonSizeAfterL1);
-    IterativeJsonWriter jsonWriter(sampleParams_, reference_.contigInfo(), jsonPath, false, nullptr, 0, 1,
-        AnalysisMode::kOptimizedStreaming, "", JsonOutputMode::kAppendAfterHeader, true);
+    IterativeJsonWriter jsonWriter(
+        sampleParams_, reference_.contigInfo(), jsonPath, false, nullptr, 0, "", JsonOutputMode::kAppendAfterHeader, true);
     IterativeVcfWriter vcfWriter(
         sampleParams_.id(), reference_, headerContigs, vcfPath, VcfOutputMode::kAppendAfterHeader);
     EXPECT_EQ(jsonWriter.flushAndGetFileSize(), jsonSizeAfterL1);

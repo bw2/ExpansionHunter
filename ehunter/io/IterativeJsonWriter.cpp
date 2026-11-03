@@ -35,7 +35,6 @@
 #include <boost/filesystem.hpp>
 #include <boost/optional.hpp>
 
-#include "app/Version.hh"
 #include "core/Common.hh"
 #include "core/ReadSupportCalculator.hh"
 #include "genotype_quality/GenotypeQualityModel.hh"
@@ -117,14 +116,18 @@ static std::string inlineMotifCountObjects(const std::string& jsonString)
     return result;
 }
 
-std::string jsonDocumentHeader(const SampleParameters& sampleParams)
+std::string jsonDocumentHeader(const SampleParameters& sampleParams, const std::string& runInfoJson)
 {
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams.sex());
 
-    const std::string jsonString = std::regex_replace(sampleParametersRecord.dump(2), std::regex("\n"), "\n  ");
-    return "{\n  \"SampleParameters\": " + jsonString + ",\n  \"LocusResults\": {";
+    std::string header = "{\n  \"SampleParameters\": " + formatAsTopLevelValue(sampleParametersRecord) + ",\n  ";
+    if (!runInfoJson.empty())
+    {
+        header += "\"RunInfo\": " + runInfoJson + ",\n  ";
+    }
+    return header + "\"LocusResults\": {";
 }
 
 IterativeJsonWriter::IterativeJsonWriter(
@@ -134,22 +137,15 @@ IterativeJsonWriter::IterativeJsonWriter(
     bool copyCatalogFields,
     const gq::GenotypeQualityModel* qualityModel,
     std::time_t startedEpoch,
-    int threadCount,
-    AnalysisMode analysisMode,
-    const std::string& commandLine,
+    const std::string& runInfoJson,
     JsonOutputMode outputMode,
-    bool hasExistingRecords,
-    OptimizedStreamingGenotypingApproach genotypingApproach)
+    bool hasExistingRecords)
     : contigInfo_(contigInfo)
     , outputFilePath_(outputFilePath)
     , firstRecord_(outputMode == JsonOutputMode::kTruncate || !hasExistingRecords)
     , copyCatalogFields_(copyCatalogFields)
     , qualityModel_(qualityModel)
     , startedEpoch_(startedEpoch)
-    , threadCount_(threadCount)
-    , analysisMode_(analysisMode)
-    , genotypingApproach_(genotypingApproach)
-    , commandLine_(commandLine)
 {
     const bool append = outputMode == JsonOutputMode::kAppendAfterHeader;
     const std::ios::openmode openMode
@@ -172,7 +168,7 @@ IterativeJsonWriter::IterativeJsonWriter(
     // behind, so only a fresh document writes one.
     if (!append)
     {
-        outStream_ << jsonDocumentHeader(sampleParams);
+        outStream_ << jsonDocumentHeader(sampleParams, runInfoJson);
     }
 }
 
@@ -263,45 +259,18 @@ void IterativeJsonWriter::close()
     }
     closed_ = true;
 
-    // RunInfo is written here, after all records, because "Completed" is only known once
-    // genotyping has actually finished (the SampleParameters header above is written up front,
-    // before any genotyping happens).
+    // RunStats is written here, after all records, because "Completed" is only known once genotyping has
+    // actually finished (the header above is written up front, before any genotyping happens).
     //
     // close() also runs from the destructor so an exception unwinding past this writer still leaves
     // a well-formed, parseable JSON file (see the destructor comment) -- but that means this can run
     // mid-crash. std::uncaught_exceptions() tells us which case we're in: only report "Completed"/
     // "Runtime" when they reflect a real, successful finish, so a crashed run doesn't look complete.
     const bool completedNormally = std::uncaught_exceptions() == 0;
+    const std::string runStatsJson = formatAsTopLevelValue(buildRunStatsRecord(startedEpoch_, completedNormally));
 
-    Json runInfoRecord;
-    runInfoRecord["Source"] = kSourceUrl;
-    runInfoRecord["Version"] = kCommitSha;
-    runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode_);
-    if (analysisMode_ == AnalysisMode::kOptimizedStreaming)
-    {
-        // --genotyping-approach changes what optimized-streaming does at every locus (only-full writes no
-        // QuickGenotype fields), so the approach is recorded next to the mode, as buildRunInfoJson does for
-        // the multi-threaded run.
-        runInfoRecord["GenotypingApproach"] = optimizedStreamingGenotypingApproachToString(genotypingApproach_);
-    }
-    runInfoRecord["Threads"] = threadCount_;
-    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch_);
-    if (completedNormally)
-    {
-        const std::time_t completedEpoch = currentEpochSeconds();
-        runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
-        runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch_);
-    }
-    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
-    runInfoRecord["CommandLine"] = commandLine_;
-    if (qualityModel_)
-    {
-        runInfoRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
-    }
-    std::string runInfoJson = std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
-
-    // Close the "LocusResults" object, then append RunInfo and close the outer scope JSON object.
-    outStream_ << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
+    // Close the "LocusResults" object, then append RunStats and close the outer scope JSON object.
+    outStream_ << "\n  },\n  \"RunStats\": " << runStatsJson << "\n}\n";
     outStream_.flush();
     outStream_.reset();
     outFile_.flush();

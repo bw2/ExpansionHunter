@@ -31,7 +31,6 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <exception>
 #include <fstream>
 #include <memory>
-#include <regex>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -42,7 +41,6 @@ LocusCache: a hashmap of LocusCache objects, each of which contains a vector of 
 #include <boost/optional.hpp>
 #include <boost/timer/progress_display.hpp>
 
-#include "app/Version.hh"
 #include "core/HtsHelpers.hh"
 #include "core/Parameters.hh"
 #include "core/Reference.hh"
@@ -1141,34 +1139,6 @@ void doTheAnalysis(
 
 
 
-// The run-wide RunInfo record appended to the merged JSON output. Unlike the copy each per-slice writer
-// puts in its own temp file, "Completed" here is captured only once all genotyping has finished, so it
-// reflects the true end of the run rather than one worker's local finish time.
-std::string buildRunInfoJson(
-    const ProgramParameters& programParams, std::time_t startedEpoch, int threadCount, const std::string& commandLine)
-{
-    const std::time_t completedEpoch = currentEpochSeconds();
-    Json runInfoRecord;
-    runInfoRecord["Source"] = kSourceUrl;
-    runInfoRecord["Version"] = kCommitSha;
-    runInfoRecord["AnalysisMode"] = analysisModeToString(programParams.analysisMode());
-    // Only optimized-streaming runs reach this writer, and --genotyping-approach changes what it does at every
-    // locus (only-full writes no QuickGenotype fields), so the approach is recorded next to the mode.
-    runInfoRecord["GenotypingApproach"]
-        = optimizedStreamingGenotypingApproachToString(programParams.genotypingApproach());
-    runInfoRecord["Threads"] = threadCount;
-    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch);
-    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
-    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
-    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
-    runInfoRecord["CommandLine"] = commandLine;
-    if (programParams.genotypeQualityModel())
-    {
-        runInfoRecord["GenotypeQualityModelVersion"] = programParams.genotypeQualityModel()->version;
-    }
-    return std::regex_replace(runInfoRecord.dump(2), std::regex("\n"), "\n  ");
-}
-
 void htsLowMemStreamingSampleAnalysis(
     LocusDescriptionCatalog& locusDescriptionCatalog,
     const ProgramParameters& programParams,
@@ -1178,6 +1148,10 @@ void htsLowMemStreamingSampleAnalysis(
     const std::string& commandLine)
 {
     const int threadCount = std::max(1, programParams.threadCount);
+    // Written into the final JSON output, by its writer when there is one, or by the merge of the per-contig temp
+    // files, which leave RunInfo out.
+    const std::string runInfoJson = formatAsTopLevelValue(buildRunInfoRecord(programParams.analysisMode(),
+        programParams.genotypingApproach(), threadCount, commandLine, programParams.genotypeQualityModel().get()));
 
     // The contigs the VCF header declares. Taken before --resume drops the finished loci from the catalog,
     // so every temp file and every resumed run declares the same ones.
@@ -1285,7 +1259,7 @@ void htsLowMemStreamingSampleAnalysis(
                      typicalReadLength, {});
         spdlog::info("Added {} reads to the mate cache", add_commas_at_thousands(mateExtractor.mateCacheSize()));
 
-        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(), commandLine, JsonOutputMode::kTruncate, false, programParams.genotypingApproach());
+        IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(), programParams.outputPaths().json(), programParams.copyCatalogFields(), programParams.genotypeQualityModel().get(), startedEpoch, runInfoJson);
         IterativeVcfWriter vcfWriter(
             programParams.sample().id(), reference, vcfHeaderContigs, programParams.outputPaths().vcf());
         GenotypingCounts counts;  // filled by doTheAnalysis; the summary is logged here, always, after it returns
@@ -1460,11 +1434,9 @@ void htsLowMemStreamingSampleAnalysis(
                     const bool appendToResumedContig = resumedContig != resumedContigs.end();
                     IterativeJsonWriter jsonWriter(programParams.sample(), workerReference.contigInfo(),
                         contigTempJsonPath(outputPrefix, slice.contigIndex), programParams.copyCatalogFields(),
-                        programParams.genotypeQualityModel().get(), startedEpoch, threadCount,
-                        programParams.analysisMode(), commandLine,
+                        programParams.genotypeQualityModel().get(), startedEpoch, "",
                         appendToResumedContig ? JsonOutputMode::kAppendAfterHeader : JsonOutputMode::kTruncate,
-                        appendToResumedContig && resumedContig->second.hasJsonRecords,
-                        programParams.genotypingApproach());
+                        appendToResumedContig && resumedContig->second.hasJsonRecords);
                     IterativeVcfWriter vcfWriter(programParams.sample().id(), workerReference, vcfHeaderContigs,
                         contigTempVcfPath(outputPrefix, slice.contigIndex),
                         appendToResumedContig ? VcfOutputMode::kAppendAfterHeader : VcfOutputMode::kTruncate);
@@ -1496,7 +1468,7 @@ void htsLowMemStreamingSampleAnalysis(
 
     // A contig whose loci were all finished before the interruption has a temp file kept from the
     // interrupted run but no genotyping slice, so no worker opened and closed it. Close it here (appending
-    // the RunInfo footer the writers normally add) so the merge sees a complete document.
+    // the RunStats footer the writers normally add) so the merge sees a complete document.
     for (const auto& contigIndexAndResumed : resumedContigs)
     {
         const int32_t contigIndex = contigIndexAndResumed.first;
@@ -1508,9 +1480,8 @@ void htsLowMemStreamingSampleAnalysis(
         }
         IterativeJsonWriter jsonWriter(programParams.sample(), reference.contigInfo(),
             contigTempJsonPath(outputPrefix, contigIndex), programParams.copyCatalogFields(),
-            programParams.genotypeQualityModel().get(), startedEpoch, threadCount, programParams.analysisMode(),
-            commandLine, JsonOutputMode::kAppendAfterHeader, contigIndexAndResumed.second.hasJsonRecords,
-            programParams.genotypingApproach());
+            programParams.genotypeQualityModel().get(), startedEpoch, "", JsonOutputMode::kAppendAfterHeader,
+            contigIndexAndResumed.second.hasJsonRecords);
         IterativeVcfWriter vcfWriter(programParams.sample().id(), reference, vcfHeaderContigs,
             contigTempVcfPath(outputPrefix, contigIndex), VcfOutputMode::kAppendAfterHeader);
         // Closed explicitly rather than left to the destructors, which have to swallow a write failure: the
@@ -1521,8 +1492,10 @@ void htsLowMemStreamingSampleAnalysis(
 
     spdlog::info("Merging {} per-contig output files into final JSON and VCF", jsonPaths.size());
 
-    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths,
-        buildRunInfoJson(programParams, startedEpoch, threadCount, commandLine));
+    // RunStats is built only now, once all genotyping has finished, so its Completed time is the true end of the
+    // run rather than one worker's local finish time.
+    mergeRegionJsonFiles(programParams.outputPaths().json(), jsonPaths, runInfoJson,
+        formatAsTopLevelValue(buildRunStatsRecord(startedEpoch, true)));
     mergeRegionVcfFiles(programParams.outputPaths().vcf(), vcfPaths);
     if (programParams.resume())
     {

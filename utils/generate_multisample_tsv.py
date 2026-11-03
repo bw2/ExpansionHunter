@@ -7,13 +7,16 @@ combined afterwards. Combining TSVs gives the same output as combining the JSON 
 The inputs are read side by side and merged one repeat at a time, so memory use doesn't grow with the number of
 loci: nothing is kept for a repeat once its row is written. That needs every input in genomic order:
 
-    - ExpansionHunter's optimized-streaming mode writes SampleParameters first and then the loci nearly in genomic
-      order (a locus can come up to about a flank length after loci that start later). A small reorder buffer per
-      input puts them in order as they are read.
-    - Its seeking and streaming modes write LocusResults first, with the loci sorted by LocusId, and SampleParameters
-      after them. Such a JSON is first sorted into a temporary single-sample TSV, one chromosome at a time, so memory
-      use is about one chromosome of one sample.
+    - ExpansionHunter's optimized-streaming mode writes the loci nearly in genomic order (a locus can come up to about
+      a flank length after loci that start later). A small reorder buffer per input puts them in order as they are
+      read.
+    - Its seeking and streaming modes write the loci sorted by LocusId. Such a JSON is first sorted into a temporary
+      single-sample TSV, one chromosome at a time, so memory use is about one chromosome of one sample.
     - TSVs from earlier runs are sorted already.
+
+The mode comes from RunInfo.AnalysisMode, which ExpansionHunter writes before the loci. JSONs from older versions,
+which write RunInfo after the loci, are told apart by their first record: only optimized-streaming output starts with
+SampleParameters.
 
 With --threads N, N worker processes each merge a share of the inputs into a temporary TSV, and those are merged into
 the output. A merge reads its inputs at the same time, so the inputs are also merged in groups when there are more
@@ -31,10 +34,12 @@ row per repeat. Small variants are left out. Rows are sorted by position. Column
                                  (which leaves out any fixed sequence the catalog's definition has) and empty for a
                                  locus with several repeats
     SampleCount                  samples whose ExpansionHunter output has a record for this repeat, called or not.
-                                 Samples run on the same catalog without --skip-hom-ref or --skip-missing-genotypes
-                                 all have one. A sample whose output has no record for the repeat (for example a
-                                 hom-ref locus in a --skip-hom-ref run) is not counted, and its alleles are missing
-                                 from the histograms.
+                                 ExpansionHunter leaves a repeat out of a sample's output in a run with --skip-hom-ref
+                                 or --skip-missing-genotypes, and also skips loci that are too wide (more than 2x the
+                                 sample's read length) or whose motif is too long (more than half the read length), so
+                                 samples with different read lengths can have records for different repeats. A sample
+                                 without a record for the repeat is not counted, and its alleles are missing from the
+                                 histograms.
     CalledAlleleCount            called alleles: 2 per diploid genotype, 1 per hemizygous one, 0 per no-call
     AllAlleleHistogram           every called allele, in repeat units: "15x:120,16x:3"
     ShortAlleleHistogram         the shorter allele of each called sample (the only allele of a hemizygous call)
@@ -139,7 +144,7 @@ CHR_X_NAMES = {"chrX", "X"}
 CHR_Y_NAMES = {"chrY", "Y"}
 # Repeat records of each JSON checked for MotifComposition before the merge, to decide whether to track it.
 # ExpansionHunter's all-loci mode puts a MotifComposition record on every eligible repeat, so one shows up within the
-# first few records.
+# first few records. Its other modes put it on few loci, so for those the check relies on RunInfo.CommandLine.
 MOTIF_COMPOSITION_CHECK_RECORDS = 10_000
 # gzip's default level 9 is several times slower than these for little gain on these tables.
 OUTPUT_COMPRESSION_LEVEL = 6
@@ -149,9 +154,12 @@ OPEN_FILES_NEEDED_BESIDES_INPUTS = 64
 # Each input a merge reads costs about 1 MB of buffers, so larger cohorts are merged in groups of at most this many
 # inputs, and the groups' TSVs merged after.
 MAX_INPUTS_PER_MERGE = 256
-# Bytes kept from the end of each JSON while it is streamed: RunInfo (whose CommandLine tells whether ExpansionHunter
-# was run with --output-motif-composition) and SampleParameters are the last records, and both are small.
-JSON_TAIL_BYTES = 65_536
+# RunInfo's CommandLine tells whether ExpansionHunter was run with --output-motif-composition. In JSONs from older
+# ExpansionHunter versions RunInfo is among the last records. It holds the whole command line, which a --locus list of
+# thousands of loci can make megabytes long, so while such a JSON is streamed everything from this key on is kept, up
+# to MAX_RUN_INFO_BYTES (well past any command line the operating system accepts).
+RUN_INFO_KEY = b'"RunInfo"'
+MAX_RUN_INFO_BYTES = 64 * 1024 * 1024
 # Per-input stats keys. The JSON ones are printed as "<count> <key>" after "<count> repeat records".
 REPEAT_RECORDS = "repeat records"
 WITH_GENOTYPE = "with genotype"
@@ -172,13 +180,15 @@ MergeSettings = collections.namedtuple("MergeSettings", [
     "catalog_locus_structures",
 ])
 
-# One input: kind is "json" or "tsv". sample_id, sex and loci_sorted_by_locus_id (whether the JSON was written by
-# ExpansionHunter's seeking or streaming mode) are set for JSON inputs only.
-InputSpec = collections.namedtuple("InputSpec", ["path", "kind", "sample_id", "sex", "loci_sorted_by_locus_id"])
+# One input: kind is "json" or "tsv". sample_id, sex, loci_sorted_by_locus_id (whether the JSON was written by
+# ExpansionHunter's seeking or streaming mode) and command_line_has_motif_composition (whether its RunInfo.CommandLine
+# has --output-motif-composition, or None if RunInfo comes after the loci) are set for JSON inputs only.
+InputSpec = collections.namedtuple(
+    "InputSpec", ["path", "kind", "sample_id", "sex", "loci_sorted_by_locus_id", "command_line_has_motif_composition"])
 
 
 def tsv_input_spec(path):
-    return InputSpec(path, "tsv", None, None, False)
+    return InputSpec(path, "tsv", None, None, False, None)
 
 
 class RepeatSummary:
@@ -610,51 +620,94 @@ def get_locus_structure(locus_id, motif, num_repeats_in_locus, catalog_locus_str
     return f"({motif})*" if num_repeats_in_locus == 1 else ""
 
 
-def lists_loci_sorted_by_locus_id(json_path):
-    """Returns whether an ExpansionHunter JSON was written by its seeking or streaming mode.
-
-    Those modes write LocusResults first, with the loci sorted by LocusId; the optimized-streaming mode writes
-    SampleParameters first and then the loci nearly in genomic order.
-    """
+def read_records_before_locus_results(json_path):
+    """Returns {name: record} for the top-level records of an ExpansionHunter JSON that come before LocusResults (all
+    of them if it has no LocusResults)."""
+    records = {}
     with open_binary(json_path) as f:
-        for prefix, event, value in ijson.parse(f):
-            if prefix == "" and event == "map_key":
-                return value == "LocusResults"
-    return False
+        events = ijson.parse(f, use_float=True)
+        for prefix, event, name in events:
+            if prefix != "" or event != "map_key":
+                continue
+            if name == "LocusResults":
+                break
+            builder = ijson.ObjectBuilder()
+            depth = 0
+            for _, value_event, value in events:
+                builder.event(value_event, value)
+                if value_event in ("start_map", "start_array"):
+                    depth += 1
+                elif value_event in ("end_map", "end_array"):
+                    depth -= 1
+                if depth == 0:
+                    break
+            records[name] = builder.value
+    return records
 
 
-def read_expansion_hunter_sample_parameters(json_path):
-    """Returns (SampleId, Sex) from the SampleParameters record of an ExpansionHunter output JSON.
+def read_expansion_hunter_json_header(json_path):
+    """Returns (SampleId, Sex, loci_sorted_by_locus_id, command_line_has_motif_composition) for an ExpansionHunter
+    output JSON, where command_line_has_motif_composition says whether RunInfo.CommandLine has
+    --output-motif-composition.
 
-    SampleId falls back to the file name, and Sex to "" if the JSON doesn't have it. SampleParameters is the first
-    record of optimized-streaming output but comes after all the loci in seeking and streaming output, so for those
-    the whole file is read.
+    ExpansionHunter writes SampleParameters, RunInfo, LocusResults and RunStats, in that order, in every mode. Its
+    seeking and streaming modes write the loci sorted by LocusId, and its optimized-streaming mode nearly in genomic
+    order. Older versions wrote RunInfo after the loci (with RunStats' fields in it): optimized-streaming output as
+    SampleParameters, LocusResults, RunInfo, and seeking and streaming output with the keys sorted, as LocusResults,
+    RunInfo, SampleParameters. For those, command_line_has_motif_composition is returned as None (RunInfo is read from
+    the end of the file while the loci are streamed), only optimized-streaming output starts with SampleParameters,
+    and getting SampleParameters from seeking or streaming output means reading the whole file.
+
+    SampleId falls back to the file name, and Sex to "" if the JSON doesn't have it.
     """
-    sample_parameters = {}
-    with open_binary(json_path) as f:
-        for sample_parameters in ijson.items(f, "SampleParameters"):
-            break
+    records_before_loci = read_records_before_locus_results(json_path)
+    sample_parameters = records_before_loci.get("SampleParameters")
+    if sample_parameters is None:
+        sample_parameters = {}
+        with open_binary(json_path) as f:
+            for sample_parameters in ijson.items(f, "SampleParameters"):
+                break
+    run_info = records_before_loci.get("RunInfo")
+    if run_info is not None:
+        loci_sorted_by_locus_id = run_info.get("AnalysisMode") != "optimized-streaming"
+        command_line_has_motif_composition = run_info_has_motif_composition(run_info)
+    else:
+        loci_sorted_by_locus_id = "SampleParameters" not in records_before_loci
+        command_line_has_motif_composition = None
     sample_id = sample_parameters.get("SampleId") or os.path.basename(strip_suffix(json_path, JSON_SUFFIXES))
-    return sample_id, sample_parameters.get("Sex", "")
+    return sample_id, sample_parameters.get("Sex", ""), loci_sorted_by_locus_id, command_line_has_motif_composition
 
 
-class TailKeepingReader:
-    """Wraps a binary file and keeps the last tail_bytes bytes read from it."""
+class RunInfoKeepingReader:
+    """Wraps a binary ExpansionHunter JSON and keeps the bytes read from it since the last RUN_INFO_KEY.
 
-    def __init__(self, f, tail_bytes):
+    Until the key is seen, only its length minus one bytes are kept, so a key split between two reads is still found.
+    If more than MAX_RUN_INFO_BYTES follow the key, they are dropped, and tail no longer holds RunInfo.
+    """
+
+    def __init__(self, f):
         self.f = f
-        self.tail_bytes = tail_bytes
-        self.tail = b""
+        self.tail = bytearray()
+        self.tail_starts_with_run_info_key = False
 
     def read(self, size=-1):
         data = self.f.read(size)
-        self.tail = (self.tail + data)[-self.tail_bytes:]
+        search_start = max(0, len(self.tail) - len(RUN_INFO_KEY) + 1)
+        self.tail += data
+        index = self.tail.rfind(RUN_INFO_KEY, search_start)
+        if index >= 0:
+            del self.tail[:index]
+            self.tail_starts_with_run_info_key = True
+        elif len(self.tail) > MAX_RUN_INFO_BYTES:
+            self.tail_starts_with_run_info_key = False
+        if not self.tail_starts_with_run_info_key:
+            del self.tail[:-(len(RUN_INFO_KEY) - 1)]
         return data
 
 
 def parse_run_info(json_tail):
-    """Returns the RunInfo record found in the last bytes of an ExpansionHunter JSON, or None if it has none."""
-    index = json_tail.rfind(b'"RunInfo"')
+    """Returns the RunInfo record found in the end of an ExpansionHunter JSON, or None if it has none."""
+    index = json_tail.rfind(RUN_INFO_KEY)
     if index < 0:
         return None
     text = json_tail[json_tail.index(b":", index) + 1:].decode("utf-8", "replace").lstrip()
@@ -662,6 +715,26 @@ def parse_run_info(json_tail):
         return json.JSONDecoder().raw_decode(text)[0]
     except ValueError:
         return None
+
+
+def run_info_has_motif_composition(run_info):
+    """Returns whether a RunInfo record (or None) has --output-motif-composition in its CommandLine."""
+    return run_info is not None and "--output-motif-composition" in run_info.get("CommandLine", "")
+
+
+def json_command_line_has_motif_composition(input_spec):
+    """Returns whether an ExpansionHunter JSON's RunInfo.CommandLine has --output-motif-composition.
+
+    In JSONs from older ExpansionHunter versions RunInfo is one of the last records, so the whole file is
+    decompressed, but it isn't parsed.
+    """
+    if input_spec.command_line_has_motif_composition is not None:
+        return input_spec.command_line_has_motif_composition
+    with open_binary(input_spec.path) as raw_file:
+        f = RunInfoKeepingReader(raw_file)
+        while f.read(1 << 20):
+            pass
+    return run_info_has_motif_composition(parse_run_info(f.tail))
 
 
 def iterate_expansion_hunter_records(input_spec, settings, stats):
@@ -672,7 +745,10 @@ def iterate_expansion_hunter_records(input_spec, settings, stats):
     """
     is_male = input_spec.sex.lower() == "male"
     with open_binary(input_spec.path) as raw_file:
-        f = TailKeepingReader(raw_file, JSON_TAIL_BYTES)
+        # In JSONs from older ExpansionHunter versions RunInfo comes after the loci, so it is picked out while they
+        # are read. (Wrapping a JSON whose RunInfo comes first would keep everything after it.)
+        command_line_has_motif_composition = input_spec.command_line_has_motif_composition
+        f = raw_file if command_line_has_motif_composition is not None else RunInfoKeepingReader(raw_file)
         for locus_id, locus_record in ijson.kvitems(f, "LocusResults", use_float=True):
             repeat_records = [(variant_id, variant_record)
                               for variant_id, variant_record in locus_record.get("Variants", {}).items()
@@ -683,9 +759,11 @@ def iterate_expansion_hunter_records(input_spec, settings, stats):
                 summary = summarize_expansion_hunter_record(variant_record, input_spec.sample_id, is_male,
                                                             locus_structure, settings, stats)
                 yield get_genomic_sort_key(locus_id, variant_id, summary.reference_region), summary
-        # kvitems only finishes once ijson has read the whole file, so the tail holds RunInfo, the last record.
-        run_info = parse_run_info(f.tail)
-    if run_info is not None and "--output-motif-composition" in run_info.get("CommandLine", ""):
+        # kvitems only finishes once ijson has read the whole file, so an older JSON's tail holds RunInfo (its last
+        # record in optimized-streaming output; in seeking and streaming output only SampleParameters comes after it).
+        if command_line_has_motif_composition is None:
+            command_line_has_motif_composition = run_info_has_motif_composition(parse_run_info(f.tail))
+    if command_line_has_motif_composition:
         stats[COMMAND_LINE_HAS_MOTIF_COMPOSITION] = 1
 
 
@@ -759,6 +837,11 @@ def write_sorted_tsv_from_expansion_hunter_json(input_spec, output_tsv_path, set
 def read_tsv_header(tsv_path):
     with open_text(tsv_path) as f:
         return f.readline().rstrip("\n").split("\t")
+
+
+def tsv_has_motif_composition_columns(tsv_path):
+    header = read_tsv_header(tsv_path)
+    return all(column in header for column in MOTIF_COMPOSITION_COLUMNS)
 
 
 def iterate_multisample_tsv(input_spec, settings, stats):
@@ -852,7 +935,7 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
         output_tsv_path (str): where to write the merged TSV (gzipped).
         settings (MergeSettings): the run's settings.
         temp_dir (str): directory for temporary files.
-        show_progress_bar (bool): whether to show a progress bar of rows written.
+        show_progress_bar (bool): whether to show a progress bar of input records merged.
         compression_level (int): gzip compression level of the output.
 
     Returns:
@@ -912,17 +995,15 @@ def merge_input_group(task):
     return group_index, stats_by_input
 
 
-def has_motif_composition_in_first_records(input_spec):
-    """Returns whether a TSV has the motif composition columns, or a JSON has MotifComposition in its first records.
+def json_has_motif_composition_in_first_records(json_path):
+    """Returns whether an ExpansionHunter JSON has MotifComposition in its first repeat records.
 
-    Only the first MOTIF_COMPOSITION_CHECK_RECORDS repeat records of a JSON are read, so False for a JSON doesn't
-    rule out motif composition further on (ExpansionHunter's loci-with-non-ref-motifs and loci-with-known-motifs
-    modes put it on few loci); main reruns the merge if the full read finds some.
+    Only the first MOTIF_COMPOSITION_CHECK_RECORDS repeat records are read, so False doesn't rule out motif composition
+    further on (ExpansionHunter's loci-with-non-ref-motifs and loci-with-known-motifs modes put it on few loci); main
+    then checks a JSON's command line too.
     """
-    if input_spec.kind == "tsv":
-        return all(column in read_tsv_header(input_spec.path) for column in MOTIF_COMPOSITION_COLUMNS)
     num_checked = 0
-    with open_binary(input_spec.path) as f:
+    with open_binary(json_path) as f:
         for _, locus_record in ijson.kvitems(f, "LocusResults", use_float=True):
             for variant_record in locus_record.get("Variants", {}).values():
                 if variant_record.get("VariantType") != "Repeat":
@@ -1163,8 +1244,10 @@ def collect_input_specs_and_samples(args):
     samples_by_id = {}
     for path in args.input_paths:
         if path.endswith(JSON_SUFFIXES):
-            sample_id, sex = read_expansion_hunter_sample_parameters(path)
-            input_specs.append(InputSpec(path, "json", sample_id, sex, lists_loci_sorted_by_locus_id(path)))
+            sample_id, sex, loci_sorted_by_locus_id, command_line_has_motif_composition = (
+                read_expansion_hunter_json_header(path))
+            input_specs.append(InputSpec(
+                path, "json", sample_id, sex, loci_sorted_by_locus_id, command_line_has_motif_composition))
             input_samples = [(sample_id, sex)]
         else:
             check_tsv_input_columns(path, args)
@@ -1201,8 +1284,7 @@ def check_optional_columns(input_specs, stats_by_input, args):
             if stats[WITH_CONSENSUS_SEQUENCES] == 0 and stats[WITH_GENOTYPE] > 0:
                 inputs_without_consensus_sequences.append(input_spec.path)
         else:
-            has_motif_composition = all(column in read_tsv_header(input_spec.path)
-                                        for column in MOTIF_COMPOSITION_COLUMNS)
+            has_motif_composition = tsv_has_motif_composition_columns(input_spec.path)
         (inputs_with_motif_composition if has_motif_composition else inputs_without_motif_composition).append(
             input_spec.path)
 
@@ -1254,17 +1336,26 @@ def main(argv=None):
     if args.variant_catalog:
         print(f"Reading LocusStructures from {args.variant_catalog}")
         catalog_locus_structures = read_locus_structures_from_catalog(args.variant_catalog)
-        print(f"  {len(catalog_locus_structures):,d} loci have more than a single repeat in their LocusStructure")
+        print(f"  {len(catalog_locus_structures):,d} loci have a LocusStructure other than a single "
+              f"\"(<motif>)*\" repeat")
 
-    # Whether the output gets motif composition columns is only certain once every input has been read; the first
-    # records of each input almost always tell, and the merge is rerun in the rare case they don't.
-    track_motif_composition = not args.skip_motif_composition_columns and any(
-        has_motif_composition_in_first_records(input_spec) for input_spec in input_specs)
-    if track_motif_composition:
-        tsvs_without_motif_composition = [
-            input_spec.path for input_spec in input_specs
-            if input_spec.kind == "tsv" and not has_motif_composition_in_first_records(input_spec)]
-        if tsvs_without_motif_composition:
+    # Whether the output gets motif composition columns is only certain once every input has been read. A TSV's header
+    # tells, and so do a JSON's first records in ExpansionHunter's all-loci mode. Its other modes can put
+    # MotifComposition on few loci or none, so one JSON's RunInfo.CommandLine is checked too: inputs that differ in
+    # motif composition are an error, so one JSON speaks for all. A JSON whose RunInfo was read with its header is
+    # used if there is one; otherwise the smallest, since the whole file has to be decompressed. The merge is rerun
+    # only if MotifComposition turns up late in JSONs whose command line abbreviates --output-motif-composition.
+    track_motif_composition = False
+    if not args.skip_motif_composition_columns:
+        tsv_paths = [input_spec.path for input_spec in input_specs if input_spec.kind == "tsv"]
+        tsvs_without_motif_composition = [path for path in tsv_paths if not tsv_has_motif_composition_columns(path)]
+        json_specs = [input_spec for input_spec in input_specs if input_spec.kind == "json"]
+        track_motif_composition = (
+            len(tsvs_without_motif_composition) < len(tsv_paths)
+            or any(json_has_motif_composition_in_first_records(input_spec.path) for input_spec in json_specs)
+            or (bool(json_specs) and json_command_line_has_motif_composition(min(json_specs, key=lambda input_spec: (
+                input_spec.command_line_has_motif_composition is None, os.path.getsize(input_spec.path))))))
+        if track_motif_composition and tsvs_without_motif_composition:
             raise ValueError(
                 f"Some inputs have motif composition but {tsvs_without_motif_composition[0]} has no motif composition "
                 f"columns, so those columns would only count some of the samples. Pass "

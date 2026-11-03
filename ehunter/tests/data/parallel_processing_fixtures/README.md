@@ -90,7 +90,7 @@ ExpansionHunter --reads   ehunter/tests/data/parallel_processing_fixtures/reads.
   CHR2_CCG), 1 via full genotyping (CHR4_MULTI), 1 zero-coverage no-call.
 - `LocusResults` and `SampleParameters` are **byte-identical across `--threads 1`,
   `2`, and `4`** with both genotyping approaches (the primary purpose of this fixture). The
-  `RunInfo` record (`Started`/`Completed`/`Runtime`/`Threads`) is expected to
-  differ, since it reports true wall-clock timing and the actual `--threads`
-  value for each run.
+  `RunInfo` record (`Threads`, `CommandLine`) and the `RunStats` record
+  (`Started`/`Completed`/`Runtime`/`PeakRssMemoryMb`) are expected to differ, since they
+  report the actual `--threads` value and true wall-clock timing for each run.
 - The **CRAM** input produces the same LocusIds and the same genotypes as the BAM.

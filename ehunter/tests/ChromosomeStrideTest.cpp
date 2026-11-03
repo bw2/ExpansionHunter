@@ -62,17 +62,22 @@ void writeFile(const std::string& path, const std::string& content)
     out << content;
 }
 
-// IterativeJsonWriter wrapper format that mergeRegionJsonFiles slices on. Each region file's own
-// RunInfo ("Threads": 1 here) is discarded by the merge in favor of the caller-supplied runInfoJson
-// (see kTestRunInfo below), so it's deliberately distinct from that value.
+// IterativeJsonWriter wrapper format that mergeRegionJsonFiles slices on (a per-contig temp file has no
+// RunInfo). Each region file's own RunStats ("Runtime": "1s" here) is discarded by the merge in favor of
+// the caller-supplied runStatsJson (see kTestRunStats below), so it's deliberately distinct from that value.
 std::string jsonRegionFile(const std::string& body)
 {
     return "{\n  \"SampleParameters\": {\n    \"SampleId\": \"s\"\n  },\n  \"LocusResults\": {" + body
-        + "\n  },\n  \"RunInfo\": {\n    \"Threads\": 1\n  }\n}\n";
+        + "\n  },\n  \"RunStats\": {\n    \"Runtime\": \"1s\"\n  }\n}\n";
 }
 
-// Stand-in for the run-wide RunInfo a real caller (htsLowMemStreamingSampleAnalysis) would build.
+// Stand-ins for the run-wide RunInfo and RunStats a real caller (htsLowMemStreamingSampleAnalysis) would build.
 const std::string kTestRunInfo = "{\n    \"Threads\": 99\n  }";
+const std::string kTestRunStats = "{\n    \"Runtime\": \"99s\"\n  }";
+
+// The merged output's start, up to and including the opening of LocusResults.
+const std::string kMergedHeader = "{\n  \"SampleParameters\": {\n    \"SampleId\": \"s\"\n  },\n  \"RunInfo\": "
+    + kTestRunInfo + ",\n  \"LocusResults\": {";
 }  // namespace
 
 TEST(WholeContigRegionsForStride, StrideAssignmentAscendingWholeContig)
@@ -131,20 +136,19 @@ TEST(MergeRegionJsonFiles, AscendingBodiesJoinedSkippingEmpty)
     writeFile(f1, jsonRegionFile(""));  // header-only / zero-record interior file
     writeFile(f2, jsonRegionFile("\n    \"L2\": {\"a\": 2}"));
 
-    mergeRegionJsonFiles(merged, { f0, f1, f2 }, kTestRunInfo);
+    mergeRegionJsonFiles(merged, { f0, f1, f2 }, kTestRunInfo, kTestRunStats);
     const std::string out = readFile(merged);
 
-    // SampleParameters prefix from file[0], bodies joined with ", ", empty body skipped (no double
-    // comma), caller-supplied RunInfo appended (not any region file's own copy).
-    const std::string expected =
-        "{\n  \"SampleParameters\": {\n    \"SampleId\": \"s\"\n  },\n  \"LocusResults\": {"
-        "\n    \"L0\": {\"a\": 0}, \n    \"L2\": {\"a\": 2}"
-        "\n  },\n  \"RunInfo\": " + kTestRunInfo + "\n}\n";
+    // SampleParameters prefix from file[0] followed by the caller-supplied RunInfo, bodies joined with ", ",
+    // empty body skipped (no double comma), caller-supplied RunStats appended (not any region file's own copy).
+    const std::string expected = kMergedHeader
+        + "\n    \"L0\": {\"a\": 0}, \n    \"L2\": {\"a\": 2}"
+          "\n  },\n  \"RunStats\": " + kTestRunStats + "\n}\n";
     EXPECT_EQ(out, expected);
 
     // Path-vector order is load-bearing: a non-ascending order yields different bytes.
     const std::string mergedSwapped = "/tmp/eh_chrstride_json_merged_swapped.json";
-    mergeRegionJsonFiles(mergedSwapped, { f2, f1, f0 }, kTestRunInfo);
+    mergeRegionJsonFiles(mergedSwapped, { f2, f1, f0 }, kTestRunInfo, kTestRunStats);
     EXPECT_NE(readFile(mergedSwapped), out);
 
     for (const std::string& p : { f0, f1, f2, merged, mergedSwapped }) { std::remove(p.c_str()); }
@@ -159,32 +163,30 @@ TEST(MergeRegionJsonFiles, LeadingEmptyFileStillSuppliesSampleParameters)
     writeFile(f0, jsonRegionFile(""));  // empty body first
     writeFile(f1, jsonRegionFile("\n    \"L1\": {\"a\": 1}"));
 
-    mergeRegionJsonFiles(merged, { f0, f1 }, kTestRunInfo);
+    mergeRegionJsonFiles(merged, { f0, f1 }, kTestRunInfo, kTestRunStats);
     const std::string out = readFile(merged);
 
     // No stray leading ", " before the first non-empty body; SampleParameters still emitted.
-    const std::string expected =
-        "{\n  \"SampleParameters\": {\n    \"SampleId\": \"s\"\n  },\n  \"LocusResults\": {"
-        "\n    \"L1\": {\"a\": 1}"
-        "\n  },\n  \"RunInfo\": " + kTestRunInfo + "\n}\n";
+    const std::string expected = kMergedHeader
+        + "\n    \"L1\": {\"a\": 1}"
+          "\n  },\n  \"RunStats\": " + kTestRunStats + "\n}\n";
     EXPECT_EQ(out, expected);
 
     for (const std::string& p : { f0, f1, merged }) { std::remove(p.c_str()); }
 }
 
-TEST(MergeRegionJsonFiles, SingleFileBodyKeptRunInfoReplaced)
+TEST(MergeRegionJsonFiles, SingleFileBodyKeptRunStatsReplaced)
 {
     const std::string f0 = "/tmp/eh_chrstride_json_single.json";
     const std::string merged = "/tmp/eh_chrstride_json_single_merged.json";
     writeFile(f0, jsonRegionFile("\n    \"L0\": {\"a\": 0}"));
-    mergeRegionJsonFiles(merged, { f0 }, kTestRunInfo);
+    mergeRegionJsonFiles(merged, { f0 }, kTestRunInfo, kTestRunStats);
 
-    // Body (and SampleParameters) carried over verbatim; the file's own RunInfo ("Threads": 1) is
-    // discarded in favor of the caller-supplied kTestRunInfo ("Threads": 99).
-    const std::string expected =
-        "{\n  \"SampleParameters\": {\n    \"SampleId\": \"s\"\n  },\n  \"LocusResults\": {"
-        "\n    \"L0\": {\"a\": 0}"
-        "\n  },\n  \"RunInfo\": " + kTestRunInfo + "\n}\n";
+    // Body (and SampleParameters) carried over verbatim; the file's own RunStats ("Runtime": "1s") is
+    // discarded in favor of the caller-supplied kTestRunStats ("Runtime": "99s").
+    const std::string expected = kMergedHeader
+        + "\n    \"L0\": {\"a\": 0}"
+          "\n  },\n  \"RunStats\": " + kTestRunStats + "\n}\n";
     EXPECT_EQ(readFile(merged), expected);
     for (const std::string& p : { f0, merged }) { std::remove(p.c_str()); }
 }

@@ -140,18 +140,19 @@ void mergeRegionVcfFiles(const std::string& finalPath, const std::vector<std::st
 }
 
 void mergeRegionJsonFiles(
-    const std::string& finalPath, const std::vector<std::string>& regionTempPaths, const std::string& runInfoJson)
+    const std::string& finalPath, const std::vector<std::string>& regionTempPaths, const std::string& runInfoJson,
+    const std::string& runStatsJson)
 {
     // This merge depends on IterativeJsonWriter's exact wrapper format (single source of truth:
-    // io/IterativeJsonWriter.cpp). Each region file is:
-    //     "{\n  \"SampleParameters\": <json>,\n  \"LocusResults\": {" + <body> + "\n  },\n  \"RunInfo\": <json>\n}\n"
+    // io/IterativeJsonWriter.cpp). Each region file (written without RunInfo) is:
+    //     "{\n  \"SampleParameters\": <json>,\n  \"LocusResults\": {" + <body> + "\n  },\n  \"RunStats\": <json>\n}\n"
     // where <body> is the raw record text (records separated by ", "; empty for a region with no
-    // records). We keep region 0's prefix (SampleParameters is identical across regions), join the
-    // non-empty bodies with ", ", discard every region's own RunInfo (each reflects only that region
-    // worker's local start/finish time, not the true run-wide completion), and append the caller-supplied
-    // runInfoJson instead.
+    // records). We keep region 0's prefix (SampleParameters is identical across regions) with the
+    // caller-supplied runInfoJson inserted before LocusResults, join the non-empty bodies with ", ", discard
+    // every region's own RunStats (each reflects only that region worker's local start/finish time, not the
+    // true run-wide completion), and append the caller-supplied runStatsJson instead.
     static const std::string kBodyStartMarker = "\"LocusResults\": {";
-    static const std::string kBodyEndMarker = "\n  },\n  \"RunInfo\"";
+    static const std::string kBodyEndMarker = "\n  },\n  \"RunStats\"";
 
     std::ofstream outFile;
     boost::iostreams::filtering_ostream outStream;
@@ -161,11 +162,9 @@ void mergeRegionJsonFiles(
     // only those two ends and then streamed through in chunks. A region file holds a whole contig's records,
     // which can run to gigabytes, so it must never be slurped into memory.
     //
-    // The windows start small and grow rather than being fixed, because the footer carries the run's whole
-    // command line inside its RunInfo record: with a long one (a --locus list naming thousands of loci, say)
-    // a fixed window would miss the marker and fail the run at its very last step, after all the genotyping.
-    // Growth stops at kMaxMarkerWindow, well past any command line the OS will accept, so a genuinely
-    // markerless file reports that instead of being read into memory whole.
+    // The windows start small and grow rather than being fixed, so a header or footer longer than the first
+    // window still can't fail the run at its very last step, after all the genotyping. Growth stops at
+    // kMaxMarkerWindow, so a genuinely markerless file reports that instead of being read into memory whole.
     const std::size_t kInitialMarkerWindow = 64 * 1024;
     const std::size_t kMaxMarkerWindow = 64u * 1024 * 1024;
 
@@ -222,10 +221,12 @@ void mergeRegionJsonFiles(
             throw std::runtime_error("Missing closing markers in file: " + path);
         }
 
-        // Region 0's prefix (everything up to and including the body-start marker) is canonical.
+        // Region 0's prefix (everything before the body-start marker) is canonical; the run's RunInfo goes
+        // between it and the marker.
         if (fileIndex == 0)
         {
-            outStream << header.substr(0, static_cast<std::size_t>(bodyStart));
+            outStream << header.substr(0, markerPos) << "\"RunInfo\": " << runInfoJson << ",\n  "
+                      << kBodyStartMarker;
         }
 
         if (bodyEnd > bodyStart)
@@ -239,7 +240,7 @@ void mergeRegionJsonFiles(
         }
     }
 
-    outStream << "\n  },\n  \"RunInfo\": " << runInfoJson << "\n}\n";
+    outStream << "\n  },\n  \"RunStats\": " << runStatsJson << "\n}\n";
 
     closeMergedOutput(finalPath, outFile, outStream);
 }

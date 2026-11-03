@@ -21,7 +21,6 @@
 
 #include "io/JsonWriter.hh"
 
-#include <iomanip>
 #include <sstream>
 #include <vector>
 
@@ -55,6 +54,59 @@ std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter)
     return out;
 }
 
+Json buildRunInfoRecord(
+    AnalysisMode analysisMode, OptimizedStreamingGenotypingApproach genotypingApproach, int threadCount,
+    const std::string& commandLine, const gq::GenotypeQualityModel* qualityModel)
+{
+    Json runInfoRecord;
+    runInfoRecord["Source"] = kSourceUrl;
+    runInfoRecord["Version"] = kCommitSha;
+    runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode);
+    if (analysisMode == AnalysisMode::kOptimizedStreaming)
+    {
+        // --genotyping-approach changes what optimized-streaming does at every locus (only-full writes no
+        // QuickGenotype fields), so the approach is recorded next to the mode.
+        runInfoRecord["GenotypingApproach"] = optimizedStreamingGenotypingApproachToString(genotypingApproach);
+    }
+    runInfoRecord["Threads"] = threadCount;
+    runInfoRecord["CommandLine"] = commandLine;
+    if (qualityModel)
+    {
+        runInfoRecord["GenotypeQualityModelVersion"] = qualityModel->version;
+    }
+    return runInfoRecord;
+}
+
+Json buildRunStatsRecord(std::time_t startedEpoch, bool completedNormally)
+{
+    Json runStatsRecord;
+    runStatsRecord["Started"] = formatLocalTimestamp(startedEpoch);
+    if (completedNormally)
+    {
+        const std::time_t completedEpoch = currentEpochSeconds();
+        runStatsRecord["Completed"] = formatLocalTimestamp(completedEpoch);
+        runStatsRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch);
+    }
+    runStatsRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
+    return runStatsRecord;
+}
+
+std::string formatAsTopLevelValue(const Json& record)
+{
+    const std::string json = record.dump(2);
+    std::string indented;
+    indented.reserve(json.size() + json.size() / 8);
+    for (const char character : json)
+    {
+        indented += character;
+        if (character == '\n')
+        {
+            indented += "  ";
+        }
+    }
+    return indented;
+}
+
 JsonWriter::JsonWriter(
     const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo, const RegionCatalog& regionCatalog,
     const SampleFindings& sampleFindings, bool copyCatalogFields, const gq::GenotypeQualityModel* qualityModel,
@@ -77,22 +129,6 @@ void JsonWriter::write(std::ostream& out)
     Json sampleParametersRecord;
     sampleParametersRecord["SampleId"] = sampleParams_.id();
     sampleParametersRecord["Sex"] = streamToString(sampleParams_.sex());
-
-    const std::time_t completedEpoch = currentEpochSeconds();
-    Json runInfoRecord;
-    runInfoRecord["Source"] = kSourceUrl;
-    runInfoRecord["Version"] = kCommitSha;
-    runInfoRecord["AnalysisMode"] = analysisModeToString(analysisMode_);
-    runInfoRecord["Threads"] = threadCount_;
-    runInfoRecord["Started"] = formatLocalTimestamp(startedEpoch_);
-    runInfoRecord["Completed"] = formatLocalTimestamp(completedEpoch);
-    runInfoRecord["Runtime"] = formatRuntime(completedEpoch - startedEpoch_);
-    runInfoRecord["PeakRssMemoryMb"] = peakRssMemoryMB();
-    runInfoRecord["CommandLine"] = commandLine_;
-    if (qualityModel_)
-    {
-        runInfoRecord["GenotypeQualityModelVersion"] = qualityModel_->version;
-    }
 
     Json resultsRecord;
     const unsigned locusCount(sampleFindings_.size());
@@ -146,15 +182,18 @@ void JsonWriter::write(std::ostream& out)
         resultsRecord[locusId] = locusRecord;
     }
 
-    Json sampleRecords;
+    // Written field by field because a nlohmann::json object sorts its keys, which would put LocusResults first.
+    // This writer only runs in seeking and streaming modes, so the genotyping approach is not written.
+    const Json runInfoRecord = buildRunInfoRecord(
+        analysisMode_, OptimizedStreamingGenotypingApproach::kAuto, threadCount_, commandLine_, qualityModel_);
+    out << "{\n  \"SampleParameters\": " << formatAsTopLevelValue(sampleParametersRecord);
+    out << ",\n  \"RunInfo\": " << formatAsTopLevelValue(runInfoRecord);
     if (!resultsRecord.empty())
     {
-        sampleRecords["LocusResults"] = resultsRecord;
+        out << ",\n  \"LocusResults\": " << formatAsTopLevelValue(resultsRecord);
     }
-    sampleRecords["SampleParameters"] = sampleParametersRecord;
-    sampleRecords["RunInfo"] = runInfoRecord;
-
-    out << std::setw(2) << sampleRecords << std::endl;
+    out << ",\n  \"RunStats\": " << formatAsTopLevelValue(buildRunStatsRecord(startedEpoch_, true)) << "\n}"
+        << std::endl;
 }
 
 Json encodeRepeatAllelePhasing(const RepeatAllelePhasing& phasing)

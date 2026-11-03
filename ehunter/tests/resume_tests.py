@@ -107,12 +107,17 @@ def last_finished_contig_json(prefix):
 
 
 def output_body(path):
-    """Returns an output file's content without the trailing RunInfo record.
+    """Returns an output file's content without its RunInfo record and its trailing RunStats record.
 
-    RunInfo holds timestamps, a runtime and a peak-memory figure, none of which can match
-    across two separate runs, so comparisons are made against everything before it.
+    RunInfo holds the command line and thread count, which differ between a resumed run and the
+    uninterrupted run it is compared to, and RunStats holds timestamps, a runtime and a peak-memory
+    figure, none of which can match across two separate runs.
     """
-    return read_maybe_gzipped(path).split('"RunInfo"')[0]
+    text = read_maybe_gzipped(path).split('\n  "RunStats"')[0]
+    text_without_run_info, num_run_info_records = re.subn(r'\n  "RunInfo": \{.*?\n  \},', "", text, count=1,
+                                                          flags=re.S)
+    assert num_run_info_records == 1, f"no RunInfo record in {path}"
+    return text_without_run_info
 
 
 class ResumeTest(unittest.TestCase):

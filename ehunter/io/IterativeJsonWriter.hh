@@ -39,9 +39,11 @@ namespace ehunter
 using Json = nlohmann::json;
 
 // The exact bytes an IterativeJsonWriter emits before its first record: the opening brace, the
-// SampleParameters object, and the start of the LocusResults object. --resume uses its size to tell
-// whether a temp file it cut back still holds any record (see io/ResumeCheckpoint.hh).
-std::string jsonDocumentHeader(const SampleParameters& sampleParams);
+// SampleParameters object, the RunInfo object if runInfoJson (formatted by formatAsTopLevelValue) isn't empty,
+// and the start of the LocusResults object. Per-contig temp files have no RunInfo, so their header depends
+// only on the sample: --resume uses its size to tell whether a temp file it cut back still holds any record
+// (see io/ResumeCheckpoint.hh), and a resumed run may use a different command line.
+std::string jsonDocumentHeader(const SampleParameters& sampleParams, const std::string& runInfoJson = "");
 
 // How a writer should attach to its output file.
 enum class JsonOutputMode
@@ -53,13 +55,14 @@ enum class JsonOutputMode
 class IterativeJsonWriter
 {
 public:
+	// runInfoJson (formatted by formatAsTopLevelValue) is the RunInfo record written after SampleParameters when the
+	// writer's file is the run's final output. A per-contig temp file leaves it empty, and mergeRegionJsonFiles
+	// writes the run's RunInfo into the merged output.
 	IterativeJsonWriter(const SampleParameters& sampleParams, const ReferenceContigInfo& contigInfo,
 		const std::string& outputFilePath, bool copyCatalogFields = false,
 		const gq::GenotypeQualityModel* qualityModel = nullptr, std::time_t startedEpoch = 0,
-		int threadCount = 1, AnalysisMode analysisMode = AnalysisMode::kSeeking,
-		const std::string& commandLine = "", JsonOutputMode outputMode = JsonOutputMode::kTruncate,
-		bool hasExistingRecords = false,
-		OptimizedStreamingGenotypingApproach genotypingApproach = OptimizedStreamingGenotypingApproach::kAuto);
+		const std::string& runInfoJson = "", JsonOutputMode outputMode = JsonOutputMode::kTruncate,
+		bool hasExistingRecords = false);
 	// Ensure the JSON document is closed even when an exception unwinds past the writer; otherwise
 	// the output file is left missing its trailing `}}` braces and is unparseable.
 	~IterativeJsonWriter();
@@ -83,10 +86,6 @@ private:
     bool copyCatalogFields_;
     const gq::GenotypeQualityModel* qualityModel_;
     std::time_t startedEpoch_;
-    int threadCount_;
-    AnalysisMode analysisMode_;
-    OptimizedStreamingGenotypingApproach genotypingApproach_; // written to RunInfo in optimized-streaming mode only
-    std::string commandLine_;
     bool closed_ = false;
 };
 

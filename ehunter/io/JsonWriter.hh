@@ -102,4 +102,23 @@ std::ostream& operator<<(std::ostream& out, JsonWriter& jsonWriter);
 // Locus-level "RepeatAllelePhasing" record, shared by JsonWriter and IterativeJsonWriter
 nlohmann::json encodeRepeatAllelePhasing(const RepeatAllelePhasing& phasing);
 
+// Every output JSON holds these top-level records in this order: SampleParameters, RunInfo, LocusResults
+// (left out by JsonWriter when there are no loci) and RunStats. RunInfo, which says how ExpansionHunter was run,
+// comes before the loci so a reader can get it without reading the whole file. RunStats holds what is only
+// known once the run ends, so it comes last.
+
+// The RunInfo record. GenotypingApproach is written only in optimized-streaming mode.
+nlohmann::json buildRunInfoRecord(
+    AnalysisMode analysisMode, OptimizedStreamingGenotypingApproach genotypingApproach, int threadCount,
+    const std::string& commandLine, const gq::GenotypeQualityModel* qualityModel);
+
+// The RunStats record: when the run started and finished, how long it took, and its peak memory. Completed and
+// Runtime are left out when completedNormally is false (a writer closed while an exception unwinds), so a crashed
+// run doesn't look complete.
+nlohmann::json buildRunStatsRecord(std::time_t startedEpoch, bool completedNormally);
+
+// The text of a record, with two-space indentation and every line after the first indented by two more spaces,
+// ready to be the value of a top-level field.
+std::string formatAsTopLevelValue(const nlohmann::json& record);
+
 }
