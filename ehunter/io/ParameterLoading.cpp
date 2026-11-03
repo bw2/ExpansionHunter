@@ -373,6 +373,13 @@ void assertValidity(const UserParameters& userParameters)
     assertWritablePath(userParameters.outputPrefix);
 
     // Validate sample parameters
+    const size_t kMaxSampleIdLength = 10000;
+    if (userParameters.sampleId.size() > kMaxSampleIdLength)
+    {
+        throw std::invalid_argument(
+            "--sample-id is " + std::to_string(userParameters.sampleId.size()) + " characters long, more than the "
+            + std::to_string(kMaxSampleIdLength) + " allowed");
+    }
     if (userParameters.sampleId.find_first_of(" \t\r\n") != string::npos)
     {
         throw std::invalid_argument("--sample-id '" + userParameters.sampleId + "' must not contain whitespace");
