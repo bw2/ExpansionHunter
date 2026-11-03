@@ -160,13 +160,10 @@ void mergeRegionJsonFiles(
 
     // The header and the footer sit at known ends of the file, so each region file is located by reading
     // only those two ends and then streamed through in chunks. A region file holds a whole contig's records,
-    // which can run to gigabytes, so it must never be slurped into memory.
-    //
-    // The windows start small and grow rather than being fixed, so a header or footer longer than the first
-    // window still can't fail the run at its very last step, after all the genotyping. Growth stops at
-    // kMaxMarkerWindow, so a genuinely markerless file reports that instead of being read into memory whole.
-    const std::size_t kInitialMarkerWindow = 64 * 1024;
-    const std::size_t kMaxMarkerWindow = 64u * 1024 * 1024;
+    // which can run to gigabytes, so it must never be slurped into memory. The header (SampleParameters, whose
+    // SampleId is at most 10,000 characters) and the footer (RunStats) are small, so one window at each end
+    // holds them.
+    const std::streamoff kMarkerWindow = 64 * 1024;
 
     bool wroteAnyBody = false;
     for (size_t fileIndex = 0; fileIndex != regionTempPaths.size(); ++fileIndex)
@@ -181,45 +178,24 @@ void mergeRegionJsonFiles(
         const std::streamoff fileSize = inFile.tellg();
         inFile.seekg(0);
 
-        std::string header;
-        size_t markerPos = std::string::npos;
-        for (std::size_t window = kInitialMarkerWindow; markerPos == std::string::npos; window *= 2)
+        const std::string header = readBytes(inFile, static_cast<std::size_t>(std::min(fileSize, kMarkerWindow)));
+        const size_t markerPos = header.find(kBodyStartMarker);
+        if (markerPos == std::string::npos)
         {
-            inFile.clear();
-            inFile.seekg(0);
-            header = readBytes(inFile, static_cast<std::size_t>(std::min<std::streamoff>(fileSize, window)));
-            markerPos = header.find(kBodyStartMarker);
-            if (markerPos == std::string::npos
-                && (static_cast<std::streamoff>(header.size()) >= fileSize || window >= kMaxMarkerWindow))
-            {
-                throw std::runtime_error("Missing \"LocusResults\" marker in file: " + path);
-            }
+            throw std::runtime_error("Missing \"LocusResults\" marker in file: " + path);
         }
         const std::streamoff bodyStart = static_cast<std::streamoff>(markerPos + kBodyStartMarker.size());
 
-        std::streamoff bodyEnd = -1;
-        for (std::size_t window = kInitialMarkerWindow; bodyEnd < 0; window *= 2)
-        {
-            const std::streamoff footerStart
-                = std::max<std::streamoff>(bodyStart, fileSize - static_cast<std::streamoff>(window));
-            inFile.clear();
-            inFile.seekg(footerStart);
-            const std::string footer = readBytes(inFile, static_cast<std::size_t>(fileSize - footerStart));
-            const size_t footerMarkerPos = footer.rfind(kBodyEndMarker);
-            if (footerMarkerPos != std::string::npos)
-            {
-                bodyEnd = footerStart + static_cast<std::streamoff>(footerMarkerPos);
-                break;
-            }
-            if (footerStart <= bodyStart || window >= kMaxMarkerWindow)
-            {
-                throw std::runtime_error("Missing closing markers in file: " + path);
-            }
-        }
-        if (bodyEnd < bodyStart)
+        const std::streamoff footerStart = std::max(bodyStart, fileSize - kMarkerWindow);
+        inFile.clear();
+        inFile.seekg(footerStart);
+        const std::string footer = readBytes(inFile, static_cast<std::size_t>(fileSize - footerStart));
+        const size_t footerMarkerPos = footer.rfind(kBodyEndMarker);
+        if (footerMarkerPos == std::string::npos)
         {
             throw std::runtime_error("Missing closing markers in file: " + path);
         }
+        const std::streamoff bodyEnd = footerStart + static_cast<std::streamoff>(footerMarkerPos);
 
         // Region 0's prefix (everything before the body-start marker) is canonical; the run's RunInfo goes
         // between it and the marker.
