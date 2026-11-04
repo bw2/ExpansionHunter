@@ -16,9 +16,9 @@ The truth data was generated from T2T assemblies as described in [[Weisburd 2023
 
 https://github.com/broadinstitute/str-truth-set-v2
 
-Also, simulated expanded alleles are added at the known disease loci, because healthy genomes
-don't carry alleles in the pathogenic range. The simulated set covers carriers at every disease locus, including
-simulations of two expanded alleles at the autosomal recessive loci.
+Also, simulated expanded alleles were added at known disease-associated loci, because genomes from 1kGP
+carry very few alleles in the pathogenic range. The simulated set covers carriers at every disease locus, including
+heterozygous and hemizygous expansions at dominant and X-linked loci as well as biallelic expansions at autosomal recessive loci.
 
 
 
