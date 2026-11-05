@@ -1,68 +1,53 @@
-"""Combine ExpansionHunter output JSON files from many samples into one TSV with a row per repeat.
+"""Combine ExpansionHunter output JSON files from many samples into one TSV with one row per locus.
 
-Each input is either an ExpansionHunter output JSON (.json, or .json.gz / .json.bgz) or a TSV written by an earlier
-run of this script (.tsv, or .tsv.gz / .tsv.bgz), so a large cohort can be combined in batches and the batch tables
-combined afterwards. Combining TSVs gives the same output as combining the JSON files they were made from (as long as
-they weren't written with -n).
-
-The inputs are read side by side and merged one repeat at a time, so memory use doesn't grow with the number of
-loci: nothing is kept for a repeat once its row is written. That needs every input in genomic order:
-
-    - ExpansionHunter's optimized-streaming mode writes the loci nearly in genomic order (a locus can come up to about
-      a flank length after loci that start later). A small reorder buffer per input puts them in order as they are
-      read.
-    - Its seeking and streaming modes write the loci sorted by LocusId. Such a JSON is first sorted into a temporary
-      single-sample TSV, one chromosome at a time, so memory use is about one chromosome of one sample.
-    - TSVs from earlier runs are sorted already.
-
-The mode comes from RunInfo.AnalysisMode, which ExpansionHunter writes before the loci. JSONs from older versions,
-which write RunInfo after the loci, are told apart by their first record: only optimized-streaming output starts with
-SampleParameters.
-
-With --threads N, N worker processes each merge a share of the inputs into a temporary TSV, and those are merged into
-the output. A merge reads its inputs at the same time, so the inputs are also merged in groups when there are more
-than the open-file limit allows.
+Each input is either an ExpansionHunter output JSON (.json, or .json.gz) or a TSV written by an earlier
+run of this script (.tsv, or .tsv.gz), so a large cohort can be combined in batches and the batch tables
+combined afterwards. Combining TSVs gives the same output as combining the JSON files they were made from.
 
 All inputs must come from the same catalog: rows are matched by LocusId, VariantId and ReferenceRegion together, so a
 repeat whose coordinates differ between two inputs ends up in two rows.
 
-The output has one row per repeat: for loci with a single repeat (every locus in a TRExplorer catalog) that is one
-row per LocusId, and a locus with several repeats (for example HTT and HTT_CCG in HTT_WITH_ADJACENT_REPEATS) gets one
-row per repeat. Small variants are left out. Rows are sorted by position. Columns:
+With --threads N, N worker processes each merge a share of the inputs into a temporary TSV, and those are merged into
+the output.
 
-    LocusId, VariantId, ReferenceRegion, Motif   from the ExpansionHunter output (Motif is the RepeatUnit)
-    LocusStructure               from --variant-catalog if given; otherwise "(<Motif>)*" for a locus with one repeat
-                                 (which leaves out any fixed sequence the catalog's definition has) and empty for a
-                                 locus with several repeats
-    SampleCount                  samples whose ExpansionHunter output has a record for this repeat, called or not.
-                                 ExpansionHunter leaves a repeat out of a sample's output in a run with --skip-hom-ref
-                                 or --skip-missing-genotypes, and also skips loci that are too wide (more than 2x the
-                                 sample's read length) or whose motif is too long (more than half the read length), so
-                                 samples with different read lengths can have records for different repeats. A sample
-                                 without a record for the repeat is not counted, and its alleles are missing from the
-                                 histograms.
+To keep memory use low, the inputs are read side by side and merged one locus at a time. That requires that every 
+input be pre-sorted into genomic order:
+
+    - ExpansionHunter's optimized-streaming mode already writes the loci nearly in genomic order.
+    - ExpansionHunter's seeking and streaming modes write the loci sorted by LocusId. This script pre-sorts their JSON output 
+      into a temporary single-sample TSV, one chromosome at a time, before processing it.
+
+
+The output has one row per repeat: for loci with a single repeat (every locus in the TRExplorer catalog) that is one
+row per LocusId, and a locus with several repeats (for example HTT and HTT_CCG) gets one
+row per repeat. Rows are sorted by position. Columns include:
+
+    LocusId, VariantId, ReferenceRegion, Motif   from the ExpansionHunter output
+    LocusStructure               from --variant-catalog if given; otherwise "(<Motif>)*" for loci with one repeat
+                                 and empty for loci with compound repeat definitions.
+    SampleCount                  samples whose ExpansionHunter output has a record for this locus, regardless of whether 
+                                 a genotype was called or not. ExpansionHunter leaves a locus out of a sample's output 
+                                 if its --skip-hom-ref or --skip-missing-genotypes options were set, and also skips loci 
+                                 that are too wide (more than 2x the sample's read length) or whose motif is too long 
+                                 (more than half the read length). A sample without a record for the repeat is not 
+                                 counted.
     CalledAlleleCount            called alleles: 2 per diploid genotype, 1 per hemizygous one, 0 per no-call
     AllAlleleHistogram           every called allele, in repeat units: "15x:120,16x:3"
     ShortAlleleHistogram         the shorter allele of each called sample (the only allele of a hemizygous call)
     HemizygousAlleleHistogram    the allele of each hemizygous call: a chrY repeat in any sample, or a chrX repeat in
-                                 a male sample (SampleParameters.Sex in its JSON), which is how ExpansionHunter decides
-                                 to genotype a repeat with one allele
-    BiallelicHistogram           genotype counts, "short/long:count", sorted: "15/15:58,15/16:3". As in str-analysis's
-                                 convert_multisample_LPS_table_to_allele_frequency_histograms.py, a hemizygous call's
-                                 one allele is written twice ("8" counts as "8/8"); no-calls are left out
+                                 a male sample (based on SampleParameters.Sex in ExpansionHunter's JSON ouptut)
+    BiallelicHistogram           genotype counts, "short/long:count", sorted: "15/15:58,15/16:3". A hemizygous call's
+                                 single allele is written twice ("8" counts as "8/8"). Missing genotypes are not counted.
 
-With --add-outlier-sample-id-columns, also MaxOutlierSampleIds (the --n-outlier-sample-ids the columns were made
-with) and OutlierSampleIds_AllAlleles, OutlierSampleIds_ShortAlleles and OutlierSampleIds_HemizygousAlleles: the
-samples with the largest alleles, "20x:sampleA,18x:sampleB", chosen as in str-analysis's
-convert_variants_tsv_to_allele_histograms.py and combine_single_sample_LPS_to_allele_histograms.py. Allele sizes are
-walked from largest to smallest, stopping at the first size that --n-outlier-sample-ids or more samples have, or once
-more than that many samples have been listed. A TSV input made with a smaller --n-outlier-sample-ids than the current
-run's is rejected, since the samples it left out can't be recovered.
+With --add-outlier-sample-id-columns, the MaxOutlierSampleIds column is set to the value of the --n-outlier-sample-ids argument, 
+while the OutlierSampleIds_AllAlleles, OutlierSampleIds_ShortAlleles and OutlierSampleIds_HemizygousAlleles columns are set to a list of the
+samples with the largest alleles (eg. "20x:sampleA,18x:sampleB"). Allele sizes are taken from largest to smallest, stopping at the 
+first allele size that is shared by --n-outlier-sample-ids or more samples, or after more than that many samples have been listed. 
 
-When the inputs have ExpansionHunter's motif composition (--output-motif-composition), also:
+When the inputs have ExpansionHunter's motif composition (enabled by ExpansionHunter's --output-motif-composition option), these columns are also added:
 
-    MotifComposition    "1:GCG:561:64,2:GCA:82:50": motif ID, motif, occurrences, reads
-    MotifPairs          "[1][1]:398:63,[1][2]:82:50": IDs of a motif and the motif after it, occurrences, reads
+    MotifComposition    "1:GCG:561:64,2:GCA:82:50" (representing motif ID, motif, total number of occurrences across reads, number of reads where the motif was observed)
+    MotifPairs          "[1][1]:398:63,[1][2]:82:50" (representing the IDs of a motif and the motif after it, total number of occurrences across reads, number of reads where the motif pair was observed)
 
 Both sum the locus-level Motifs and MotifPairs records of ExpansionHunter's MotifComposition over all samples (the
 per-allele Allele1/Allele2 blocks are not used). ExpansionHunter numbers motifs separately in each sample, so motif 1 can be GCG in one sample and GCA in
