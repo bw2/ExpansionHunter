@@ -23,9 +23,7 @@ row per LocusId, and a locus with several repeats (for example HTT and HTT_CCG) 
 row per repeat. Rows are sorted by position. Columns include:
 
     LocusId, VariantId, ReferenceRegion, Motif   from the ExpansionHunter output
-    LocusStructure               from --variant-catalog if given; otherwise "(<Motif>)*" for loci with one repeat
-                                 and empty for loci with compound repeat definitions.
-    SampleCount                  samples whose ExpansionHunter output has a record for this locus, regardless of whether 
+    SampleCount                 samples whose ExpansionHunter output has a record for this locus, regardless of whether 
                                  a genotype was called or not. ExpansionHunter leaves a locus out of a sample's output 
                                  if its --skip-hom-ref or --skip-missing-genotypes options were set, and also skips loci 
                                  that are too wide (more than 2x the sample's read length) or whose motif is too long 
@@ -51,17 +49,19 @@ When the inputs have ExpansionHunter's motif composition (enabled by ExpansionHu
 
 Both of these columns sum the locus-level Motifs and MotifPairs records of ExpansionHunter's MotifComposition output field over all samples (ExpansionHunter's
 per-allele Allele1/Allele2 output blocks are not used). ExpansionHunter numbers motifs separately in each sample, so motif 1 can be GCG in one sample and GCA in
-another: motifs and motif pairs are summed by motif sequence, and both columns renumber motifs by their total occurrences, highest first, with ties broken by motif sequence. 
-Either every input must have motif composition or none.
+another: motifs and motif pairs are summed by motif sequence, and both columns renumber motifs by their total occurrences, highest first, with ties broken by motif sequence.
+If only some inputs have motif composition, a warning is printed and these columns count only the samples in those
+inputs. Pass --skip-motif-composition-columns to leave them out.
 
-With --add-consensus-sequence-columns, an AlleleSequences column is also added: each distinct consensus allele sequence from
+With --add-consensus-sequence-column, an AlleleSequences column is also added: each distinct consensus allele sequence from
 ExpansionHunter's ConsensusSequences field is listed, along with its total haplotype count, most common first, "TGCTGCTGA:86,TGCTGCTGC:56". A
 homozygous diploid call's one consensus sequence counts twice, and a hemizygous call's once. Calls without
-ConsensusSequences add nothing, so the counts can add up to less than CalledAlleleCount. 
+ConsensusSequences add nothing, so the counts can add up to less than CalledAlleleCount. A warning is printed for
+inputs without any consensus sequences.
 
 JSON inputs are checked to make sure that no sample id is present in more than one input file. 
 
-Inputs (and --variant-catalog) can be local paths or gs:// paths in Google Cloud Storage, which are streamed rather
+Inputs can be local paths or gs:// paths in Google Cloud Storage, which are streamed rather
 than downloaded. Reading gs:// paths needs the google-cloud-storage package and application default credentials
 (gcloud auth application-default login). The output is written locally.
 
@@ -72,6 +72,7 @@ Example:
         batch1.tsv.gz batch2.tsv.gz sample4.json.gz
 """
 
+import argparse
 import collections
 import functools
 import gzip
@@ -88,7 +89,6 @@ import resource
 import sys
 import tempfile
 
-import configargparse
 import ijson
 import tqdm
 
@@ -100,7 +100,6 @@ BASE_COLUMNS = [
     "VariantId",
     "ReferenceRegion",
     "Motif",
-    "LocusStructure",
     "SampleCount",
     "CalledAlleleCount",
     "AllAlleleHistogram",
@@ -118,7 +117,6 @@ MOTIF_COMPOSITION_COLUMNS = ["MotifComposition", "MotifPairs"]
 ALLELE_SEQUENCES_COLUMN = "AlleleSequences"
 
 MOTIF_PAIR_KEY_REGEX = re.compile(r"\[(\d+)\]\[(\d+)\]")
-SINGLE_REPEAT_LOCUS_STRUCTURE_REGEX = re.compile(r"\([A-Za-z]+\)\*")
 # How far (in bp) a repeat may come after repeats that start later on the same chromosome. ExpansionHunter's
 # optimized-streaming mode writes a locus once the reads have passed it, so a locus can come up to about a flank
 # length (1,000 bp) after loci that start later; on a full TRExplorer v2.1 catalog the largest such distance is 955 bp.
@@ -138,7 +136,7 @@ TEMPORARY_FILE_COMPRESSION_LEVEL = 1
 # Open files a merge needs besides its inputs (output, bucket files of a JSON being sorted, Python's own).
 OPEN_FILES_NEEDED_BESIDES_INPUTS = 64
 # Each input a merge reads costs about 1 MB of buffers (plus GCS_READ_CHUNK_BYTES for a gs:// input), so larger
-# cohorts are merged in groups of at most this many inputs, and the groups' TSVs merged after.
+# cohorts are merged in shards of at most this many inputs, and the shards' TSVs merged after.
 MAX_INPUTS_PER_MERGE = 256
 # Bytes fetched per request when reading a gs:// file. Each open gs:// file holds one such chunk in memory.
 GCS_READ_CHUNK_BYTES = 2 * 1024 * 1024
@@ -156,6 +154,8 @@ WITH_CONSENSUS_SEQUENCES = "with consensus sequences"
 WITH_ALLELE_COUNT_NOT_MATCHING_SEX = "with an allele count that doesn't match the sample's sex"
 WITH_CONSENSUS_SEQUENCES_NOT_MATCHING_GENOTYPE = "whose number of consensus sequences doesn't match the genotype"
 TSV_ROWS = "rows"
+# The largest SampleCount of a TSV input's rows, which names the output when -o isn't given.
+LARGEST_SAMPLE_COUNT = "largest SampleCount"
 # These two describe the input rather than counting records, so they aren't printed. The first is set from
 # RunInfo.CommandLine, the second once a JSON has been read to its end (with -n it may not be).
 COMMAND_LINE_HAS_MOTIF_COMPOSITION = "ExpansionHunter command line has --output-motif-composition"
@@ -167,7 +167,6 @@ MergeSettings = collections.namedtuple("MergeSettings", [
     "track_outlier_sample_ids",
     "track_motif_composition",
     "track_allele_sequences",
-    "catalog_locus_structures",
     "max_rows_to_write",
 ])
 
@@ -195,16 +194,15 @@ class RepeatSummary:
     """
 
     __slots__ = (
-        "motif", "reference_region", "locus_structure", "sample_count", "called_allele_count",
+        "motif", "reference_region", "sample_count", "called_allele_count",
         "all_allele_histogram", "short_allele_histogram", "hemizygous_allele_histogram", "biallelic_histogram",
         "all_allele_outlier_sample_ids", "short_allele_outlier_sample_ids", "hemizygous_allele_outlier_sample_ids",
         "motif_counts", "motif_pair_counts", "allele_sequence_counts",
     )
 
-    def __init__(self, motif, reference_region, locus_structure, track_outlier_sample_ids):
+    def __init__(self, motif, reference_region, track_outlier_sample_ids):
         self.motif = motif
         self.reference_region = reference_region
-        self.locus_structure = locus_structure
         self.sample_count = 0
         self.called_allele_count = 0
         self.all_allele_histogram = {}
@@ -366,21 +364,20 @@ def add_outlier_sample_ids(recorded_sample_ids, allele, sample_ids, n_outlier_sa
             recorded.append(sample_id)
 
 
-def summarize_expansion_hunter_record(variant_record, sample_id, is_male, locus_structure, settings, stats):
+def summarize_expansion_hunter_record(variant_record, sample_id, is_male, settings, stats):
     """Turns one sample's repeat record from an ExpansionHunter JSON into a RepeatSummary.
 
     Args:
         variant_record (dict): the record under LocusResults.<locus>.Variants.
         sample_id (str): the sample's ID.
         is_male (bool): whether the sample's SampleParameters.Sex is male.
-        locus_structure (str): the LocusStructure to report for the repeat.
         settings (MergeSettings): the run's settings.
         stats (collections.Counter): per-input counts to update.
 
     Returns:
         RepeatSummary: the sample's contribution to the repeat's row.
     """
-    summary = RepeatSummary(variant_record["RepeatUnit"], variant_record["ReferenceRegion"], locus_structure,
+    summary = RepeatSummary(variant_record["RepeatUnit"], variant_record["ReferenceRegion"],
                             settings.track_outlier_sample_ids)
     summary.sample_count = 1
     stats[REPEAT_RECORDS] += 1
@@ -482,8 +479,6 @@ def merge_repeat_summaries(target, source, n_outlier_sample_ids, description):
             f"{description} is at {source.reference_region} with motif {source.motif} in one input but at "
             f"{target.reference_region} with motif {target.motif} in another. Were the inputs made with different "
             f"catalogs?")
-    if not target.locus_structure:
-        target.locus_structure = source.locus_structure
     target.sample_count += source.sample_count
     target.called_allele_count += source.called_allele_count
     for target_histogram, source_histogram, target_outliers, source_outliers in [
@@ -648,11 +643,9 @@ def parse_allele_sequences(allele_sequences_value):
     return allele_sequence_counts
 
 
-def get_locus_structure(locus_id, motif, num_repeats_in_locus, catalog_locus_structures):
-    """Returns the LocusStructure to report: the catalog's if known, "(<motif>)*" for a single repeat, else ""."""
-    if locus_id in catalog_locus_structures:
-        return catalog_locus_structures[locus_id]
-    return f"({motif})*" if num_repeats_in_locus == 1 else ""
+def format_count_with_noun(count, noun):
+    """Returns the count and the noun, plural unless the count is 1: "1 input", "0 inputs", "1,024 inputs"."""
+    return f"{count:,d} {noun}{'' if count == 1 else 's'}"
 
 
 def read_records_before_locus_results(json_path):
@@ -760,14 +753,12 @@ def run_info_has_motif_composition(run_info):
     return run_info is not None and "--output-motif-composition" in run_info.get("CommandLine", "")
 
 
-def json_command_line_has_motif_composition(input_spec):
-    """Returns whether an ExpansionHunter JSON's RunInfo.CommandLine has --output-motif-composition.
+def json_tail_command_line_has_motif_composition(input_spec):
+    """Returns whether the RunInfo.CommandLine of an ExpansionHunter JSON from an older version, whose RunInfo is one
+    of its last records, has --output-motif-composition.
 
-    In JSONs from older ExpansionHunter versions RunInfo is one of the last records, so the whole file is
-    decompressed, but it isn't parsed.
+    The whole file is decompressed to reach RunInfo, but it isn't parsed.
     """
-    if input_spec.command_line_has_motif_composition is not None:
-        return input_spec.command_line_has_motif_composition
     with open_binary(input_spec.path) as raw_file:
         f = RunInfoKeepingReader(raw_file)
         while f.read(1 << 20):
@@ -791,14 +782,11 @@ def iterate_expansion_hunter_records(input_spec, settings, stats):
         # are read. (Wrapping a JSON whose RunInfo comes first would keep everything after it.)
         f = raw_file if command_line_has_motif_composition is not None else RunInfoKeepingReader(raw_file)
         for locus_id, locus_record in ijson.kvitems(f, "LocusResults", use_float=True):
-            repeat_records = [(variant_id, variant_record)
-                              for variant_id, variant_record in locus_record.get("Variants", {}).items()
-                              if variant_record.get("VariantType") == "Repeat"]
-            for variant_id, variant_record in repeat_records:
-                locus_structure = get_locus_structure(locus_id, variant_record["RepeatUnit"], len(repeat_records),
-                                                      settings.catalog_locus_structures)
-                summary = summarize_expansion_hunter_record(variant_record, input_spec.sample_id, is_male,
-                                                            locus_structure, settings, stats)
+            for variant_id, variant_record in locus_record.get("Variants", {}).items():
+                if variant_record.get("VariantType") != "Repeat":
+                    continue
+                summary = summarize_expansion_hunter_record(variant_record, input_spec.sample_id, is_male, settings,
+                                                            stats)
                 yield get_genomic_sort_key(locus_id, variant_id, summary.reference_region), summary
         # kvitems only finishes once ijson has read the whole file, so an older JSON's tail holds RunInfo (its last
         # record in optimized-streaming output; in seeking and streaming output only SampleParameters comes after it).
@@ -899,10 +887,9 @@ def iterate_multisample_tsv(input_spec, settings, stats):
             fields = line.rstrip("\n").split("\t")
             row = {column: fields[index] for column, index in column_index.items()}
             stats[TSV_ROWS] += 1
-            locus_structure = settings.catalog_locus_structures.get(row["LocusId"]) or row["LocusStructure"]
-            summary = RepeatSummary(row["Motif"], row["ReferenceRegion"], locus_structure,
-                                    settings.track_outlier_sample_ids)
+            summary = RepeatSummary(row["Motif"], row["ReferenceRegion"], settings.track_outlier_sample_ids)
             summary.sample_count = int(row["SampleCount"])
+            stats[LARGEST_SAMPLE_COUNT] = max(stats[LARGEST_SAMPLE_COUNT], summary.sample_count)
             summary.called_allele_count = int(row["CalledAlleleCount"])
             summary.all_allele_histogram = parse_histogram(row["AllAlleleHistogram"])
             summary.short_allele_histogram = parse_histogram(row["ShortAlleleHistogram"])
@@ -914,11 +901,13 @@ def iterate_multisample_tsv(input_spec, settings, stats):
                     row["OutlierSampleIds_ShortAlleles"])
                 summary.hemizygous_allele_outlier_sample_ids = parse_outlier_sample_ids(
                     row["OutlierSampleIds_HemizygousAlleles"])
+            # A TSV made without the motif composition or AlleleSequences columns adds nothing to them
+            # (check_optional_columns warns about it)
             if settings.track_motif_composition:
                 summary.motif_counts, summary.motif_pair_counts = parse_motif_composition_columns(
-                    row["MotifComposition"], row["MotifPairs"])
+                    row.get("MotifComposition", ""), row.get("MotifPairs", ""))
             if settings.track_allele_sequences:
-                summary.allele_sequence_counts = parse_allele_sequences(row[ALLELE_SEQUENCES_COLUMN])
+                summary.allele_sequence_counts = parse_allele_sequences(row.get(ALLELE_SEQUENCES_COLUMN, ""))
             key = get_genomic_sort_key(row["LocusId"], row["VariantId"], row["ReferenceRegion"])
             if previous_key is not None and key <= previous_key:
                 raise ValueError(f"{input_spec.path} is not sorted: {row['LocusId']} {row['VariantId']} comes after "
@@ -942,8 +931,8 @@ def format_row(key, summary, settings):
     """Returns the output TSV line (without the newline) for one repeat."""
     locus_id, variant_id = key[3], key[4]
     row = [
-        locus_id, variant_id, summary.reference_region, summary.motif, summary.locus_structure,
-        str(summary.sample_count), str(summary.called_allele_count),
+        locus_id, variant_id, summary.reference_region, summary.motif, str(summary.sample_count),
+        str(summary.called_allele_count),
         format_histogram(summary.all_allele_histogram), format_histogram(summary.short_allele_histogram),
         format_histogram(summary.hemizygous_allele_histogram), format_biallelic_histogram(summary.biallelic_histogram),
     ]
@@ -980,8 +969,7 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
         compression_level (int): gzip compression level of the output.
 
     Returns:
-        tuple: (list of per-input collections.Counter stats, in input_specs order; number of rows written;
-            number of rows whose LocusStructure is unknown)
+        tuple: (list of per-input collections.Counter stats, in input_specs order; number of rows written)
     """
     stats_by_input = [collections.Counter() for _ in input_specs]
     sorted_tsv_paths = []
@@ -1004,7 +992,6 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
             merged = tqdm.tqdm(merged, unit=" records", unit_scale=True, desc="Merging")
 
         num_rows = 0
-        num_rows_without_locus_structure = 0
         with gzip.open(output_tsv_path, "wt", compresslevel=compression_level) as f:
             f.write("\t".join(get_output_columns(settings)) + "\n")
             for key, records in itertools.groupby(merged, key=operator.itemgetter(0)):
@@ -1014,7 +1001,6 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
                                            f"{key[4]} in locus {key[3]}")
                 f.write(format_row(key, summary, settings) + "\n")
                 num_rows += 1
-                num_rows_without_locus_structure += not summary.locus_structure
                 if num_rows == settings.max_rows_to_write:
                     break
     finally:
@@ -1022,23 +1008,22 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
         for iterator in iterators:
             iterator.close()
         remove_files(sorted_tsv_paths)
-    return stats_by_input, num_rows, num_rows_without_locus_structure
+    return stats_by_input, num_rows
 
 
-def merge_input_group(task):
-    """Merges one group of inputs into a temporary TSV; the worker-process entry point for --threads.
+def merge_input_shard(task):
+    """Merges one shard of the inputs into a temporary TSV; the worker-process entry point for --threads.
 
     Args:
-        task (tuple): (group index, list of InputSpec, output TSV path, MergeSettings, temp dir)
+        task (tuple): (shard index, list of InputSpec, output TSV path, MergeSettings, temp dir)
 
     Returns:
-        tuple: (group index, list of per-input stats)
+        tuple: (shard index, list of per-input stats)
     """
-    group_index, input_specs, output_tsv_path, settings, temp_dir = task
-    print(f"Merging {len(input_specs):,d} input(s) into {output_tsv_path}", flush=True)
-    stats_by_input, _, _ = merge_inputs(input_specs, output_tsv_path, settings, temp_dir,
-                                        compression_level=TEMPORARY_FILE_COMPRESSION_LEVEL)
-    return group_index, stats_by_input
+    shard_index, input_specs, output_tsv_path, settings, temp_dir = task
+    stats_by_input, _ = merge_inputs(input_specs, output_tsv_path, settings, temp_dir,
+                                     compression_level=TEMPORARY_FILE_COMPRESSION_LEVEL)
+    return shard_index, stats_by_input
 
 
 def json_has_motif_composition_in_first_records(json_path, max_records_to_check):
@@ -1084,56 +1069,57 @@ def get_max_inputs_per_merge():
     return max(2, min(MAX_INPUTS_PER_MERGE, soft_limit - OPEN_FILES_NEEDED_BESIDES_INPUTS))
 
 
-def split_into_groups(input_specs, num_groups, file_size_by_path):
-    """Splits inputs into num_groups groups of similar total file size, with at most ceil(N / num_groups) each."""
-    max_group_size = math.ceil(len(input_specs) / num_groups)
-    groups = [[] for _ in range(num_groups)]
-    group_sizes = [0] * num_groups
+def split_inputs_into_shards(input_specs, num_shards, file_size_by_path):
+    """Splits inputs into num_shards shards of similar total file size, with at most ceil(N / num_shards) each."""
+    max_shard_size = math.ceil(len(input_specs) / num_shards)
+    shards = [[] for _ in range(num_shards)]
+    shard_file_sizes = [0] * num_shards
     for input_spec in sorted(input_specs, key=lambda spec: (-file_size_by_path[spec.path], spec.path)):
-        open_groups = [index for index in range(num_groups) if len(groups[index]) < max_group_size]
-        smallest_group = min(open_groups, key=lambda index: (group_sizes[index], index))
-        groups[smallest_group].append(input_spec)
-        group_sizes[smallest_group] += file_size_by_path[input_spec.path]
-    return groups
+        shards_with_room = [index for index in range(num_shards) if len(shards[index]) < max_shard_size]
+        smallest_shard = min(shards_with_room, key=lambda index: (shard_file_sizes[index], index))
+        shards[smallest_shard].append(input_spec)
+        shard_file_sizes[smallest_shard] += file_size_by_path[input_spec.path]
+    return shards
 
 
-def merge_groups(grouped_specs, temp_dir, settings, threads, show_progress_bar):
-    """Merges each group of inputs into a temporary TSV, in up to `threads` worker processes.
+def merge_shards(input_specs_by_shard, temp_dir, settings, threads, show_progress_bar):
+    """Merges each shard of the inputs into a temporary TSV, in up to `threads` worker processes.
 
-    A single group is merged in this process straight into its final form (output compression level).
+    A single shard is merged in this process straight into its final form (output compression level).
 
     Returns:
-        tuple: (list of the groups' TSV paths, list of each group's per-input stats, number of rows written and
-            number of rows without LocusStructure for a single group, or None and None)
+        tuple: (list of the shards' TSV paths, list of each shard's per-input stats, number of rows written for a
+            single shard or None)
     """
-    if len(grouped_specs) == 1:
+    num_workers = min(threads, len(input_specs_by_shard))
+    print(f"Merging {format_count_with_noun(sum(map(len, input_specs_by_shard)), 'input file')}"
+          + (f" using {num_workers:,d} threads" if num_workers >= 2 else ""))
+    if len(input_specs_by_shard) == 1:
         merged_path = os.path.join(temp_dir, "merged.tsv.gz")
-        print(f"Merging the inputs into {merged_path}")
-        stats_by_input, num_rows, num_rows_without_locus_structure = merge_inputs(
-            grouped_specs[0], merged_path, settings, temp_dir, show_progress_bar)
-        return [merged_path], [stats_by_input], num_rows, num_rows_without_locus_structure
+        stats_by_input, num_rows = merge_inputs(
+            input_specs_by_shard[0], merged_path, settings, temp_dir, show_progress_bar)
+        return [merged_path], [stats_by_input], num_rows
 
-    group_paths = [os.path.join(temp_dir, f"group_{index + 1}.tsv.gz") for index in range(len(grouped_specs))]
-    tasks = [(index, group, group_path, settings, temp_dir)
-             for index, (group, group_path) in enumerate(zip(grouped_specs, group_paths))]
-    num_workers = min(threads, len(tasks))
-    print(f"Merging the inputs in {len(tasks):,d} groups, {num_workers:,d} at a time")
-    grouped_stats = [None] * len(tasks)
+    shard_tsv_paths = [os.path.join(temp_dir, f"shard_{index + 1}.tsv.gz")
+                       for index in range(len(input_specs_by_shard))]
+    tasks = [(index, shard, shard_tsv_path, settings, temp_dir)
+             for index, (shard, shard_tsv_path) in enumerate(zip(input_specs_by_shard, shard_tsv_paths))]
+    stats_by_shard = [None] * len(tasks)
     if num_workers == 1:
-        results = map(merge_input_group, tasks)
+        results = map(merge_input_shard, tasks)
         if show_progress_bar:
-            results = tqdm.tqdm(results, total=len(tasks), unit=" groups")
-        for group_index, stats_by_input in results:
-            grouped_stats[group_index] = stats_by_input
+            results = tqdm.tqdm(results, total=len(tasks), unit=" shards")
+        for shard_index, stats_by_input in results:
+            stats_by_shard[shard_index] = stats_by_input
     else:
-        # Leaving the with block (normally, or because a group's merge raised) terminates the other workers.
+        # Leaving the with block (normally, or because a shard's merge raised) terminates the other workers.
         with multiprocessing.Pool(processes=num_workers) as pool:
-            results = pool.imap_unordered(merge_input_group, tasks)
+            results = pool.imap_unordered(merge_input_shard, tasks)
             if show_progress_bar:
-                results = tqdm.tqdm(results, total=len(tasks), unit=" groups")
-            for group_index, stats_by_input in results:
-                grouped_stats[group_index] = stats_by_input
-    return group_paths, grouped_stats, None, None
+                results = tqdm.tqdm(results, total=len(tasks), unit=" shards")
+            for shard_index, stats_by_input in results:
+                stats_by_shard[shard_index] = stats_by_input
+    return shard_tsv_paths, stats_by_shard, None
 
 
 def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar):
@@ -1142,7 +1128,7 @@ def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar
     The input TSVs are deleted once merged.
 
     Returns:
-        tuple: (number of rows written, number of rows whose LocusStructure is unknown)
+        int: number of rows written.
     """
     max_inputs = get_max_inputs_per_merge()
     round_number = 0
@@ -1156,45 +1142,23 @@ def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar
             next_round_paths.append(next_round_path)
         remove_files(tsv_paths)
         tsv_paths = next_round_paths
-    _, num_rows, num_rows_without_locus_structure = merge_inputs(
+    _, num_rows = merge_inputs(
         [tsv_input_spec(path) for path in tsv_paths], output_tsv_path, settings, temp_dir, show_progress_bar)
     remove_files(tsv_paths)
-    return num_rows, num_rows_without_locus_structure
-
-
-def read_locus_structures_from_catalog(catalog_path):
-    """Returns LocusId -> LocusStructure for the catalog loci whose structure isn't a single "(<motif>)*" repeat.
-
-    Single-repeat structures are not kept, since "(<Motif>)*" can be rebuilt from the ExpansionHunter output.
-    """
-    locus_structures = {}
-    with open_binary(catalog_path) as f:
-        for record in ijson.items(f, "item"):
-            locus_structure = record.get("LocusStructure", "")
-            if not SINGLE_REPEAT_LOCUS_STRUCTURE_REGEX.fullmatch(locus_structure):
-                locus_structures[record["LocusId"]] = locus_structure
-    return locus_structures
+    return num_rows
 
 
 def parse_args(argv=None):
-    parser = configargparse.ArgumentParser(
-        description=__doc__, formatter_class=configargparse.RawDescriptionHelpFormatter)
-    parser.add_argument("-c", "--config-file", is_config_file=True,
-                        help="Config file that sets any of the options below (e.g. 'show-progress-bar = true')")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-o", "--output-prefix",
-                        help="Writes <prefix>.tsv.gz (a local path). Default: derived from "
-                             "the input file name for one input, otherwise combined.<N>_inputs.multisample")
+                        help="Writes <prefix>.tsv.gz (a local path). Default: the input file name without its suffix "
+                             "for one input, otherwise combined.<N>_samples in the current directory, N being the "
+                             "number of samples")
     parser.add_argument("-n", "--max-rows-to-write", type=int,
-                        help="Write only the first N rows: the first N repeats in genomic order. Don't combine such a "
-                             "TSV with other inputs later. With optimized-streaming JSONs from older ExpansionHunter "
-                             "versions the motif composition columns can be missing or incomplete; a warning says "
-                             "when")
+                        help="Write only the first N rows: the first N repeats in genomic order. Useful for testing.")
     parser.add_argument("-t", "--threads", type=int, default=1,
                         help="Number of worker processes. Each merges a share of the inputs into a temporary TSV "
                              "next to the output, and those are then merged (default: %(default)s)")
-    parser.add_argument("--variant-catalog",
-                        help="ExpansionHunter catalog JSON (.json or .json.gz) to take the LocusStructure of loci "
-                             "with several repeats, or with fixed sequence next to the repeat, from")
     parser.add_argument("--add-outlier-sample-id-columns", action="store_true",
                         help=f"Add the {MAX_OUTLIER_SAMPLE_IDS_COLUMN}, OutlierSampleIds_AllAlleles, "
                              f"OutlierSampleIds_ShortAlleles and OutlierSampleIds_HemizygousAlleles columns")
@@ -1204,12 +1168,12 @@ def parse_args(argv=None):
     parser.add_argument("--skip-motif-composition-columns", action="store_true",
                         help="Leave out the MotifComposition and MotifPairs columns even if the inputs "
                              "have motif composition")
-    parser.add_argument("--add-consensus-sequence-columns", action="store_true",
+    parser.add_argument("--add-consensus-sequence-column", action="store_true",
                         help="Add the AlleleSequences column, from the inputs' ConsensusSequences")
     parser.add_argument("--allow-overlapping-samples", action="store_true",
-                        help="Allow a SampleId to appear in more than one JSON input. Only use this when those "
-                             "inputs cover different loci (such as per-chromosome runs of the same samples): a sample "
-                             "counted twice at a locus has its alleles counted twice.")
+                        help="Allow a SampleId to appear in more than one JSON input. Intended to be used when inputs "
+                             "contain data for non-overlapping sets of loci (such as per-chromosome runs of the same "
+                             "samples)")
     parser.add_argument("--show-progress-bar", action="store_true", help="Show progress bars")
     parser.add_argument("input_paths", nargs="+",
                         help="ExpansionHunter output JSON files (.json, .json.gz, .json.bgz) and/or TSVs written by "
@@ -1223,10 +1187,10 @@ def parse_args(argv=None):
             parser.error(f"{path} not found")
     if len(set(args.input_paths)) < len(args.input_paths):
         parser.error("An input path is listed more than once")
-    if args.variant_catalog and not file_exists(args.variant_catalog):
-        parser.error(f"{args.variant_catalog} not found")
     if args.output_prefix and is_gcs_path(args.output_prefix):
         parser.error("--output-prefix must be a local path; copy the output to Google Cloud Storage afterwards")
+    if args.output_prefix and not os.path.isdir(os.path.dirname(os.path.abspath(args.output_prefix))):
+        parser.error(f"The output folder {os.path.dirname(os.path.abspath(args.output_prefix))} doesn't exist")
     if args.max_rows_to_write is not None and args.max_rows_to_write < 1:
         parser.error("-n must be at least 1")
     if args.n_outlier_sample_ids < 2:
@@ -1234,15 +1198,38 @@ def parse_args(argv=None):
                      "this many samples have, so with 1 the outlier columns would always be empty")
     if args.threads < 1:
         parser.error("--threads must be at least 1")
-    if not args.output_prefix:
-        if len(args.input_paths) == 1:
-            # Next to a local input; in the current directory for a gs:// one.
-            input_path = args.input_paths[0]
-            args.output_prefix = strip_suffix(os.path.basename(input_path) if is_gcs_path(input_path) else input_path,
-                                              JSON_SUFFIXES + TSV_SUFFIXES) + ".multisample"
-        else:
-            args.output_prefix = f"combined.{len(args.input_paths)}_inputs.multisample"
+    if not args.output_prefix and len(args.input_paths) == 1:
+        # Next to a local input; in the current directory for a gs:// one. (Without -o, several inputs get a name
+        # from their number of samples once they have been read: see get_default_combined_output_prefix.)
+        input_path = args.input_paths[0]
+        args.output_prefix = strip_suffix(os.path.basename(input_path) if is_gcs_path(input_path) else input_path,
+                                          JSON_SUFFIXES + TSV_SUFFIXES)
+    if args.output_prefix and output_would_overwrite_an_input(args.output_prefix + ".tsv.gz", args.input_paths):
+        parser.error(f"The output, {args.output_prefix}.tsv.gz, would overwrite an input; pass a different -o")
     return args
+
+
+def output_would_overwrite_an_input(output_tsv_path, input_paths):
+    """Returns whether output_tsv_path is one of the local input paths (after resolving symbolic links)."""
+    return os.path.realpath(output_tsv_path) in {
+        os.path.realpath(path) for path in input_paths if not is_gcs_path(path)}
+
+
+def get_default_combined_output_prefix(input_specs, stats_by_input):
+    """Returns the output prefix for several inputs when -o isn't given: combined.<N>_samples, in the current directory.
+
+    N is the number of distinct SampleIds of the JSON inputs plus, for each TSV input, its largest SampleCount (a TSV
+    doesn't record which samples went into it, so that is the number of samples it has at its most complete repeat).
+    With -n, a TSV's largest SampleCount is taken over the rows read.
+
+    Args:
+        input_specs (list): InputSpec of each input.
+        stats_by_input (list): the merge's per-input stats, in input_specs order.
+    """
+    num_samples = len({input_spec.sample_id for input_spec in input_specs if input_spec.kind == "json"}) + sum(
+        stats[LARGEST_SAMPLE_COUNT] for input_spec, stats in zip(input_specs, stats_by_input)
+        if input_spec.kind == "tsv")
+    return f"combined.{num_samples}_sample{'' if num_samples == 1 else 's'}"
 
 
 def read_outlier_limit_of_tsv(tsv_path, header):
@@ -1256,35 +1243,29 @@ def read_outlier_limit_of_tsv(tsv_path, header):
 
 
 def check_tsv_input_columns(tsv_path, args):
-    """Checks a TSV input has the columns of a TSV written by this script, the optional ones this run needs, and an
-    outlier limit at least as large as this run's.
+    """Checks a TSV input has the columns of a TSV written by this script and, if this run adds outlier columns, has
+    them too, with an outlier limit at least as large as this run's.
 
     Raises:
-        ValueError: if its columns are not ones this script writes, a needed column is missing, or the TSV's outlier
-            columns were made with a smaller --n-outlier-sample-ids.
+        ValueError: if its columns are not ones this script writes, it lacks the outlier columns this run needs, or
+            its outlier columns were made with a smaller --n-outlier-sample-ids.
     """
     header = read_tsv_header(tsv_path)
     headers_this_script_writes = [
         get_output_columns(MergeSettings(None, track_outlier_sample_ids, track_motif_composition, track_allele_sequences,
-                                         None, None))
+                                         None))
         for track_outlier_sample_ids in (False, True) for track_motif_composition in (False, True)
         for track_allele_sequences in (False, True)]
     if header not in headers_this_script_writes:
         raise ValueError(f"{tsv_path} doesn't have the columns of a TSV written by this script: {', '.join(header)}")
-    missing_columns = []
-    hint = ""
     if args.add_outlier_sample_id_columns:
         missing_outlier_columns = [column for column in [MAX_OUTLIER_SAMPLE_IDS_COLUMN] + OUTLIER_COLUMNS
                                    if column not in header]
         if missing_outlier_columns:
-            missing_columns += missing_outlier_columns
-            hint = " It was made without --add-outlier-sample-id-columns, so its outlier samples are unknown."
-    if args.add_consensus_sequence_columns and ALLELE_SEQUENCES_COLUMN not in header:
-        missing_columns.append(ALLELE_SEQUENCES_COLUMN)
-        hint += " It was made without --add-consensus-sequence-columns."
-    if missing_columns:
-        raise ValueError(f"{tsv_path} is missing the column(s) {', '.join(missing_columns)}.{hint}")
-    if args.add_outlier_sample_id_columns:
+            raise ValueError(
+                f"{tsv_path} is missing the column{'s' if len(missing_outlier_columns) > 1 else ''} "
+                f"{', '.join(missing_outlier_columns)}. It was made without "
+                f"--add-outlier-sample-id-columns, so its outlier samples are unknown.")
         outlier_limit = read_outlier_limit_of_tsv(tsv_path, header)
         if outlier_limit is not None and outlier_limit < args.n_outlier_sample_ids:
             raise ValueError(
@@ -1301,7 +1282,7 @@ def collect_input_specs(args):
 
     Raises:
         ValueError: if two JSON inputs have the same SampleId (without --allow-overlapping-samples), or a TSV lacks
-            a column this run needs.
+            the outlier columns this run needs.
     """
     input_specs = []
     json_path_by_sample_id = {}
@@ -1327,11 +1308,10 @@ def check_optional_columns(input_specs, stats_by_input, args):
     """Decides whether the output gets motif composition columns, and checks the optional data is in every input.
 
     Returns:
-        bool: whether to write the motif composition columns.
-
-    Raises:
-        ValueError: if only some inputs have motif composition (without --skip-motif-composition-columns), or
-            --add-consensus-sequence-columns was given and an input has no consensus sequences.
+        tuple: (whether to write the motif composition columns, list of warnings to print). The warnings are about
+            inputs without motif composition when others have it (without --skip-motif-composition-columns), inputs
+            without consensus sequences when --add-consensus-sequence-column was given, and JSONs whose motif
+            composition couldn't be checked because of -n.
     """
     inputs_with_motif_composition, inputs_without_motif_composition, inputs_without_consensus_sequences = [], [], []
     inputs_with_unknown_motif_composition = []
@@ -1341,7 +1321,7 @@ def check_optional_columns(input_specs, stats_by_input, args):
             # MotifComposition record at all, so the command line counts too.
             has_motif_composition = stats[WITH_MOTIF_COMPOSITION] > 0 or stats[COMMAND_LINE_HAS_MOTIF_COMPOSITION] > 0
             # ExpansionHunter writes ConsensusSequences only for called repeats, so a JSON without any call has none
-            # to contribute rather than missing them. (TSVs without the column were rejected before the merge.)
+            # to contribute rather than missing them.
             if stats[WITH_CONSENSUS_SEQUENCES] == 0 and stats[WITH_GENOTYPE] > 0:
                 inputs_without_consensus_sequences.append(input_spec.path)
             # With -n, a JSON from an older ExpansionHunter version may not have been read as far as its RunInfo, so
@@ -1352,41 +1332,51 @@ def check_optional_columns(input_specs, stats_by_input, args):
                 continue
         else:
             has_motif_composition = tsv_has_motif_composition_columns(input_spec.path)
+            if args.add_consensus_sequence_column and ALLELE_SEQUENCES_COLUMN not in read_tsv_header(input_spec.path):
+                inputs_without_consensus_sequences.append(input_spec.path)
         (inputs_with_motif_composition if has_motif_composition else inputs_without_motif_composition).append(
             input_spec.path)
 
+    warnings = []
     if not args.skip_motif_composition_columns and inputs_with_motif_composition and inputs_without_motif_composition:
-        raise ValueError(
-            f"{len(inputs_with_motif_composition):,d} input(s) have motif composition (e.g. "
-            f"{inputs_with_motif_composition[0]}) but {len(inputs_without_motif_composition):,d} don't (e.g. "
-            f"{inputs_without_motif_composition[0]}), so the motif composition columns would only count some of the "
-            f"samples. Run ExpansionHunter with --output-motif-composition on all of them, or pass "
-            f"--skip-motif-composition-columns. (A JSON counts as having motif composition if any of its repeat "
-            f"records has a MotifComposition field or its RunInfo.CommandLine has --output-motif-composition; a TSV, "
-            f"if it has the motif composition columns.)")
-    if args.add_consensus_sequence_columns and inputs_without_consensus_sequences:
-        raise ValueError(
-            f"--add-consensus-sequence-columns was given, but {len(inputs_without_consensus_sequences):,d} JSON "
-            f"input(s) have called repeats without any ConsensusSequences (e.g. "
-            f"{inputs_without_consensus_sequences[0]}). Was ExpansionHunter run with "
-            f"--dont-output-consensus-sequences?")
+        warnings.append(
+            f"Motif composition is missing from "
+            f"{format_count_with_noun(len(inputs_without_motif_composition), 'input')} (e.g. "
+            f"{inputs_without_motif_composition[0]}) but present in "
+            f"{format_count_with_noun(len(inputs_with_motif_composition), 'other input')} (e.g. "
+            f"{inputs_with_motif_composition[0]}), so the motif composition columns count only the samples in the "
+            f"inputs that have it. Run ExpansionHunter with --output-motif-composition on the others to count every "
+            f"sample, or pass --skip-motif-composition-columns to leave the columns out. (A JSON counts as having "
+            f"motif composition if any of its repeat records has a MotifComposition field or its RunInfo.CommandLine "
+            f"has --output-motif-composition; a TSV, if it has the motif composition columns.)")
+    if args.add_consensus_sequence_column and inputs_without_consensus_sequences:
+        warnings.append(
+            f"--add-consensus-sequence-column was given, but consensus sequences are missing from "
+            f"{format_count_with_noun(len(inputs_without_consensus_sequences), 'input')} (e.g. "
+            f"{inputs_without_consensus_sequences[0]}), so the "
+            f"{ALLELE_SEQUENCES_COLUMN} column counts only the samples in the other inputs. (A JSON has none if it has "
+            f"called repeats but no ConsensusSequences, as when ExpansionHunter is run with "
+            f"--dont-output-consensus-sequences; a TSV, if it was made without --add-consensus-sequence-column.)")
     if not args.skip_motif_composition_columns and inputs_with_unknown_motif_composition:
-        print(f"WARNING: {len(inputs_with_unknown_motif_composition):,d} JSON input(s) from older ExpansionHunter "
-              f"versions (e.g. {inputs_with_unknown_motif_composition[0]}) have no MotifComposition in the rows read, "
-              f"and -n stopped before their RunInfo, so whether they have motif composition couldn't be checked. The "
-              f"motif composition columns may be missing, or count only some of the samples.")
-    return not args.skip_motif_composition_columns and bool(inputs_with_motif_composition)
+        warnings.append(
+            f"Motif composition couldn't be checked for "
+            f"{format_count_with_noun(len(inputs_with_unknown_motif_composition), 'JSON input')} from older "
+            f"ExpansionHunter versions (e.g. {inputs_with_unknown_motif_composition[0]}): the rows read have no "
+            f"MotifComposition, and -n stopped before RunInfo, which these versions write at the end. The motif "
+            f"composition columns may be missing, or count only some of the samples.")
+    return not args.skip_motif_composition_columns and bool(inputs_with_motif_composition), warnings
 
 
 def print_input_stats(input_specs, stats_by_input):
     for input_spec, stats in zip(input_specs, stats_by_input):
         if input_spec.kind == "tsv":
-            print(f"  {input_spec.path}: {stats[TSV_ROWS]:,d} rows")
+            print(f"  {os.path.basename(input_spec.path)}: {format_count_with_noun(stats[TSV_ROWS], 'row')}")
             continue
         details = ", ".join(f"{count:,d} {description}" for description, count in stats.items()
                             if description not in (REPEAT_RECORDS, COMMAND_LINE_HAS_MOTIF_COMPOSITION, READ_TO_THE_END))
-        print(f"  {input_spec.path} (sample {input_spec.sample_id}, sex {input_spec.sex or 'unknown'}): "
-              f"{stats[REPEAT_RECORDS]:,d} repeat records" + (f", {details}" if details else ""))
+        print(f"  {os.path.basename(input_spec.path)} (sample {input_spec.sample_id}, "
+              f"sex {input_spec.sex or 'unknown'}): "
+              f"{format_count_with_noun(stats[REPEAT_RECORDS], 'repeat record')}" + (f", {details}" if details else ""))
 
 
 def main(argv=None):
@@ -1395,28 +1385,28 @@ def main(argv=None):
     raise_open_file_limit()
     args = parse_args(argv)
     json_count = sum(path.endswith(JSON_SUFFIXES) for path in args.input_paths)
-    print(f"Combining {len(args.input_paths):,d} inputs: {json_count:,d} ExpansionHunter JSON file(s) and "
-          f"{len(args.input_paths) - json_count:,d} TSV(s) from earlier runs")
+    tsv_count = len(args.input_paths) - json_count
+    if json_count and tsv_count:
+        print(f"Combining {len(args.input_paths):,d} inputs: {format_count_with_noun(tsv_count, 'TSV')} and "
+              f"{format_count_with_noun(json_count, 'ExpansionHunter JSON file')}")
+    elif json_count:
+        print(f"Combining {format_count_with_noun(json_count, 'ExpansionHunter JSON file')}")
+    else:
+        print(f"Combining {format_count_with_noun(tsv_count, 'TSV file')}")
     input_specs = collect_input_specs(args)
     samples_without_sex = sorted({input_spec.sample_id for input_spec in input_specs
                                   if input_spec.kind == "json" and input_spec.sex.lower() not in ("male", "female")})
     if samples_without_sex:
-        print(f"WARNING: {len(samples_without_sex):,d} samples have no Sex in SampleParameters (e.g. "
-              f"{samples_without_sex[0]}); they are counted as female, so only their chrY calls are hemizygous")
-
-    catalog_locus_structures = {}
-    if args.variant_catalog:
-        print(f"Reading LocusStructures from {args.variant_catalog}")
-        catalog_locus_structures = read_locus_structures_from_catalog(args.variant_catalog)
-        print(f"  {len(catalog_locus_structures):,d} loci have a LocusStructure other than a single "
-              f"\"(<motif>)*\" repeat")
+        print(f"WARNING: no Sex in SampleParameters for {format_count_with_noun(len(samples_without_sex), 'sample')} "
+              f"(e.g. {samples_without_sex[0]}). They are counted as female, so only their chrY calls are hemizygous")
 
     # Whether the output gets motif composition columns is only certain once every input has been read. A TSV's header
     # tells, and so do a JSON's first records in ExpansionHunter's all-loci mode. Its other modes can put
-    # MotifComposition on few loci or none, so one JSON's RunInfo.CommandLine is checked too: inputs that differ in
-    # motif composition are an error, so one JSON speaks for all. A JSON whose command line was read with its header
-    # is used if there is one; otherwise the smallest, whose whole file has to be decompressed, which -n skips
-    # (check_optional_columns then warns about the JSONs whose motif composition it can't tell). The merge is rerun if
+    # MotifComposition on few loci or none, so RunInfo.CommandLine is checked too: in every JSON whose command line
+    # was read with its header, which costs nothing. If no JSON's was (JSONs from older ExpansionHunter versions), the
+    # smallest JSON's is read, which takes decompressing the whole file, so -n skips it (check_optional_columns then
+    # warns about the JSONs whose motif composition it can't tell). Inputs usually agree on motif composition
+    # (check_optional_columns warns when they don't), so that one JSON usually speaks for all. The merge is rerun if
     # MotifComposition turns up late in JSONs whose command line wasn't checked or abbreviates
     # --output-motif-composition. With -n, at most N records of each JSON are checked first, since the merge itself
     # reads about that many.
@@ -1424,52 +1414,48 @@ def main(argv=None):
     file_size_by_path = {input_spec.path: get_file_size(input_spec.path) for input_spec in input_specs}
     track_motif_composition = False
     if not args.skip_motif_composition_columns:
-        tsv_paths = [input_spec.path for input_spec in input_specs if input_spec.kind == "tsv"]
-        tsvs_without_motif_composition = [path for path in tsv_paths if not tsv_has_motif_composition_columns(path)]
         json_specs = [input_spec for input_spec in input_specs if input_spec.kind == "json"]
-        json_spec_to_check_command_line_of = min(json_specs, default=None, key=lambda input_spec: (
-            input_spec.command_line_has_motif_composition is None, file_size_by_path[input_spec.path]))
-        check_command_line = json_spec_to_check_command_line_of is not None and (
-            json_spec_to_check_command_line_of.command_line_has_motif_composition is not None
-            or args.max_rows_to_write is None)
+        every_json_command_line_is_unknown = bool(json_specs) and all(
+            input_spec.command_line_has_motif_composition is None for input_spec in json_specs)
         max_records_to_check = min(MOTIF_COMPOSITION_CHECK_RECORDS, args.max_rows_to_write or math.inf)
         track_motif_composition = (
-            len(tsvs_without_motif_composition) < len(tsv_paths)
+            any(tsv_has_motif_composition_columns(input_spec.path) for input_spec in input_specs
+                if input_spec.kind == "tsv")
+            or any(input_spec.command_line_has_motif_composition for input_spec in json_specs)
             or any(json_has_motif_composition_in_first_records(input_spec.path, max_records_to_check)
                    for input_spec in json_specs)
-            or (check_command_line and json_command_line_has_motif_composition(json_spec_to_check_command_line_of)))
-        if track_motif_composition and tsvs_without_motif_composition:
-            raise ValueError(
-                f"Some inputs have motif composition but {tsvs_without_motif_composition[0]} has no motif composition "
-                f"columns, so those columns would only count some of the samples. Pass "
-                f"--skip-motif-composition-columns to leave them out.")
+            or (every_json_command_line_is_unknown and args.max_rows_to_write is None
+                and json_tail_command_line_has_motif_composition(
+                    min(json_specs, key=lambda input_spec: file_size_by_path[input_spec.path]))))
     settings = MergeSettings(
         n_outlier_sample_ids=args.n_outlier_sample_ids,
         track_outlier_sample_ids=args.add_outlier_sample_id_columns,
         track_motif_composition=track_motif_composition,
-        track_allele_sequences=args.add_consensus_sequence_columns,
-        catalog_locus_structures=catalog_locus_structures,
+        track_allele_sequences=args.add_consensus_sequence_column,
         max_rows_to_write=args.max_rows_to_write,
     )
     if args.max_rows_to_write is not None:
-        print(f"Writing only the first {args.max_rows_to_write:,d} rows (-n), so the input counts below cover only the "
-              f"records read for them")
-    output_tsv_path = f"{args.output_prefix}.tsv.gz"
-    num_groups = max(min(args.threads, len(input_specs)), math.ceil(len(input_specs) / get_max_inputs_per_merge()))
-    grouped_specs = split_into_groups(input_specs, num_groups, file_size_by_path)
-    with tempfile.TemporaryDirectory(prefix=os.path.basename(args.output_prefix) + ".tmp_",
-                                     dir=os.path.dirname(os.path.abspath(output_tsv_path))) as temp_dir:
+        print(f"Writing only the first {format_count_with_noun(args.max_rows_to_write, 'row')} (-n), so the input "
+              f"counts below cover only the records read for them")
+    num_shards = max(min(args.threads, len(input_specs)), math.ceil(len(input_specs) / get_max_inputs_per_merge()))
+    input_specs_by_shard = split_inputs_into_shards(input_specs, num_shards, file_size_by_path)
+    # Without -o, several inputs are named after their number of samples, which TSV inputs only tell once read, so
+    # until then the temporary files go where that output will: in the current directory, named "combined".
+    with tempfile.TemporaryDirectory(
+            prefix=os.path.basename(args.output_prefix or "combined") + ".tmp_",
+            dir=os.path.dirname(os.path.abspath(args.output_prefix or "combined"))) as temp_dir:
         while True:
-            group_paths, grouped_stats, num_rows, num_rows_without_locus_structure = merge_groups(
-                grouped_specs, temp_dir, settings, args.threads, args.show_progress_bar)
-            ordered_specs = [spec for group in grouped_specs for spec in group]
-            ordered_stats = [stats for group_stats in grouped_stats for stats in group_stats]
-            write_motif_composition_columns = check_optional_columns(ordered_specs, ordered_stats, args)
+            shard_tsv_paths, stats_by_shard, num_rows = merge_shards(
+                input_specs_by_shard, temp_dir, settings, args.threads, args.show_progress_bar)
+            ordered_specs = [spec for shard in input_specs_by_shard for spec in shard]
+            ordered_stats = [stats for shard_stats in stats_by_shard for stats in shard_stats]
+            write_motif_composition_columns, optional_column_warnings = check_optional_columns(
+                ordered_specs, ordered_stats, args)
             if not write_motif_composition_columns or settings.track_motif_composition:
                 break
             print("Motif composition only appears after the repeat records checked before the merge, so merging again "
                   "with the motif composition columns")
-            remove_files(group_paths)
+            remove_files(shard_tsv_paths)
             settings = settings._replace(track_motif_composition=True)
 
         print("Inputs:")
@@ -1477,25 +1463,29 @@ def main(argv=None):
         for description in [WITH_ALLELE_COUNT_NOT_MATCHING_SEX, WITH_CONSENSUS_SEQUENCES_NOT_MATCHING_GENOTYPE]:
             total = sum(stats[description] for stats in ordered_stats)
             if total:
-                print(f"WARNING: {total:,d} genotypes {description}")
+                print(f"WARNING: {format_count_with_noun(total, 'genotype')} {description}")
+        # Printed once the merge is final, so a rerun of the merge doesn't print them twice
+        for warning in optional_column_warnings:
+            print(f"WARNING: {warning}")
 
-        if len(group_paths) == 1:
-            merged_path = group_paths[0]
+        if len(shard_tsv_paths) == 1:
+            merged_path = shard_tsv_paths[0]
         else:
             merged_path = os.path.join(temp_dir, "merged.tsv.gz")
-            print(f"Merging the {len(group_paths):,d} groups' TSVs into {merged_path}")
-            num_rows, num_rows_without_locus_structure = merge_tsvs(
-                group_paths, merged_path, settings, temp_dir, args.show_progress_bar)
+            num_rows = merge_tsvs(shard_tsv_paths, merged_path, settings, temp_dir, args.show_progress_bar)
+        output_tsv_path = (args.output_prefix
+                           or get_default_combined_output_prefix(ordered_specs, ordered_stats)) + ".tsv.gz"
+        # parse_args checked -o and a single input's name; the combined name is only known now. A TSV input named
+        # after an earlier run gets the same name when its largest SampleCount undercounts it (e.g. with -n).
+        if output_would_overwrite_an_input(output_tsv_path, args.input_paths):
+            raise ValueError(f"The output, {output_tsv_path}, would overwrite an input; pass -o")
         os.replace(merged_path, output_tsv_path)
 
-    if num_rows_without_locus_structure:
-        print(f"WARNING: {num_rows_without_locus_structure:,d} rows are repeats of loci with several repeats, whose "
-              f"LocusStructure can't be rebuilt from the ExpansionHunter output; pass --variant-catalog to fill it in")
     added_columns = [name for name, added in [
         ("outlier sample ID", settings.track_outlier_sample_ids),
         ("motif composition", settings.track_motif_composition),
         (ALLELE_SEQUENCES_COLUMN, settings.track_allele_sequences)] if added]
-    print(f"Wrote {num_rows:,d} rows to {output_tsv_path}"
+    print(f"Wrote {format_count_with_noun(num_rows, 'row')} to {output_tsv_path}"
           + (f" (with {', '.join(added_columns)} columns)" if added_columns else ""))
 
 
