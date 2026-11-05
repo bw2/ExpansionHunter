@@ -1,4 +1,3 @@
-import collections
 import contextlib
 import gzip
 import io
@@ -555,11 +554,26 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         os.chdir(self.temp_dir)
         with contextlib.redirect_stdout(io.StringIO()):
             m.main([batch1, batch2, self.write_json("D", SAMPLE_WITHOUT_EXTRA_FIELDS)])
-        self.assertTrue(os.path.exists(os.path.join(self.temp_dir, "combined.4_samples.tsv.gz")))
+        _, rows = self.read_output(os.path.join(self.temp_dir, "combined.4_samples.4_rows"))
+        self.assertEqual(len(rows), 4)
+
+    def test_default_combined_name_counts_per_chromosome_tsvs_of_the_same_samples_once(self):
+        def one_locus_sample(sample_id, chrom):
+            return expansion_hunter_json(sample_id, "Female", [
+                (f"L_{chrom}", [repeat_record(f"L_{chrom}", f"{chrom}:100-130", "CAG", "10/10")])])
+        chr1_batch = self.run_main("chr1", self.write_json("A_chr1", one_locus_sample("A", "chr1")),
+                                   self.write_json("B_chr1", one_locus_sample("B", "chr1"))) + ".tsv.gz"
+        chr2_batch = self.run_main("chr2", self.write_json("A_chr2", one_locus_sample("A", "chr2")),
+                                   self.write_json("B_chr2", one_locus_sample("B", "chr2"))) + ".tsv.gz"
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.temp_dir)
+        with contextlib.redirect_stdout(io.StringIO()):
+            m.main(["--threads", "2", chr1_batch, chr2_batch])
+        self.assertTrue(os.path.exists(os.path.join(self.temp_dir, "combined.2_samples.2_rows.tsv.gz")))
 
     def test_default_combined_name_never_overwrites_an_input(self):
         # No repeat has both samples, so the batch's largest SampleCount (1) undercounts its 2 samples, and adding a
-        # third sample gives the batch's own name
+        # third sample at a locus the batch has gives the batch's own name: 2 samples and 2 rows
         sample_a = expansion_hunter_json("A", "Female", [("L1", [repeat_record("L1", "chr1:100-130", "CAG", "10/10")])])
         sample_b = expansion_hunter_json("B", "Female", [("L2", [repeat_record("L2", "chr2:100-130", "CAG", "10/10")])])
         sample_c = expansion_hunter_json("C", "Female", [("L1", [repeat_record("L1", "chr1:100-130", "CAG", "11/11")])])
@@ -567,10 +581,10 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         os.chdir(self.temp_dir)
         with contextlib.redirect_stdout(io.StringIO()):
             m.main([self.write_json("A", sample_a), self.write_json("B", sample_b)])
-        batch_text = self.read_output_text("combined.2_samples")
+        batch_text = self.read_output_text("combined.2_samples.2_rows")
         with self.assertRaisesRegex(ValueError, "would overwrite an input"), contextlib.redirect_stdout(io.StringIO()):
-            m.main(["combined.2_samples.tsv.gz", self.write_json("C", sample_c)])
-        self.assertEqual(self.read_output_text("combined.2_samples"), batch_text)
+            m.main(["combined.2_samples.2_rows.tsv.gz", self.write_json("C", sample_c)])
+        self.assertEqual(self.read_output_text("combined.2_samples.2_rows"), batch_text)
 
     def test_gzip_reader_closes_the_file_it_decompresses(self):
         source = io.BytesIO(gzip.compress(b"text"))
@@ -680,19 +694,16 @@ class FormattingTests(unittest.TestCase):
     def test_default_combined_output_prefix(self):
         def json_spec(path, sample_id):
             return m.InputSpec(path, "json", sample_id, "Female", False, None)
-        json_stats = collections.Counter()
+        # JSON inputs count their distinct SampleIds, even when no repeat has every sample
         self.assertEqual(m.get_default_combined_output_prefix(
-            [json_spec("A.json.gz", "A"), json_spec("B.json.gz", "B")], [json_stats, json_stats]), "combined.2_samples")
+            [json_spec("A.json.gz", "A"), json_spec("B.json.gz", "B")], 1, 2), "combined.2_samples.2_rows")
         # Per-chromosome runs of one sample (--allow-overlapping-samples)
         self.assertEqual(m.get_default_combined_output_prefix(
-            [json_spec("A_chr1.json.gz", "A"), json_spec("A_chr2.json.gz", "A")], [json_stats, json_stats]),
-            "combined.1_sample")
-        # A TSV counts as many samples as its largest SampleCount
+            [json_spec("A_chr1.json.gz", "A"), json_spec("A_chr2.json.gz", "A")], 1, 1), "combined.1_sample.1_row")
+        # TSV inputs count as many samples as the most complete output row has; no thousands separators
         self.assertEqual(m.get_default_combined_output_prefix(
-            [m.tsv_input_spec("batch1.tsv.gz"), m.tsv_input_spec("batch2.tsv.gz"), json_spec("A.json.gz", "A")],
-            [collections.Counter({m.LARGEST_SAMPLE_COUNT: 30}), collections.Counter({m.LARGEST_SAMPLE_COUNT: 25}),
-             json_stats]),
-            "combined.56_samples")
+            [m.tsv_input_spec("batch1.tsv.gz"), m.tsv_input_spec("batch2.tsv.gz"), json_spec("A.json.gz", "A")], 56,
+            1351341), "combined.56_samples.1351341_rows")
 
     def test_parse_genotype(self):
         self.assertEqual(m.parse_genotype("15/17"), [15, 17])

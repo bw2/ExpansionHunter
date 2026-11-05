@@ -154,8 +154,6 @@ WITH_CONSENSUS_SEQUENCES = "with consensus sequences"
 WITH_ALLELE_COUNT_NOT_MATCHING_SEX = "with an allele count that doesn't match the sample's sex"
 WITH_CONSENSUS_SEQUENCES_NOT_MATCHING_GENOTYPE = "whose number of consensus sequences doesn't match the genotype"
 TSV_ROWS = "rows"
-# The largest SampleCount of a TSV input's rows, which names the output when -o isn't given.
-LARGEST_SAMPLE_COUNT = "largest SampleCount"
 # These two describe the input rather than counting records, so they aren't printed. The first is set from
 # RunInfo.CommandLine, the second once a JSON has been read to its end (with -n it may not be).
 COMMAND_LINE_HAS_MOTIF_COMPOSITION = "ExpansionHunter command line has --output-motif-composition"
@@ -889,7 +887,6 @@ def iterate_multisample_tsv(input_spec, settings, stats):
             stats[TSV_ROWS] += 1
             summary = RepeatSummary(row["Motif"], row["ReferenceRegion"], settings.track_outlier_sample_ids)
             summary.sample_count = int(row["SampleCount"])
-            stats[LARGEST_SAMPLE_COUNT] = max(stats[LARGEST_SAMPLE_COUNT], summary.sample_count)
             summary.called_allele_count = int(row["CalledAlleleCount"])
             summary.all_allele_histogram = parse_histogram(row["AllAlleleHistogram"])
             summary.short_allele_histogram = parse_histogram(row["ShortAlleleHistogram"])
@@ -969,7 +966,8 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
         compression_level (int): gzip compression level of the output.
 
     Returns:
-        tuple: (list of per-input collections.Counter stats, in input_specs order; number of rows written)
+        tuple: (list of per-input collections.Counter stats, in input_specs order; number of rows written; largest
+            SampleCount of the rows written)
     """
     stats_by_input = [collections.Counter() for _ in input_specs]
     sorted_tsv_paths = []
@@ -992,6 +990,7 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
             merged = tqdm.tqdm(merged, unit=" records", unit_scale=True, desc="Merging")
 
         num_rows = 0
+        largest_sample_count = 0
         with gzip.open(output_tsv_path, "wt", compresslevel=compression_level) as f:
             f.write("\t".join(get_output_columns(settings)) + "\n")
             for key, records in itertools.groupby(merged, key=operator.itemgetter(0)):
@@ -1001,6 +1000,7 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
                                            f"{key[4]} in locus {key[3]}")
                 f.write(format_row(key, summary, settings) + "\n")
                 num_rows += 1
+                largest_sample_count = max(largest_sample_count, summary.sample_count)
                 if num_rows == settings.max_rows_to_write:
                     break
     finally:
@@ -1008,7 +1008,7 @@ def merge_inputs(input_specs, output_tsv_path, settings, temp_dir, show_progress
         for iterator in iterators:
             iterator.close()
         remove_files(sorted_tsv_paths)
-    return stats_by_input, num_rows
+    return stats_by_input, num_rows, largest_sample_count
 
 
 def merge_input_shard(task):
@@ -1021,8 +1021,8 @@ def merge_input_shard(task):
         tuple: (shard index, list of per-input stats)
     """
     shard_index, input_specs, output_tsv_path, settings, temp_dir = task
-    stats_by_input, _ = merge_inputs(input_specs, output_tsv_path, settings, temp_dir,
-                                     compression_level=TEMPORARY_FILE_COMPRESSION_LEVEL)
+    stats_by_input, _, _ = merge_inputs(input_specs, output_tsv_path, settings, temp_dir,
+                                        compression_level=TEMPORARY_FILE_COMPRESSION_LEVEL)
     return shard_index, stats_by_input
 
 
@@ -1088,17 +1088,17 @@ def merge_shards(input_specs_by_shard, temp_dir, settings, threads, show_progres
     A single shard is merged in this process straight into its final form (output compression level).
 
     Returns:
-        tuple: (list of the shards' TSV paths, list of each shard's per-input stats, number of rows written for a
-            single shard or None)
+        tuple: (list of the shards' TSV paths, list of each shard's per-input stats, and for a single shard the
+            number of rows written and their largest SampleCount, otherwise None and None)
     """
     num_workers = min(threads, len(input_specs_by_shard))
     print(f"Merging {format_count_with_noun(sum(map(len, input_specs_by_shard)), 'input file')}"
           + (f" using {num_workers:,d} threads" if num_workers >= 2 else ""))
     if len(input_specs_by_shard) == 1:
         merged_path = os.path.join(temp_dir, "merged.tsv.gz")
-        stats_by_input, num_rows = merge_inputs(
+        stats_by_input, num_rows, largest_sample_count = merge_inputs(
             input_specs_by_shard[0], merged_path, settings, temp_dir, show_progress_bar)
-        return [merged_path], [stats_by_input], num_rows
+        return [merged_path], [stats_by_input], num_rows, largest_sample_count
 
     shard_tsv_paths = [os.path.join(temp_dir, f"shard_{index + 1}.tsv.gz")
                        for index in range(len(input_specs_by_shard))]
@@ -1119,7 +1119,7 @@ def merge_shards(input_specs_by_shard, temp_dir, settings, threads, show_progres
                 results = tqdm.tqdm(results, total=len(tasks), unit=" shards")
             for shard_index, stats_by_input in results:
                 stats_by_shard[shard_index] = stats_by_input
-    return shard_tsv_paths, stats_by_shard, None
+    return shard_tsv_paths, stats_by_shard, None, None
 
 
 def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar):
@@ -1128,7 +1128,7 @@ def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar
     The input TSVs are deleted once merged.
 
     Returns:
-        int: number of rows written.
+        tuple: (number of rows written, largest SampleCount of those rows)
     """
     max_inputs = get_max_inputs_per_merge()
     round_number = 0
@@ -1142,18 +1142,18 @@ def merge_tsvs(tsv_paths, output_tsv_path, settings, temp_dir, show_progress_bar
             next_round_paths.append(next_round_path)
         remove_files(tsv_paths)
         tsv_paths = next_round_paths
-    _, num_rows = merge_inputs(
+    _, num_rows, largest_sample_count = merge_inputs(
         [tsv_input_spec(path) for path in tsv_paths], output_tsv_path, settings, temp_dir, show_progress_bar)
     remove_files(tsv_paths)
-    return num_rows
+    return num_rows, largest_sample_count
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-o", "--output-prefix",
                         help="Writes <prefix>.tsv.gz (a local path). Default: the input file name without its suffix "
-                             "for one input, otherwise combined.<N>_samples in the current directory, N being the "
-                             "number of samples")
+                             "for one input, otherwise combined.<N>_samples.<R>_rows in the current directory, N being "
+                             "the number of samples and R the number of rows written")
     parser.add_argument("-n", "--max-rows-to-write", type=int,
                         help="Write only the first N rows: the first N repeats in genomic order. Useful for testing.")
     parser.add_argument("-t", "--threads", type=int, default=1,
@@ -1200,7 +1200,7 @@ def parse_args(argv=None):
         parser.error("--threads must be at least 1")
     if not args.output_prefix and len(args.input_paths) == 1:
         # Next to a local input; in the current directory for a gs:// one. (Without -o, several inputs get a name
-        # from their number of samples once they have been read: see get_default_combined_output_prefix.)
+        # from their number of samples and rows once they have been merged: see get_default_combined_output_prefix.)
         input_path = args.input_paths[0]
         args.output_prefix = strip_suffix(os.path.basename(input_path) if is_gcs_path(input_path) else input_path,
                                           JSON_SUFFIXES + TSV_SUFFIXES)
@@ -1215,21 +1215,24 @@ def output_would_overwrite_an_input(output_tsv_path, input_paths):
         os.path.realpath(path) for path in input_paths if not is_gcs_path(path)}
 
 
-def get_default_combined_output_prefix(input_specs, stats_by_input):
-    """Returns the output prefix for several inputs when -o isn't given: combined.<N>_samples, in the current directory.
+def get_default_combined_output_prefix(input_specs, largest_sample_count, num_rows):
+    """Returns the output prefix for several inputs when -o isn't given: combined.<N>_samples.<R>_rows, in the current
+    directory, R being the number of rows written.
 
-    N is the number of distinct SampleIds of the JSON inputs plus, for each TSV input, its largest SampleCount (a TSV
-    doesn't record which samples went into it, so that is the number of samples it has at its most complete repeat).
-    With -n, a TSV's largest SampleCount is taken over the rows read.
+    A TSV input doesn't record which samples went into it, so N is the larger of the number of distinct SampleIds of
+    the JSON inputs and the largest SampleCount among the output's rows (the number of samples at the most complete
+    repeat). That counts both batches of different samples and batches of the same samples split by chromosome. With
+    -n, the largest SampleCount is taken over the rows written.
 
     Args:
         input_specs (list): InputSpec of each input.
-        stats_by_input (list): the merge's per-input stats, in input_specs order.
+        largest_sample_count (int): largest SampleCount among the output's rows.
+        num_rows (int): number of rows written to the output.
     """
-    num_samples = len({input_spec.sample_id for input_spec in input_specs if input_spec.kind == "json"}) + sum(
-        stats[LARGEST_SAMPLE_COUNT] for input_spec, stats in zip(input_specs, stats_by_input)
-        if input_spec.kind == "tsv")
-    return f"combined.{num_samples}_sample{'' if num_samples == 1 else 's'}"
+    num_samples = max(len({input_spec.sample_id for input_spec in input_specs if input_spec.kind == "json"}),
+                      largest_sample_count)
+    return (f"combined.{num_samples}_sample{'' if num_samples == 1 else 's'}"
+            f".{num_rows}_row{'' if num_rows == 1 else 's'}")
 
 
 def read_outlier_limit_of_tsv(tsv_path, header):
@@ -1259,13 +1262,10 @@ def check_tsv_input_columns(tsv_path, args):
     if header not in headers_this_script_writes:
         raise ValueError(f"{tsv_path} doesn't have the columns of a TSV written by this script: {', '.join(header)}")
     if args.add_outlier_sample_id_columns:
-        missing_outlier_columns = [column for column in [MAX_OUTLIER_SAMPLE_IDS_COLUMN] + OUTLIER_COLUMNS
-                                   if column not in header]
-        if missing_outlier_columns:
-            raise ValueError(
-                f"{tsv_path} is missing the column{'s' if len(missing_outlier_columns) > 1 else ''} "
-                f"{', '.join(missing_outlier_columns)}. It was made without "
-                f"--add-outlier-sample-id-columns, so its outlier samples are unknown.")
+        # The header is one this script writes, so it has either all the outlier columns or none of them
+        if MAX_OUTLIER_SAMPLE_IDS_COLUMN not in header:
+            raise ValueError(f"{tsv_path} has no outlier sample ID columns. It was made without "
+                             f"--add-outlier-sample-id-columns, so its outlier samples are unknown.")
         outlier_limit = read_outlier_limit_of_tsv(tsv_path, header)
         if outlier_limit is not None and outlier_limit < args.n_outlier_sample_ids:
             raise ValueError(
@@ -1439,13 +1439,13 @@ def main(argv=None):
               f"counts below cover only the records read for them")
     num_shards = max(min(args.threads, len(input_specs)), math.ceil(len(input_specs) / get_max_inputs_per_merge()))
     input_specs_by_shard = split_inputs_into_shards(input_specs, num_shards, file_size_by_path)
-    # Without -o, several inputs are named after their number of samples, which TSV inputs only tell once read, so
-    # until then the temporary files go where that output will: in the current directory, named "combined".
+    # Without -o, several inputs are named after their number of samples and rows, which are only known once merged,
+    # so until then the temporary files go where that output will: in the current directory, named "combined".
     with tempfile.TemporaryDirectory(
             prefix=os.path.basename(args.output_prefix or "combined") + ".tmp_",
             dir=os.path.dirname(os.path.abspath(args.output_prefix or "combined"))) as temp_dir:
         while True:
-            shard_tsv_paths, stats_by_shard, num_rows = merge_shards(
+            shard_tsv_paths, stats_by_shard, num_rows, largest_sample_count = merge_shards(
                 input_specs_by_shard, temp_dir, settings, args.threads, args.show_progress_bar)
             ordered_specs = [spec for shard in input_specs_by_shard for spec in shard]
             ordered_stats = [stats for shard_stats in stats_by_shard for stats in shard_stats]
@@ -1472,11 +1472,13 @@ def main(argv=None):
             merged_path = shard_tsv_paths[0]
         else:
             merged_path = os.path.join(temp_dir, "merged.tsv.gz")
-            num_rows = merge_tsvs(shard_tsv_paths, merged_path, settings, temp_dir, args.show_progress_bar)
-        output_tsv_path = (args.output_prefix
-                           or get_default_combined_output_prefix(ordered_specs, ordered_stats)) + ".tsv.gz"
-        # parse_args checked -o and a single input's name; the combined name is only known now. A TSV input named
-        # after an earlier run gets the same name when its largest SampleCount undercounts it (e.g. with -n).
+            num_rows, largest_sample_count = merge_tsvs(
+                shard_tsv_paths, merged_path, settings, temp_dir, args.show_progress_bar)
+        output_tsv_path = (args.output_prefix or get_default_combined_output_prefix(
+            ordered_specs, largest_sample_count, num_rows)) + ".tsv.gz"
+        # parse_args checked -o and a single input's name; the combined name is only known now. It is a TSV input's
+        # own name when that input is an earlier default-named output with the same numbers of samples and rows, e.g.
+        # a new sample at loci the input already has, when no row of the input had every one of its samples.
         if output_would_overwrite_an_input(output_tsv_path, args.input_paths):
             raise ValueError(f"The output, {output_tsv_path}, would overwrite an input; pass -o")
         os.replace(merged_path, output_tsv_path)
