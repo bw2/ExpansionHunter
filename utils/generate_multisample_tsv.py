@@ -49,35 +49,21 @@ When the inputs have ExpansionHunter's motif composition (enabled by ExpansionHu
     MotifComposition    "1:GCG:561:64,2:GCA:82:50" (representing motif ID, motif, total number of occurrences across reads, number of reads where the motif was observed)
     MotifPairs          "[1][1]:398:63,[1][2]:82:50" (representing the IDs of a motif and the motif after it, total number of occurrences across reads, number of reads where the motif pair was observed)
 
-Both sum the locus-level Motifs and MotifPairs records of ExpansionHunter's MotifComposition over all samples (the
-per-allele Allele1/Allele2 blocks are not used). ExpansionHunter numbers motifs separately in each sample, so motif 1 can be GCG in one sample and GCA in
-another: motifs and motif pairs are summed by motif sequence, and both columns are renumbered the way ExpansionHunter
-numbers motifs, by total occurrences, highest first, with ties broken by motif sequence. Either every input must have
-motif composition or none, unless --skip-motif-composition-columns is given. A JSON has it if any repeat record has
-MotifComposition or its RunInfo.CommandLine has --output-motif-composition (in the loci-with-non-ref-motifs and
-loci-with-known-motifs modes a sample can have no MotifComposition record at all).
+Both of these columns sum the locus-level Motifs and MotifPairs records of ExpansionHunter's MotifComposition output field over all samples (ExpansionHunter's
+per-allele Allele1/Allele2 output blocks are not used). ExpansionHunter numbers motifs separately in each sample, so motif 1 can be GCG in one sample and GCA in
+another: motifs and motif pairs are summed by motif sequence, and both columns renumber motifs by their total occurrences, highest first, with ties broken by motif sequence. 
+Either every input must have motif composition or none.
 
-With --add-consensus-sequence-columns, also AlleleSequences: each distinct consensus allele sequence from
-ExpansionHunter's ConsensusSequences and its haplotype count, most common first, "TGCTGCTGA:86,TGCTGCTGC:56". A
+With --add-consensus-sequence-columns, an AlleleSequences column is also added: each distinct consensus allele sequence from
+ExpansionHunter's ConsensusSequences field is listed, along with its total haplotype count, most common first, "TGCTGCTGA:86,TGCTGCTGC:56". A
 homozygous diploid call's one consensus sequence counts twice, and a hemizygous call's once. Calls without
-ConsensusSequences add nothing, so the counts can add up to less than CalledAlleleCount. Every input must then have
-consensus sequences (ExpansionHunter run without --dont-output-consensus-sequences).
+ConsensusSequences add nothing, so the counts can add up to less than CalledAlleleCount. 
 
-A TSV records counts, not which samples went into it, so only JSON inputs are checked for a sample that is in more
-than one input. When combining TSVs, make sure each sample went into only one of them.
+JSON inputs are checked to make sure that no sample id is present in more than one input file. 
 
 Inputs (and --variant-catalog) can be local paths or gs:// paths in Google Cloud Storage, which are streamed rather
 than downloaded. Reading gs:// paths needs the google-cloud-storage package and application default credentials
 (gcloud auth application-default login). The output is written locally.
-
-With -n N, only the first N rows are written: the first N repeats in genomic order, each counting every sample. The
-inputs are then read only as far as those rows need (plus up to N records of each JSON checked for motif composition
-before the merge), except seeking and streaming mode JSONs, which are always read in full to put their loci in genomic
-order. Optimized-streaming output from older ExpansionHunter versions keeps RunInfo at its end, so if none of the rows
-read have MotifComposition, -n can't tell whether such a JSON has motif composition (in the loci-with-non-ref-motifs and
-loci-with-known-motifs modes such a JSON can have it all the same). The script then warns that the motif composition
-columns may be missing, or count only some of the samples. A TSV written with -n looks like any other, but holds only
-the first N repeats, so don't combine it with other inputs: the rows past N would leave out its samples.
 
 Example:
     python3 generate_multisample_tsv.py --threads 4 --show-progress-bar --add-outlier-sample-id-columns \\
