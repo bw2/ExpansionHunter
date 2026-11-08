@@ -51,7 +51,10 @@ enum class ChromType
 {
     kX,
     kY,
-    kAutosome
+    kAutosome,
+    // A chrX locus that the catalog marks "IsInsidePseudoautosomalRegion": true. It is genotyped with two
+    // alleles, like an autosomal locus, whatever the sample's sex.
+    kPseudoautosomalRegion
 };
 
 Sex decodeSampleSex(const std::string& encoding);

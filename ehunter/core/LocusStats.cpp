@@ -101,6 +101,7 @@ AlleleCount determineExpectedAlleleCount(ChromType chromType, Sex sex)
     case ChromType::kX:
         return (sex == Sex::kFemale ? AlleleCount::kTwo : AlleleCount::kOne);
     case ChromType::kAutosome:
+    case ChromType::kPseudoautosomalRegion:
         return AlleleCount::kTwo;
     }
 

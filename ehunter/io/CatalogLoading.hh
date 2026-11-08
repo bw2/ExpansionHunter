@@ -52,4 +52,11 @@ std::vector<std::string> decodeKnownMotifs(const nlohmann::json& locusJson, cons
 // that older field are ignored, so it can no longer turn the analysis on at other loci.
 bool decodeUseRFC1MotifAnalysis(const nlohmann::json& locusJson);
 
+// The optional "IsInsidePseudoautosomalRegion" field of a catalog locus record (false if absent). A locus with
+// "IsInsidePseudoautosomalRegion": true gets ChromType::kPseudoautosomalRegion, so it is genotyped with two alleles
+// in every sample. `contigChromType` is the chromosome type of the locus's contig. Throws if the value is not a
+// boolean, or is true for a locus that is not on chrX.
+bool decodeIsInsidePseudoautosomalRegion(
+    const nlohmann::json& locusJson, const std::string& locusId, ChromType contigChromType);
+
 }

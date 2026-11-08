@@ -241,6 +241,28 @@ bool decodeUseRFC1MotifAnalysis(const Json& locusJson)
     return isRFC1Locus && !isTurnedOff;
 }
 
+bool decodeIsInsidePseudoautosomalRegion(const Json& locusJson, const string& locusId, ChromType contigChromType)
+{
+    const auto field = locusJson.find("IsInsidePseudoautosomalRegion");
+    if (field == locusJson.end())
+    {
+        return false;
+    }
+    if (!field->is_boolean())
+    {
+        throw std::runtime_error(
+            "IsInsidePseudoautosomalRegion of locus " + locusId + " must be true or false, not " + field->dump());
+    }
+    // Only chrX loci can be marked. A reference whose chrY PARs are masked has no loci there, and in one whose chrY
+    // PARs are not masked, marking the chrY copy would only add a second call of the same repeat from part of its reads.
+    if (field->get<bool>() && contigChromType != ChromType::kX)
+    {
+        throw std::runtime_error(
+            "Locus " + locusId + " has \"IsInsidePseudoautosomalRegion\": true, but is not on chrX");
+    }
+    return field->get<bool>();
+}
+
 /// \brief Translate a single locus from the catalog file json structure into an intermediate locus configuration
 ///
 static LocusDescription loadLocusDescription(
@@ -381,7 +403,7 @@ static LocusDescription loadLocusDescription(
         "LocusId", "ReferenceRegion", "LocusStructure", "VariantType",
         "TargetRegion", "VariantId", "OfftargetRegions", "ErrorRate",
         "LikelihoodRatioThreshold", "MinimalLocusCoverage",
-        "RFC1MotifAnalysis", "PlotReadVisualization", "KnownMotifs"
+        "RFC1MotifAnalysis", "PlotReadVisualization", "KnownMotifs", "IsInsidePseudoautosomalRegion"
     };
 
     // Capture any extra fields not in the known set. Only needed when --copy-catalog-fields is set;
@@ -400,7 +422,10 @@ static LocusDescription loadLocusDescription(
     const auto firstReferenceRegion = referenceRegions.front();
     const auto lastReferenceRegion = referenceRegions.back();
 
-    const auto chromType = contigInfo.getChromType(firstReferenceRegion.contigIndex());
+    const ChromType contigChromType = contigInfo.getChromType(firstReferenceRegion.contigIndex());
+    const ChromType chromType = decodeIsInsidePseudoautosomalRegion(locusJson, locusId, contigChromType)
+        ? ChromType::kPseudoautosomalRegion
+        : contigChromType;
     const int32_t locusContigIndex = firstReferenceRegion.contigIndex();
     const int64_t locusAndFlanksStart = firstReferenceRegion.start() - kExtensionLength;
     const int64_t locusAndFlanksEnd = lastReferenceRegion.end() + kExtensionLength;

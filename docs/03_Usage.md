@@ -31,7 +31,10 @@ optional arguments.
   column and the JSON `SampleParameters.SampleId` field. Defaults to the
   `--reads` filename prefix (e.g. `NA12878` for `/data/NA12878.cram`).
 * `--sex <arg>` Specifies sex of the sample; can be either `male` or `female`
-  (default). This parameter only affects repeats on sex chromosomes.
+  (default). This parameter only affects repeats on sex chromosomes. Loci with
+  `"IsInsidePseudoautosomalRegion": true` specified in their catalog definition will be
+  genotyped as diploid in both male and female samples. See
+  [Variant catalog files](04_VariantCatalogFiles.md).
 * `--threads <int>` Specifies how many threads can be used to accelerate analysis
    of large variant catalogs. Set to 1 by default. Typically seeking mode can
    benefit from relatively high thread counts, while for streaming mode

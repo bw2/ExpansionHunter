@@ -163,6 +163,23 @@ itself.
   alignments to the locus graph (except with `--genotyping-approach only-quick`,
   where it gets no `RFC1MotifAnalysis` record).
 
+* `IsInsidePseudoautosomalRegion` Optional, `true` or `false` (the default). Set it
+  to `true` for chrX loci that sit inside a pseudoautosomal region (PAR) in order to
+  genotype them as diploid, like autosomal loci. Without this field, chrX loci are
+  genotyped as having one allele in male samples. Setting the field to
+  `true` for a locus on any other chromosome, chrY included, or to anything other than
+  `true` or `false`, is an error.
+
+  The field assumes that reads inside the PAR regions align to chrX rather than chrY.
+  In other words, it assumes that the reads were aligned to a reference in which the
+  PARs on chrY are masked with Ns. The chrY PARs are masked in the Broad
+  `Homo_sapiens_assembly38.fasta` reference, in the GRCh37 references b37,
+  `human_g1k_v37` and `hs37d5`, and in the T2T `chm13v2.0_maskedY.fa` and
+  `chm13v2.0_maskedY_rCRS.fa`; CHM13 v1.1 and `chm13v2.0_noY.fa` have no chrY at all.
+  They are not masked in the UCSC `hg19.fa` and `hg38.fa` or the standard
+  `chm13v2.0.fa` (UCSC `hs1`), so genotypes at PAR loci will be less accurate in
+  samples aligned to these references.
+
 
 ## Using regular expressions to define locus structure
 
