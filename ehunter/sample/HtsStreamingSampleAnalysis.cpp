@@ -234,7 +234,8 @@ SampleFindings htsStreamingSampleAnalysis(
     locusAnalyzerThreadSharedData.locusAnalyzers
         = initializeLocusAnalyzers(regionCatalog, heuristicParams, bamletWriter, threadCount,
                                    programParams.enableAlleleQualityMetrics(),
-                                   programParams.enableConsensusSequences());
+                                   programParams.enableConsensusSequences(),
+                                   programParams.enableFlankingVariants());
     GenomeQueryCollection genomeQuery(locusAnalyzerThreadSharedData.locusAnalyzers);
 
     spdlog::info("Streaming reads");

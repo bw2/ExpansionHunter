@@ -356,7 +356,8 @@ void processLocus(
             vector<unique_ptr<LocusAnalyzer>> locusAnalyzers;
             auto analyzer(std::make_unique<LocusAnalyzer>(locusSpec, heuristicParams, alignmentWriter,
                                                           programParams.enableAlleleQualityMetrics(),
-                                                          programParams.enableConsensusSequences()));
+                                                          programParams.enableConsensusSequences(),
+                                                          programParams.enableFlankingVariants()));
             locusAnalyzers.emplace_back(std::move(analyzer));
             sampleFindings[locusIndex] = genotypeLocusWithSeekingModeReads(programParams, locusAnalyzers,
                 htsFileSeeker, mateExtractor, alignerSelector, reference, typicalReadLength);

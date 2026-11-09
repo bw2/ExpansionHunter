@@ -1,6 +1,7 @@
 target_sources(ExpansionHunterLib # Requires CMake 3.13 or later
         PRIVATE
         AlignmentBuffer.hh AlignmentBuffer.cpp
+        FlankingVariants.hh
         IrrPairFinder.hh IrrPairFinder.cpp
         LocusAligner.hh LocusAligner.cpp
         LocusAnalyzer.hh LocusAnalyzer.cpp

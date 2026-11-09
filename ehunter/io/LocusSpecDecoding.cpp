@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 #include <boost/optional.hpp>
 
@@ -58,15 +59,37 @@ static vector<GenomicRegion> addFlankingRegions(int kExtensionLength, const vect
     return regions;
 }
 
-static string extendLocusStructure(
+struct LocusStructureWithFlanks
+{
+    string locusStructure;
+    char referenceBaseAfterLeftFlank;
+    char referenceBaseBeforeRightFlank;
+};
+
+// Returns the locus structure with the reference flanks added, and the reference bases next to the flanks on the
+// locus side
+static LocusStructureWithFlanks extendLocusStructure(
     Reference& reference, const vector<GenomicRegion>& referenceRegions, const string& flanklessLocusStructure)
 {
-
+    // Each flank is fetched together with the base next to it on the locus side, so those bases cost no extra
+    // reference lookups
     const auto& leftFlankRegion = referenceRegions.front();
-    string leftFlank = reference.getSequence(leftFlankRegion);
+    string leftFlank = reference.getSequence(
+        GenomicRegion(leftFlankRegion.contigIndex(), leftFlankRegion.start(), leftFlankRegion.end() + 1));
+    const char baseAfterLeftFlank = leftFlank.empty() ? 'N' : leftFlank.back();
+    if (!leftFlank.empty())
+    {
+        leftFlank.pop_back();
+    }
 
     const auto& rightFlankRegion = referenceRegions.back();
-    string rightFlank = reference.getSequence(rightFlankRegion);
+    string rightFlank = reference.getSequence(
+        GenomicRegion(rightFlankRegion.contigIndex(), rightFlankRegion.start() - 1, rightFlankRegion.end()));
+    const char baseBeforeRightFlank = rightFlank.empty() ? 'N' : rightFlank.front();
+    if (!rightFlank.empty())
+    {
+        rightFlank.erase(0, 1);
+    }
 
     const size_t maxNsAllowedInFlanks = 5;
     const size_t numNsInLeftFlank = std::count(leftFlank.begin(), leftFlank.end(), 'N');
@@ -79,7 +102,7 @@ static string extendLocusStructure(
         throw std::runtime_error(message);
     }
 
-    return leftFlank + flanklessLocusStructure + rightFlank;
+    return { leftFlank + flanklessLocusStructure + rightFlank, baseAfterLeftFlank, baseBeforeRightFlank };
 }
 
 static vector<GenomicRegion> addReferenceRegionsForInterruptions(const GraphBlueprint& blueprint, const vector<GenomicRegion>& referenceRegions)
@@ -253,9 +276,15 @@ LocusSpecification decodeLocusSpecification(
 
         std::string locusStructure;
         std::vector<GenomicRegion> referenceRegions;
+        char referenceBaseAfterLeftFlank = 'N';
+        char referenceBaseBeforeRightFlank = 'N';
         if(extendFlanks) {
             referenceRegions = addFlankingRegions(kExtensionLength, locusDescription.referenceRegions());
-            locusStructure = extendLocusStructure(reference, referenceRegions, locusDescription.locusStructure());
+            LocusStructureWithFlanks locusStructureWithFlanks
+                = extendLocusStructure(reference, referenceRegions, locusDescription.locusStructure());
+            locusStructure = std::move(locusStructureWithFlanks.locusStructure);
+            referenceBaseAfterLeftFlank = locusStructureWithFlanks.referenceBaseAfterLeftFlank;
+            referenceBaseBeforeRightFlank = locusStructureWithFlanks.referenceBaseBeforeRightFlank;
         } else {
             locusStructure = locusDescription.locusStructure();
             referenceRegions = locusDescription.referenceRegions();
@@ -304,6 +333,7 @@ LocusSpecification decodeLocusSpecification(
             locusDescription.extraFields(),
             locusDescription.knownMotifs());
         locusSpec.setOfftargetReadExtractionRegions(locusDescription.offtargetRegions());
+        locusSpec.setReferenceBasesNextToFlanks(referenceBaseAfterLeftFlank, referenceBaseBeforeRightFlank);
 
         int variantIndex = 0;
         for (const auto& feature : blueprint)

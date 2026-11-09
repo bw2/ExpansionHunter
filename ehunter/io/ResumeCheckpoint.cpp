@@ -246,6 +246,7 @@ std::string buildRunSignature(const ProgramParameters& params)
     signature["AlignerType"] = static_cast<int>(params.heuristics().alignerType());
     signature["OutputGenotypeTiming"] = params.outputGenotypeTiming();
     signature["MotifComposition"] = motifCompositionModeToString(params.motifCompositionMode());
+    signature["FlankingVariants"] = params.enableFlankingVariants();
     signature["GenotypeQualityModelVersion"]
         = params.genotypeQualityModel() ? params.genotypeQualityModel()->version : std::string();
     // No indentation, so the signature fits on the processed-loci list's first line.

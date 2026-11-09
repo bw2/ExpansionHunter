@@ -23,6 +23,7 @@
 #pragma once
 
 #include <optional>
+#include <set>
 #include <string>
 
 #include "locus/AlignmentBuffer.hh"
@@ -47,6 +48,9 @@ struct ReviewerContext
     FragAssignment fragAssignment;       // Assignment of fragments to haplotypes
     ConsensusResult consensusResult;     // Consensus sequences built from anchor reads
     DiplotypeChoiceSupport diplotypeChoiceSupport;  // How strongly fragments favor `paths` over the next-best diplotype
+    // Fragments whose alignment score is best on a single haplotype path of `paths`. The other fragments fit several
+    // paths equally well, and fragAssignment splits them between those paths by fragment length alone.
+    std::set<std::string> fragIdsPlacedOnOnePathByAlignmentScore;
 
     ReviewerContext()
         : fragAssignment({}, {})

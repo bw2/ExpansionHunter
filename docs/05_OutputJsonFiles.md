@@ -80,6 +80,8 @@ Repeat records contain the following fields.
 * `MotifComposition` (optional) Counts of each motif, and of each pair of adjacent motifs, within
   read sequences overlapping the locus. Only written when `--output-motif-composition` is
   specified. See [Motif composition](#motif-composition) below for details.
+* `FlankingVariants` (optional) SNVs and indels detected in the flanks of a locus. Only written when
+  `--output-flanking-variants` is specified. See [Flanking variants](#flanking-variants) below for details.
 
 ## Small variant records
 
@@ -379,6 +381,68 @@ Limitations:
   (`(CAG)*CAACAG(CCG)*`).
 * Repeat units whose length differs from the catalog motif (for example 29 or 31 bp repeat units in
   a 30 bp-motif VNTR) are not counted.
+
+## Flanking variants
+
+When `--output-flanking-variants` is specified, a `FlankingVariants` section will be added to the output,
+listing SNVs and indels found in the flanks of the locus (up to `--region-extension-length`
+bases of flanking sequence on each side), along with the number of reads supporting each allele. These
+variants are phased to the repeat alleles using reads that unambiguously align to one repeat allele or
+the other.
+
+Example:
+
+```json
+"FlankingVariants": [
+  {
+    "AlleleSize": 12,
+    "HaplotypeRegion": "chr1:1000412-1001398",
+    "Variants": [
+      { "AltReads": 0, "RefReads": 7, "Variant": "chr1-1000560-A-G" },
+      { "AltReads": 5, "RefReads": 0, "Variant": "chr1-1001302-CT-C" }
+    ]
+  },
+  {
+    "AlleleSize": 41,
+    "HaplotypeRegion": "chr1:1000530-1001240",
+    "Variants": [
+      { "AltReads": 4, "RefReads": 0, "Variant": "chr1-1000560-A-G" },
+      { "AltReads": 0, "RefReads": 0, "Variant": "chr1-1001302-CT-C" }
+    ]
+  }
+]
+```
+
+Here the G at `chr1:1000560` is on the same haplotype as the 41-unit allele, and the deletion at
+`chr1:1001302` is on the haplotype that has the 12-repeat allele.
+
+The array has one entry per distinct repeat allele, the shorter one first: two for a heterozygous genotype,
+one for a homozygous or hemizygous genotype. Each entry has:
+
+* `AlleleSize` The allele's size in repeat units, as in `Genotype`.
+* `HaplotypeRegion` 0-based half-open region (`chrom:start-end`) from the outermost left-flank
+  position to the outermost right-flank position covered by at least 2 of the allele's reads,
+  including the repeat in between. When only one flank has such a position, the region stops at the
+  repeat edge on the other side; when neither does, it is `null`. A position inside the region can
+  still be covered by fewer than 2 reads, so a variant that is not listed there is not necessarily
+  absent from the allele.
+* `Variants` Every variant detected in the flanks of this locus, in the same order under each allele:
+  * `Variant` The variant in VCF form, written as `<chrom>-<1-based position>-<REF>-<ALT>`.
+  * `RefReads` The number of reads that support the REF allele.
+  * `AltReads` The number of reads that support the ALT allele.
+
+`RefReads` and `AltReads` are both 0 when none of the allele's reads cover the variant.
+A variant is reported only if at least 2 reads support its ALT allele.
+
+Limitations:
+
+* In `--analysis-mode optimized-streaming`, the fast path (loci marked `QuickGenotype`) does not output
+  FlankingVariants. Add `--genotyping-approach only-full` when running with `--analysis-mode optimized-streaming` in order to apply the full
+  genotyper for every locus and emit FlankingVariants. Loci whose catalog record includes a small variant are not supported either.
+* Variants at the boundary between a flank and the repeat can be placed inside the repeat by the
+  aligner, in which case they are not reported, or only partly reported. For example, at FGF14 the
+  aligner places most of the 17-bp replacement on the flank and its last bases (`ACCCC`) in the
+  repeat, so it is reported as `chr13-102161566-GAAGAAAGA-TAGTCATAGT`.
 
 ## Catalog field passthrough
 

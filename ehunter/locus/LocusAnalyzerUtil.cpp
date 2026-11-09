@@ -63,7 +63,7 @@ void initializeLocusAnalyzerThread(
     BamletWriterPtr bamletWriter, std::vector<std::unique_ptr<LocusAnalyzer>>& locusAnalyzers,
     LocusInitThreadSharedData& locusInitThreadSharedData,
     std::vector<LocusThreadLocalData>& locusInitThreadLocalDataPool,
-    bool enableAlleleQualityMetrics, bool enableConsensusSequences)
+    bool enableAlleleQualityMetrics, bool enableConsensusSequences, bool enableFlankingVariants)
 {
     LocusThreadLocalData& locusThreadData(locusInitThreadLocalDataPool[threadIndex]);
     std::string locusId = "Unknown";
@@ -86,7 +86,7 @@ void initializeLocusAnalyzerThread(
             const auto& locusSpec(regionCatalog[locusIndex]);
             locusId = locusSpec.locusId();
 
-            locusAnalyzers[locusIndex].reset(new LocusAnalyzer(locusSpec, heuristicParams, bamletWriter, enableAlleleQualityMetrics, enableConsensusSequences));
+            locusAnalyzers[locusIndex].reset(new LocusAnalyzer(locusSpec, heuristicParams, bamletWriter, enableAlleleQualityMetrics, enableConsensusSequences, enableFlankingVariants));
         }
     }
     catch (const std::exception& e)
@@ -113,7 +113,7 @@ void initializeLocusAnalyzerThread(
 
 std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
     const RegionCatalog& regionCatalog, const HeuristicParameters& heuristicParams, BamletWriterPtr bamletWriter,
-    const int threadCount, bool enableAlleleQualityMetrics, bool enableConsensusSequences)
+    const int threadCount, bool enableAlleleQualityMetrics, bool enableConsensusSequences, bool enableFlankingVariants)
 {
     assert(threadCount >= 1);
 
@@ -129,7 +129,8 @@ std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
         initThreads.emplace_back(
             initializeLocusAnalyzerThread, threadIndex, std::cref(regionCatalog), std::cref(heuristicParams),
             bamletWriter, std::ref(locusAnalyzers), std::ref(locusInitThreadSharedData),
-            std::ref(locusInitThreadLocalDataPool), enableAlleleQualityMetrics, enableConsensusSequences);
+            std::ref(locusInitThreadLocalDataPool), enableAlleleQualityMetrics, enableConsensusSequences,
+            enableFlankingVariants);
     }
 
     // Wait for all workers to complete before inspecting their exception slots.

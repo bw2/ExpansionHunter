@@ -112,6 +112,18 @@ public:
 
     const NodeToRegionAssociation& referenceProjectionOfNodes() const { return referenceRegions_; }
 
+    // The reference bases just after the left flank (the first base of the locus) and just before the right flank
+    // (the last base of the locus), used by --output-flanking-variants: the latter is the VCF anchor base of an indel
+    // at the very start of the right flank, and both show which indels at the edge of a flank could equally well be
+    // placed in the repeat. 'N' when the flanks were not added from the reference.
+    char referenceBaseAfterLeftFlank() const { return referenceBaseAfterLeftFlank_; }
+    char referenceBaseBeforeRightFlank() const { return referenceBaseBeforeRightFlank_; }
+    void setReferenceBasesNextToFlanks(char baseAfterLeftFlank, char baseBeforeRightFlank)
+    {
+        referenceBaseAfterLeftFlank_ = baseAfterLeftFlank;
+        referenceBaseBeforeRightFlank_ = baseBeforeRightFlank;
+    }
+
     // True for SMN loci, whose copy-number test needs sample-level depth rather than the local flank
     // estimate. NOTE: this only takes effect if a caller supplies a depth to LocusAnalyzer::analyze, and
     // no analysis mode computes one -- every call site passes boost::none, exactly as upstream v5.0.0
@@ -144,6 +156,8 @@ private:
     graphtools::Graph regionGraph_;
     std::vector<VariantSpecification> variantSpecs_;
     NodeToRegionAssociation referenceRegions_;
+    char referenceBaseAfterLeftFlank_ = 'N';
+    char referenceBaseBeforeRightFlank_ = 'N';
     GenotyperParameters parameters_;
     bool useRFC1MotifAnalysis_;
     std::vector<PlotReadVisualization> plotConditions_;

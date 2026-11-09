@@ -33,6 +33,7 @@
 #include "genotyping/RepeatGenotype.hh"
 #include "genotyping/SmallVariantGenotype.hh"
 #include "locus/AlleleQualityMetrics.hh"
+#include "locus/FlankingVariants.hh"
 #include "locus/MotifComposition.hh"
 #include "locus/RFC1Status.hh"
 
@@ -135,6 +136,15 @@ public:
 
     const boost::optional<MotifComposition>& motifComposition() const { return motifComposition_; }
 
+    // Small variants in the locus flanks with their REF and ALT read counts for each allele, set only under
+    // --output-flanking-variants (see locus/FlankingVariants.hh). Emitted as "FlankingVariants".
+    void setFlankingVariants(std::vector<AlleleFlankingVariants> flankingVariants)
+    {
+        flankingVariants_ = std::move(flankingVariants);
+    }
+
+    const boost::optional<std::vector<AlleleFlankingVariants>>& flankingVariants() const { return flankingVariants_; }
+
     // Compares core findings only: read counts and genotype.
     // Deliberately excludes:
     // - alleleCount_: derived from sample sex and chromosome type, not from the findings themselves
@@ -142,6 +152,7 @@ public:
     // - rfc1Status_, alleleQualityMetrics_: post-hoc enrichment fields
     // - consensusSequences_, consensusReadSupport_: derived consensus annotations
     // - motifComposition_: derived motif counts
+    // - flankingVariants_: derived flank variant counts
     // These excluded fields are either metadata, derived from external context, or
     // post-hoc annotations that don't represent the fundamental repeat findings.
     bool operator==(const RepeatFindings& other) const
@@ -168,6 +179,7 @@ private:
     bool reservoirSampling_ = false;                 // read set reservoir-sampled due to the --max-depth cap
     boost::optional<double> genotypingTimeMillis_;   // thread-CPU full-genotyping time (ms), --output-genotype-timing
     boost::optional<MotifComposition> motifComposition_; // --output-motif-composition
+    boost::optional<std::vector<AlleleFlankingVariants>> flankingVariants_; // --output-flanking-variants
 };
 
 class SmallVariantFindings : public VariantFindings

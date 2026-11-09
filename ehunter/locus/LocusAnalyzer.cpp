@@ -28,6 +28,7 @@
 #include "locus/RFC1MotifAnalysis.hh"
 #include "locus/RepeatAnalyzer.hh"
 #include "locus/SmallVariantAnalyzer.hh"
+#include "reviewer/FlankingVariantsByAllele.hh"
 #include "reviewer/GenerateSvg.hh"
 #include "reviewer/LanePlot.hh"
 #include "reviewer/Metrics.hh"
@@ -54,18 +55,52 @@ static bool hasMoreThanOneRepeatVariant(const LocusSpecification& locusSpec)
     }) > 1;
 }
 
+// The locus's repeat variant, or nullptr unless the locus has exactly one
+static const VariantSpecification* findOnlyRepeatVariantSpec(const LocusSpecification& locusSpec)
+{
+    const VariantSpecification* repeatVariantSpec = nullptr;
+    for (const auto& variantSpec : locusSpec.variantSpecs())
+    {
+        if (variantSpec.classification().type == VariantType::kRepeat)
+        {
+            if (repeatVariantSpec)
+            {
+                return nullptr;
+            }
+            repeatVariantSpec = &variantSpec;
+        }
+    }
+    return repeatVariantSpec;
+}
+
+// The findings of the locus's repeat variant, or nullptr unless the locus has exactly one repeat variant
+static RepeatFindings* findOnlyRepeatFindings(const LocusSpecification& locusSpec, LocusFindings& locusFindings)
+{
+    const VariantSpecification* repeatVariantSpec = findOnlyRepeatVariantSpec(locusSpec);
+    if (!repeatVariantSpec)
+    {
+        return nullptr;
+    }
+    const auto findingsIt = locusFindings.findingsForEachVariant.find(repeatVariantSpec->id());
+    return findingsIt == locusFindings.findingsForEachVariant.end()
+        ? nullptr
+        : dynamic_cast<RepeatFindings*>(findingsIt->second.get());
+}
+
 LocusAnalyzer::LocusAnalyzer(LocusSpecification locusSpec, const HeuristicParameters& params, BamletWriterPtr writer,
-                             bool enableAlleleQualityMetrics, bool enableConsensusSequences)
+                             bool enableAlleleQualityMetrics, bool enableConsensusSequences,
+                             bool enableFlankingVariants)
     : locusSpec_(std::move(locusSpec))
     , enableAlleleQualityMetrics_(enableAlleleQualityMetrics)
     , enableConsensusSequences_(enableConsensusSequences)
+    , enableFlankingVariants_(enableFlankingVariants)
     // Create buffer if requiresAlignmentBuffer() (RFC1, plot-all policy, or has plot conditions)
-    // or if allele quality metrics or consensus sequences are enabled (both run via the reviewer
-    // workflow, which needs the buffer). Keep these independent so e.g. --dont-output-quality-metrics
+    // or if allele quality metrics, consensus sequences or flanking variants are enabled (all run via the
+    // reviewer workflow, which needs the buffer). Keep these independent so e.g. --dont-output-quality-metrics
     // does not also suppress consensus output. Loci with more than one repeat variant always get the
     // buffer, since the reviewer workflow also decides how their repeat alleles pair onto haplotypes.
     , alignmentBuffer_((locusSpec_.requiresAlignmentBuffer() || enableAlleleQualityMetrics || enableConsensusSequences
-                        || hasMoreThanOneRepeatVariant(locusSpec_))
+                        || enableFlankingVariants || hasMoreThanOneRepeatVariant(locusSpec_))
                        ? std::make_shared<locus::AlignmentBuffer>() : nullptr)
     , aligner_(locusSpec_.locusId(), &locusSpec_.regionGraph(), params, std::move(writer), alignmentBuffer_)
     , statsCalc_(locusSpec_.typeOfChromLocusLocatedOn(), locusSpec_.regionGraph())
@@ -227,7 +262,7 @@ LocusFindings LocusAnalyzer::analyze(
     const bool phaseRepeatAlleles = hasMoreThanOneRepeatVariant(locusSpec_);
     const bool needsReviewer = alignmentBuffer_ &&
         (reviewer::shouldPlotReadVisualization(locusSpec_, locusFindings)
-         || ((enableAlleleQualityMetrics_ || enableConsensusSequences_ || phaseRepeatAlleles)
+         || ((enableAlleleQualityMetrics_ || enableConsensusSequences_ || enableFlankingVariants_ || phaseRepeatAlleles)
              && alignmentBuffer_->getBuffer().size() > 0));
 
     // The reviewer workflow's path-construction step (getCandidateDiplotypes) throws if any of the
@@ -515,24 +550,12 @@ LocusFindings LocusAnalyzer::analyze(
     // which is not meaningful to attach to individual variant findings.
     if (reviewerContext && !reviewerContext->consensusResult.alleleConsensuses.empty())
     {
-        // Count repeat variants and find the single repeat variant ID if there's only one
-        int repeatVariantCount = 0;
-        std::string singleRepeatVariantId;
-        for (const auto& variantSpec : locusSpec_.variantSpecs())
-        {
-            if (variantSpec.classification().type == VariantType::kRepeat)
-            {
-                repeatVariantCount++;
-                singleRepeatVariantId = variantSpec.id();
-            }
-        }
-
-        if (repeatVariantCount > 1)
+        if (hasMoreThanOneRepeatVariant(locusSpec_))
         {
             spdlog::warn("Skipping consensus for locus {} - multiple repeat variants not supported",
                          locusSpec_.locusId());
         }
-        else if (repeatVariantCount == 1)
+        else if (RepeatFindings* repeatFindings = findOnlyRepeatFindings(locusSpec_, locusFindings))
         {
             // Extract consensus strings and read support from the consensus result
             std::vector<std::string> consensusStrings;
@@ -544,21 +567,40 @@ LocusFindings LocusAnalyzer::analyze(
             }
 
             // Attach consensus sequences and read support only to the single repeat variant
-            auto it = locusFindings.findingsForEachVariant.find(singleRepeatVariantId);
-            if (it != locusFindings.findingsForEachVariant.end())
-            {
-                RepeatFindings* repeatFindings = dynamic_cast<RepeatFindings*>(it->second.get());
-                if (repeatFindings)
-                {
-                    repeatFindings->setConsensusSequences(consensusStrings);
-                    repeatFindings->setConsensusReadSupport(consensusReadSupport);
-                }
-            }
+            repeatFindings->setConsensusSequences(consensusStrings);
+            repeatFindings->setConsensusReadSupport(consensusReadSupport);
 
             spdlog::debug("Consensus sequences for locus {}: {} alleles, {} total anchors",
                           locusSpec_.locusId(),
                           consensusStrings.size(),
                           reviewerContext->consensusResult.totalAnchors);
+        }
+    }
+
+    // --output-flanking-variants: only for loci with a single repeat, whose reads' allele paths differ in that repeat
+    // alone
+    if (enableFlankingVariants_ && reviewerContext)
+    {
+        const VariantSpecification* repeatVariantSpec = findOnlyRepeatVariantSpec(locusSpec_);
+        RepeatFindings* repeatFindings = findOnlyRepeatFindings(locusSpec_, locusFindings);
+        if (repeatFindings && repeatFindings->optionalGenotype())
+        {
+            auto flankingVariants = reviewer::findFlankingVariantsByAllele(
+                locusSpec_.regionGraph(), locusSpec_.referenceProjectionOfNodes(),
+                locusSpec_.referenceBaseAfterLeftFlank(), locusSpec_.referenceBaseBeforeRightFlank(),
+                repeatVariantSpec->nodes().front(),
+                *repeatFindings->optionalGenotype(), reviewerContext->paths, reviewerContext->fragById,
+                reviewerContext->fragPathAlignsById, reviewerContext->fragAssignment,
+                reviewerContext->fragIdsPlacedOnOnePathByAlignmentScore);
+            if (flankingVariants)
+            {
+                repeatFindings->setFlankingVariants(std::move(*flankingVariants));
+            }
+            else
+            {
+                spdlog::debug("Skipping flanking variants for locus {}: the reads can't be split by allele because "
+                              "both alleles exceed the REViewer path length cap", locusSpec_.locusId());
+            }
         }
     }
 

@@ -22,8 +22,10 @@
 
 #include "reviewer/ReviewerWorkflow.hh"
 
+#include <algorithm>
 #include <cstdlib>
 #include <optional>
+#include <set>
 #include <stdexcept>
 
 #include "spdlog/spdlog.h"
@@ -251,6 +253,22 @@ std::optional<ReviewerContext> runReviewerWorkflow(
     auto pairPathAlignById = project(topDiplotype, fragById);
     spdlog::debug("REViewer workflow: Projected {} read pairs", pairPathAlignById.size());
 
+    // The fragments that score best on one path alone, before the fragment-length filter below picks a path for
+    // the fragments that score equally well on several
+    std::set<std::string> fragIdsPlacedOnOnePathByAlignmentScore;
+    for (const auto& fragIdAndPairPathAlign : pairPathAlignById)
+    {
+        const auto& readAligns = fragIdAndPairPathAlign.second.readAligns;
+        const bool fitsOnePath = !readAligns.empty()
+            && std::all_of(readAligns.begin(), readAligns.end(), [&readAligns](const ReadPathAlign& readAlign) {
+                   return readAlign.pathIndex == readAligns.front().pathIndex;
+               });
+        if (fitsOnePath)
+        {
+            fragIdsPlacedOnOnePathByAlignmentScore.insert(fragIdAndPairPathAlign.first);
+        }
+    }
+
     // Filter by fragment length
     auto fragPathAlignsById = resolveByFragLen(effectiveMeanFragLen, topDiplotype, pairPathAlignById);
     spdlog::debug("REViewer workflow: Resolved {} fragment alignments", fragPathAlignsById.size());
@@ -286,6 +304,7 @@ std::optional<ReviewerContext> runReviewerWorkflow(
         std::move(fragAssignment),
         std::move(consensusResult));
     reviewerContext.diplotypeChoiceSupport = diplotypeChoiceSupport;
+    reviewerContext.fragIdsPlacedOnOnePathByAlignmentScore = std::move(fragIdsPlacedOnOnePathByAlignmentScore);
     return reviewerContext;
 }
 

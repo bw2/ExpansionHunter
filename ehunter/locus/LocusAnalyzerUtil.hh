@@ -34,10 +34,12 @@ namespace locus
 /// \param[in] threadCount Number of threads to distribute initialization over
 /// \param[in] enableAlleleQualityMetrics Whether to enable alignment buffer for quality metrics
 /// \param[in] enableConsensusSequences Whether to build consensus allele sequences
+/// \param[in] enableFlankingVariants Whether to find variants in the locus flanks (--output-flanking-variants)
 ///
 std::vector<std::unique_ptr<LocusAnalyzer>> initializeLocusAnalyzers(
     const RegionCatalog& regionCatalog, const HeuristicParameters& heuristicParams, BamletWriterPtr alignmentWriter,
-    int threadCount, bool enableAlleleQualityMetrics = true, bool enableConsensusSequences = true);
+    int threadCount, bool enableAlleleQualityMetrics = true, bool enableConsensusSequences = true,
+    bool enableFlankingVariants = false);
 
 }
 }

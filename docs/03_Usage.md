@@ -90,6 +90,11 @@ optional arguments.
   `seeking` and `optimized-streaming` analysis modes (not `streaming`).
   Enabling motif composition output increases runtime by ~2% and doesn't affect memory usage. The output JSON
   file size increases by 5% to 10%.
+* `--output-flanking-variants` Add a `FlankingVariants` section to the JSON output, reporting any SNVs and
+  indels detected in the flanks of each locus, along with the number of reads that support each variant
+  allele, phased with the repeat alleles (see [Flanking variants](05_OutputJsonFiles.md#flanking-variants)).
+  In `optimized-streaming` mode, this output is only computed for loci that use the full genotyper; add
+  `--genotyping-approach only-full` to genotype every locus that way.
 * `--resume` Make an interrupted run restartable. Works with the `optimized-streaming`
   analysis mode. See [Resuming an interrupted run](#resuming-an-interrupted-run)
   below.

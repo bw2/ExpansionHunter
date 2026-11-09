@@ -263,6 +263,37 @@ static Json encodeMotifCompositionCounts(const MotifCompositionCounts& counts, c
     return record;
 }
 
+// The FlankingVariants record: one entry per repeat allele, shorter allele first. Each variant is written as a
+// gnomAD-style "<contig>-<1-based position>-<REF>-<ALT>" string. HaplotypeRegion is null when no flank position is
+// covered by enough of the allele's reads.
+static Json encodeFlankingVariants(
+    const ReferenceContigInfo& contigInfo, int32_t contigIndex, const vector<AlleleFlankingVariants>& alleles)
+{
+    const string& contigName = contigInfo.getContigName(contigIndex);
+    Json alleleRecords = Json::array();
+    for (const auto& allele : alleles)
+    {
+        Json variantRecords = Json::array();
+        for (const auto& counts : allele.variants)
+        {
+            Json variantRecord;
+            variantRecord["Variant"] = contigName + "-" + to_string(counts.variant.position + 1) + "-"
+                + counts.variant.refAllele + "-" + counts.variant.altAllele;
+            variantRecord["RefReads"] = counts.refReads;
+            variantRecord["AltReads"] = counts.altReads;
+            variantRecords.push_back(variantRecord);
+        }
+
+        Json alleleRecord;
+        alleleRecord["AlleleSize"] = allele.alleleSize;
+        alleleRecord["HaplotypeRegion"]
+            = allele.haplotypeRegion ? Json(encode(contigInfo, *allele.haplotypeRegion)) : Json(nullptr);
+        alleleRecord["Variants"] = variantRecords;
+        alleleRecords.push_back(alleleRecord);
+    }
+    return alleleRecords;
+}
+
 void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
 {
     assert(variantSpec_.classification().type == VariantType::kRepeat);
@@ -454,6 +485,14 @@ void VariantJsonWriter::visit(const RepeatFindings* repeatFindingsPtr)
                 = encodeMotifCompositionCounts(motifComposition->allele2, motifComposition->motifs);
         }
         record_["MotifComposition"] = motifCompositionRecord;
+    }
+
+    // Only emitted under --output-flanking-variants.
+    const auto& flankingVariants = repeatFindings.flankingVariants();
+    if (flankingVariants)
+    {
+        record_["FlankingVariants"]
+            = encodeFlankingVariants(contigInfo_, variantSpec_.referenceLocus().contigIndex(), *flankingVariants);
     }
 }
 

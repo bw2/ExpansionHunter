@@ -239,7 +239,8 @@ public:
         bool initSkipMissingGenotypes = false, OptimizedStreamingGenotypingApproach initOptimizedStreamingGenotypingApproach = OptimizedStreamingGenotypingApproach::kAuto,
         bool initEnableConsensusSequences = true, int initMaxDepth = 150, bool initOutputGenotypeTiming = false,
         bool initResume = false, size_t initAbortAfterLoci = 0,
-        MotifCompositionMode initMotifCompositionMode = MotifCompositionMode::kOff)
+        MotifCompositionMode initMotifCompositionMode = MotifCompositionMode::kOff,
+        bool initEnableFlankingVariants = false)
         : threadCount(initThreadCount)
         , enableBamletOutput(initEnableBamletOutput)
         , enableAlleleQualityMetrics_(initEnableAlleleQualityMetrics)
@@ -253,6 +254,7 @@ public:
         , resume_(initResume)
         , abortAfterLoci_(initAbortAfterLoci)
         , motifCompositionMode_(initMotifCompositionMode)
+        , enableFlankingVariants_(initEnableFlankingVariants)
         , inputPaths_(std::move(inputPaths))
         , sortCatalogBy_(sortCatalogBy)
         , outputPaths_(std::move(outputPaths))
@@ -311,6 +313,9 @@ public:
     size_t abortAfterLoci() const { return abortAfterLoci_; }
     // --output-motif-composition: write motif and motif-pair counts for eligible repeat loci to the JSON output.
     MotifCompositionMode motifCompositionMode() const { return motifCompositionMode_; }
+    // --output-flanking-variants: write the small variants in each locus's flanks, with REF and ALT read counts for
+    // each repeat allele, to the JSON output (see reviewer/FlankingVariantsByAllele.hh).
+    bool enableFlankingVariants() const { return enableFlankingVariants_; }
 
     // The genotype-quality model used to annotate output (embedded by default, or loaded
     // from --genotype-quality-model). Null when no model is available, in which case no
@@ -339,6 +344,7 @@ private:
     bool resume_;
     size_t abortAfterLoci_;
     MotifCompositionMode motifCompositionMode_;
+    bool enableFlankingVariants_;
     InputPaths inputPaths_;
     SortCatalogBy sortCatalogBy_;
     OutputPaths outputPaths_;

@@ -91,6 +91,7 @@ struct UserParameters
     bool resume = false;
     size_t abortAfterLoci = 0;
     string motifCompositionMode;
+    bool outputFlankingVariants = false;
 };
 
 boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
@@ -121,6 +122,7 @@ boost::optional<UserParameters> tryParsingUserParameters(int argc, char** argv)
         ("skip-hom-ref", po::bool_switch(&params.skipHomRef), "Exclude loci with homozygous reference genotypes from the VCF and JSON outputs")
         ("skip-missing-genotypes", po::bool_switch(&params.skipMissingGenotypes), "Exclude loci with missing genotypes (eg. due to low coverage) from the VCF and JSON outputs")
         ("output-motif-composition", po::value<string>(&params.motifCompositionMode), "Add a MotifComposition record (counts of each motif and of each pair of adjacent motifs in the repeat sequence of the reads, per locus and, where the alleles differ enough in length, per allele) to the JSON output for repeat loci whose motif is 2 bp or longer and at most a third of the read length. 'all-loci' adds it to every such locus; 'loci-with-non-ref-motifs' adds it only where the reads contain a motif that the reference repeat sequence does not (a catalog motif made only of A, C, G and T always counts as present); 'loci-with-known-motifs' adds it only to loci whose catalog record has a non-empty KnownMotifs list. Only works in seeking and optimized-streaming modes, and only for loci with a single repeat.")
+        ("output-flanking-variants", po::bool_switch(&params.outputFlankingVariants), "Add a FlankingVariants section to the JSON output, containing the SNVs and indels in the flanks of each locus, along with the number of reads that support each variant allele. Reads are assigned to alleles by their alignment to each allele's sequence, so the variants are phased with the repeat alleles. Only for loci with a single repeat that the full genotyper genotypes; in optimized-streaming mode, add --genotyping-approach only-full to genotype every locus that way.")
     ;
     // clang-format on
 
@@ -671,7 +673,7 @@ boost::optional<ProgramParameters> tryLoadingProgramParameters(int argc, char** 
         userParams.skipMissingGenotypes, decodeOptimizedStreamingGenotypingApproach(userParams.genotypingApproach),
         !userParams.disableConsensusSequences,
         userParams.maxDepth, userParams.outputGenotypeTiming, userParams.resume, userParams.abortAfterLoci,
-        decodeMotifCompositionMode(userParams.motifCompositionMode));
+        decodeMotifCompositionMode(userParams.motifCompositionMode), userParams.outputFlankingVariants);
     programParameters.setGenotypeQualityModel(std::move(genotypeQualityModel));
     return programParameters;
 }

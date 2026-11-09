@@ -345,6 +345,7 @@ add_executable(UnitTests
         tests/ConcurrentQueueTest.cpp
         tests/ConsensusSequenceTest.cpp
         tests/CountTableTest.cpp
+        tests/FlankingVariantsByAlleleTest.cpp
         tests/FragLogliksTest.cpp
         tests/GenomeMaskTest.cpp
         tests/GenotypeQualityModelTest.cpp
