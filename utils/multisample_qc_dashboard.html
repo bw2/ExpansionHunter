@@ -1,0 +1,1657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="dashboard-token" content="__TOKEN__">
+<title>__TITLE__</title>
+<style>
+:root {
+  --text: #1f2328;
+  --muted: #59636e;
+  --border: #d1d9e0;
+  --panel: #f6f8fa;
+  --accent: #0969da;
+  --danger: #a40e26;
+  --base-point: #8c959f;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+       font-size: 14px; line-height: 1.5; color: var(--text); background: #ffffff; }
+header.top { position: sticky; top: 0; z-index: 20; background: #ffffff; border-bottom: 1px solid var(--border); }
+header.top .bar { max-width: 1320px; margin: 0 auto; padding: 8px 24px; display: flex; flex-wrap: wrap;
+                  align-items: center; gap: 6px 18px; }
+header.top .brand { font-weight: 600; }
+header.top a { color: var(--accent); text-decoration: none; }
+header.top a:hover { text-decoration: underline; }
+header.top .spacer { flex: 1; }
+#save-status { color: var(--muted); font-size: 12.5px; }
+#save-status.error { color: var(--danger); }
+main { max-width: 1320px; margin: 0 auto; padding: 8px 24px 80px; }
+h1 { font-size: 26px; margin: 20px 0 2px; }
+h2 { font-size: 20px; margin: 40px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); scroll-margin-top: 56px; }
+h3 { font-size: 16px; margin: 28px 0 8px; scroll-margin-top: 56px; display: flex; align-items: center; gap: 8px; }
+.subtitle { color: var(--muted); margin: 0 0 16px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; }
+.panel ul { margin: 4px 0; padding-left: 18px; }
+.panel li { margin: 3px 0; }
+.panel li ul { color: var(--muted); }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 2px; }
+button { padding: 4px 11px; border: 1px solid var(--border); border-radius: 6px; background: #ffffff; cursor: pointer;
+         font: inherit; color: var(--text); }
+button:hover:not(:disabled) { background: var(--panel); }
+button:disabled { color: var(--base-point); cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+button.primary:hover:not(:disabled) { background: #0757ba; }
+button.small { padding: 1px 8px; font-size: 12.5px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 4px; background: #ffffff;
+        scroll-margin-top: 56px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card h4 { margin: 0; font-size: 14.5px; display: flex; align-items: center; gap: 6px; }
+.card .card-subtitle { color: var(--muted); font-size: 12.5px; margin: 2px 0 2px; min-height: 19px; }
+.card .button-row { margin: 4px 0; }
+.plot { width: 100%; height: 380px; }
+.card.wide .plot { height: 480px; }
+.help { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none;
+        width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--base-point); color: var(--muted);
+        font-size: 11px; font-weight: 600; cursor: help; background: #ffffff; }
+.help:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.help .tip { display: none; position: absolute; top: 24px; left: -10px; z-index: 30; width: min(460px, 80vw);
+             background: #ffffff; color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+             box-shadow: 0 8px 24px rgba(31, 35, 40, 0.18); padding: 10px 14px; font-size: 13px; font-weight: 400;
+             line-height: 1.45; text-align: left; }
+.help:hover .tip, .help:focus .tip, .help:focus-within .tip { display: block; }
+.help .tip ul { margin: 0; padding-left: 18px; }
+.help .tip li { margin: 3px 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); margin: 6px 0 12px; }
+.legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px;
+               vertical-align: -1px; }
+.legend .dash { display: inline-block; width: 18px; border-top: 2px dashed var(--danger); margin-right: 5px;
+                vertical-align: 3px; }
+.legend .dotted { display: inline-block; width: 18px; border-top: 2px dotted var(--base-point); margin-right: 5px;
+                  vertical-align: 3px; }
+.switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.table-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.table-tools input { padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; min-width: 260px; font: inherit; }
+.table-tools .table-count { color: var(--muted); font-size: 12.5px; }
+.table-wrap { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+table.data { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+table.data th, table.data td { padding: 5px 9px; border-bottom: 1px solid var(--border); text-align: left;
+                               vertical-align: top; }
+table.data th { background: var(--panel); position: sticky; top: 0; cursor: pointer; white-space: nowrap;
+                user-select: none; z-index: 1; }
+table.data th.sorted-ascending::after { content: " \25B2"; font-size: 9px; }
+table.data th.sorted-descending::after { content: " \25BC"; font-size: 9px; }
+table.data td.number { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* the read lengths table and its cutoff lines, which snap to the boundaries between rows */
+.row-cutoff-table { position: relative; margin-bottom: 8px; }
+.row-cutoff-table table.data th { cursor: default; }
+.row-cutoff-table tr.excluded td { background: #fbeaec; color: var(--danger); }
+.row-cutoff-table tfoot td { color: var(--muted); }
+.row-cutoff-line { position: absolute; left: 0; right: 0; height: 13px; margin-top: -6px; cursor: ns-resize;
+                   touch-action: none; z-index: 2; }
+.row-cutoff-line::before { content: ""; position: absolute; left: 0; right: 0; top: 5px;
+                           border-top: 2.5px dashed var(--danger); }
+.row-cutoff-line:hover::before, .row-cutoff-line.dragging::before { border-top-width: 3.5px; }
+table.data td.nowrap { white-space: nowrap; }
+table.data tr:hover td { background: #f6f8fa; }
+td.reason { min-width: 320px; }
+td.reason .reason-text { margin-right: 6px; }
+td.reason .edited { display: inline-block; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+                    background: #ddf4ff; color: var(--accent); margin-right: 6px; }
+td.reason .icon { border: none; background: none; padding: 0 3px; cursor: pointer; color: var(--muted);
+                  font-size: 13px; }
+td.reason .icon:hover { color: var(--accent); background: none; }
+td.reason input { width: calc(100% - 130px); min-width: 200px; padding: 2px 6px; border: 1px solid var(--accent);
+                  border-radius: 4px; font: inherit; }
+.empty { color: var(--muted); font-style: italic; }
+.id-list { font-size: 12.5px; color: var(--muted); word-break: break-word; }
+ul.plain { margin: 4px 0; padding-left: 20px; }
+ul.plain li { margin: 3px 0; }
+.context-menu { position: fixed; z-index: 50; min-width: 240px; background: #ffffff; border: 1px solid var(--border);
+                border-radius: 8px; box-shadow: 0 8px 24px rgba(31, 35, 40, 0.2); padding: 4px 0; }
+.context-menu .menu-title { padding: 4px 12px 6px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border);
+                            margin-bottom: 4px; }
+.context-menu button { display: block; width: 100%; text-align: left; border: none; border-radius: 0; padding: 6px 12px; }
+.toast { position: fixed; right: 20px; bottom: 20px; z-index: 60; max-width: min(720px, 90vw); background: var(--text);
+         color: #ffffff; padding: 10px 14px; border-radius: 8px; box-shadow: 0 8px 24px rgba(31, 35, 40, 0.3);
+         font-size: 13px; word-break: break-all; }
+.toast.error { background: var(--danger); }
+#loading { color: var(--muted); padding: 40px 0; }
+</style>
+<script src="plotly.js?token=__TOKEN__"></script>
+</head>
+<body>
+<header class="top"><div class="bar">
+<span class="brand">ExpansionHunter QC</span>
+<a href="#summary">Summary</a><a href="#exclusions">Exclusions</a><a href="#selection">Selection</a>
+<a href="#samples">Samples</a><a href="#loci">Loci</a><a href="#methods">Methods</a>
+<span class="spacer"></span>
+<span id="save-status"></span>
+<button class="primary" id="export-samples" disabled>Export excluded samples</button>
+<button class="primary" id="export-loci" disabled>Export excluded loci</button>
+</div></header>
+<main>
+<h1>ExpansionHunter multi-sample QC</h1>
+<p class="subtitle" id="page-subtitle"></p>
+<div id="loading">Loading the QC stats...</div>
+<div id="content" hidden>
+<h2 id="summary">Filtering Summary</h2>
+<div class="panel" id="summary-box"></div>
+
+<h2 id="exclusions">Samples and loci that don't pass your selected filtering thresholds</h2>
+<h3>Excluded samples</h3>
+<div id="excluded-samples-table"></div>
+<div class="button-row">
+<button id="reset-sample-thresholds">Reset all sample thresholds</button>
+<button id="reset-manually-excluded-samples">Reset manually excluded samples</button>
+</div>
+<h3>Excluded loci</h3>
+<div id="excluded-loci-table"></div>
+<div class="button-row">
+<button id="reset-locus-thresholds">Reset all locus thresholds</button>
+<button id="reset-manually-excluded-loci">Reset manually excluded loci</button>
+</div>
+
+<h2 id="selection">Manually Selected Samples and Loci</h2>
+<div id="selection-box"></div>
+
+<h2 id="filtering-interface-overview">Filtering Interface Overview</h2>
+<div class="panel">
+<ul>
+<li>Drag the dashed red lines to adjust thresholds: points beyond the thresholds will be added to the Excluded list.</li>
+<li>Dotted gray lines are the suggested thresholds, with points beyond suggested thresholds appearing in orange.
+Each suggested threshold is <span id="overview-iqr-multiplier"></span> times the interquartile range below the 25th
+percentile or above the 75th percentile of the metric's values on the plotted scale (Tukey's fences). The loci's call
+rate gets a fixed suggested threshold of <span id="overview-suggested-min-locus-call-rate"></span> instead, since most
+loci have a call rate of 1.</li>
+<li>Shift-click a point to select it, or shift-drag a box to select multiple points. Selected points will appear blue
+on every plot.</li>
+<li>Right-click selected point(s) and choose "Toggle..." to manually add or remove points from the Exclude list. That overrides
+the thresholds until you toggle it again or clear it.</li>
+<li>Edit the reason for an exclusion with the pencil in the tables above, then use the export buttons at the top to
+export the Exclusion lists. They can then be used as inputs to <code>generate_multisample_tsv.py</code>
+(<code>--samples-to-exclude</code> and <code>--loci-to-exclude</code>).</li>
+<li>Everything is saved as you go and restored whenever the dashboard is restarted on the same input file.</li>
+</ul>
+</div>
+
+<h2 id="samples">Samples</h2>
+<div class="legend" id="legend"></div>
+<div id="sample-sections"></div>
+
+<h2 id="loci">Loci</h2>
+<p class="subtitle">One point per locus. Loci with more than one repeat (compound locus definitions, such as HTT's
+CAG and CCG repeats) are left out (see Methods). The locus metrics include every sample in the QC stats file, excluded
+or not.</p>
+<div class="cards" id="locus-cards"></div>
+
+<h2 id="methods">Methods</h2>
+<div id="methods-box"></div>
+</div>
+</main>
+<div class="context-menu" id="context-menu" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<script>
+(function () {
+  "use strict";
+  const token = document.querySelector('meta[name="dashboard-token"]').content;
+  const COLORS = {
+    base: "#8c959f", suggested: "#e69f00", excludedByThisPlot: "#a40e26", excludedElsewhere: "#f4a3a8",
+    selected: "#0969da", manualOutline: "#1f2328", violinFill: "rgba(76, 114, 176, 0.14)",
+    violinLine: "rgba(76, 114, 176, 0.8)", suggestedLine: "#8c959f", karyotypeLine: "#b7bfc7",
+  };
+  const PLOT_FONT = {family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif', size: 12,
+                     color: "#1f2328"};
+  // Plots with more points than this are drawn with WebGL, which stays fast with hundreds of thousands of points, and
+  // purged when scrolled far away, since a browser allows only about 16 WebGL plots at once
+  const MAX_POINTS_WITHOUT_WEBGL = 3000;
+  const TABLE_PAGE_SIZE = 25;
+  const MAX_IDS_LISTED = 200;
+  const SAVE_DELAY_MS = 600;
+  let data;
+  let kinds;
+  let shiftKeyIsDown = false;
+
+  function withToken(path) {
+    return path + "?token=" + encodeURIComponent(token);
+  }
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, function (character) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[character];
+    });
+  }
+  // 4 significant digits, whole numbers with thousands separators from 1,000 up, and for fractions just below 1 the
+  // digits that differ from 1 (such as 0.99877), since that is where call rates differ
+  function formatNumber(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      return "";
+    }
+    if (Math.abs(value) >= 1000) {
+      return Math.round(value).toLocaleString("en-US");
+    }
+    if (value > 0.99 && value < 1) {
+      const digits = Math.min(10, Math.ceil(-Math.log10(1 - value)) + 3);
+      return value.toFixed(digits).replace(/0+$/, "");
+    }
+    return String(Number(value.toPrecision(4)));
+  }
+  function roundLikeShown(value) {
+    return Number(formatNumber(value).replace(/,/g, ""));
+  }
+  function pluralize(count, noun, pluralNoun) {
+    return count.toLocaleString("en-US") + " " + (count === 1 ? noun : (pluralNoun || noun + "s"));
+  }
+  function renderHelp(items) {
+    return '<span class="help" tabindex="0">?<span class="tip"><ul>' + items.map(function (item) {
+      return "<li>" + escapeHtml(item) + "</li>";
+    }).join("") + "</ul></span></span>";
+  }
+  function showToast(message, isError) {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.classList.toggle("error", Boolean(isError));
+    toast.hidden = false;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(function () { toast.hidden = true; }, isError ? 12000 : 8000);
+  }
+
+  // The scales the server computed the violins, boxes and axes on (transform_to_scale in
+  // start_multisample_qc_dashboard.py)
+  function transformToScale(scale, value) {
+    if (value === null || value === undefined) {
+      return NaN;
+    }
+    if (scale === "logit") {
+      const distance = data.settings.logitDistanceFrom0And1;
+      const clipped = Math.min(Math.max(value, distance), 1 - distance);
+      return Math.log(clipped / (1 - clipped));
+    }
+    if (scale === "log1p") {
+      return Math.log1p(value);
+    }
+    if (scale === "log") {
+      return Math.log(Math.max(value, data.settings.minRatioOnLogScale));
+    }
+    return value;
+  }
+  function transformBackFromScale(scale, value) {
+    if (scale === "logit") {
+      return 1 / (1 + Math.exp(-value));
+    }
+    if (scale === "log1p") {
+      return Math.expm1(value);
+    }
+    if (scale === "log") {
+      return Math.exp(value);
+    }
+    return value;
+  }
+  // a point's horizontal position in the plot: the same for a sample or repeat every time it is drawn
+  function getJitter(index) {
+    const pseudoRandom = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
+    return 0.06 + 0.34 * (pseudoRandom - Math.floor(pseudoRandom));
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // The samples and loci, and the rules that exclude them: a cutoff on each metric, and the sex check switch
+  // ---------------------------------------------------------------------------------------------------------------
+  function makeKind(name, keys, labels, metricPayloads) {
+    const kind = {
+      name: name,
+      noun: name === "sample" ? "sample" : "locus",
+      pluralNoun: name === "sample" ? "samples" : "loci",
+      // the IDs of the state file and the exports: SampleId, or the repeat's LocusId and VariantId joined by a tab
+      // (get_repeat_key in start_multisample_qc_dashboard.py)
+      keys: keys,
+      labels: labels,
+      count: keys.length,
+      indexByKey: new Map(keys.map(function (key, index) { return [key, index]; })),
+      rules: [],
+      manualStatus: new Map(),
+      reasonEdits: new Map(),
+      selected: new Set(),
+      ruleCount: new Uint8Array(keys.length),
+      controllers: [],
+    };
+    metricPayloads.forEach(function (payload) { kind.rules.push(makeMetricRule(kind, payload)); });
+    return kind;
+  }
+  function pluralizeKind(kind, count) {
+    return pluralize(count, kind.noun, kind.pluralNoun);
+  }
+
+  function makeMetricRule(kind, payload) {
+    const rule = {
+      kind: kind, id: payload.name, title: payload.title, payload: payload, isMetric: true,
+      values: payload.values, lower: null, upper: null,
+      // the cutoffs its plot has, in the order of their lines: "lower", "upper", both, or none
+      cutoffSides: {both: ["lower", "upper"], low: ["lower"], high: ["upper"]}[payload.cutoffSides] || [],
+      excludes: new Uint8Array(kind.count), beyondSuggestion: new Uint8Array(kind.count),
+      indices: [], scaled: new Float64Array(kind.count),
+    };
+    const [suggestedLower, suggestedUpper] = payload.suggestedCutoffs;
+    payload.values.forEach(function (value, index) {
+      rule.scaled[index] = transformToScale(payload.scale, value);
+      if (value === null) {
+        return;
+      }
+      rule.indices.push(index);
+      rule.beyondSuggestion[index] = (suggestedLower !== null && value < suggestedLower) ||
+        (suggestedUpper !== null && value > suggestedUpper) ? 1 : 0;
+    });
+    rule.recompute = function () {
+      for (const index of rule.indices) {
+        const value = rule.values[index];
+        rule.excludes[index] = (rule.lower !== null && value < rule.lower) ||
+          (rule.upper !== null && value > rule.upper) ? 1 : 0;
+      }
+    };
+    rule.describe = function (index) {
+      const value = rule.values[index];
+      const side = rule.lower !== null && value < rule.lower ? " < " + formatNumber(rule.lower) :
+        " > " + formatNumber(rule.upper);
+      return rule.title + " " + formatNumber(value) + side;
+    };
+    rule.hasSuggestion = suggestedLower !== null || suggestedUpper !== null;
+    rule.useSuggestion = function () {
+      rule.lower = suggestedLower;
+      rule.upper = suggestedUpper;
+    };
+    rule.clear = function () {
+      rule.lower = null;
+      rule.upper = null;
+    };
+    return rule;
+  }
+
+  function makeSexCheckRule(kind) {
+    const samples = data.samples;
+    const rule = {
+      kind: kind, id: "SexCheck", title: "Sex check", isMetric: false, isOn: false,
+      excludes: new Uint8Array(kind.count), beyondSuggestion: new Uint8Array(kind.count), indices: [],
+    };
+    samples.ids.forEach(function (_, index) {
+      if (samples.chrXCoverageRatio[index] !== null && samples.chrYCoverageRatio[index] !== null) {
+        rule.indices.push(index);
+      }
+      rule.beyondSuggestion[index] = samples.sexCheckProblem[index] ? 1 : 0;
+    });
+    rule.recompute = function () {
+      samples.sexCheckProblem.forEach(function (problem, index) {
+        rule.excludes[index] = rule.isOn && problem === "mismatch" ? 1 : 0;
+      });
+    };
+    rule.describe = function (index) {
+      return "Sex check: reported " + (samples.sex[index] || "unknown") + ", but chrX and chrY coverage suggest " +
+        samples.karyotype[index];
+    };
+    rule.clear = function () { rule.isOn = false; };
+    return rule;
+  }
+
+  function recomputeRuleCount(kind) {
+    kind.ruleCount.fill(0);
+    for (const rule of kind.rules) {
+      for (const index of rule.indices) {
+        kind.ruleCount[index] += rule.excludes[index];
+      }
+    }
+  }
+  function isExcluded(kind, index) {
+    const manualStatus = kind.manualStatus.get(index);
+    return manualStatus ? manualStatus === "excluded" : kind.ruleCount[index] > 0;
+  }
+  // whether a rule's cutoff excludes a point that wasn't kept by hand (which overrides the cutoffs)
+  function isExcludedByRule(kind, rule, index) {
+    return Boolean(rule.excludes[index]) && kind.manualStatus.get(index) !== "kept";
+  }
+  function getAutomaticReason(kind, index) {
+    if (kind.manualStatus.get(index) === "excluded") {
+      return "manually excluded";
+    }
+    return kind.rules.filter(function (rule) { return rule.excludes[index]; })
+      .map(function (rule) { return rule.describe(index); }).join("; ");
+  }
+  function getReason(kind, index) {
+    return kind.reasonEdits.has(index) ? kind.reasonEdits.get(index) : getAutomaticReason(kind, index);
+  }
+  function getExcludedIndices(kind) {
+    const indices = [];
+    for (let index = 0; index < kind.count; index++) {
+      if (isExcluded(kind, index)) {
+        indices.push(index);
+      }
+    }
+    return indices;
+  }
+
+  // A point's look on the plot of a rule: blue if selected; otherwise dark red if this plot's rule excludes it, pink
+  // if another rule (or a manual status) excludes it, and orange if it is only beyond this plot's suggestion. Points
+  // whose status was set by hand get a dark outline.
+  function getPointStyle(kind, rule, index) {
+    const manualStatus = kind.manualStatus.get(index);
+    let color = COLORS.base;
+    if (kind.selected.has(index)) {
+      color = COLORS.selected;
+    } else if (isExcludedByRule(kind, rule, index)) {
+      color = COLORS.excludedByThisPlot;
+    } else if (manualStatus === "excluded") {
+      color = COLORS.excludedElsewhere;
+    } else if (manualStatus !== "kept" && kind.ruleCount[index] > 0) {
+      color = COLORS.excludedElsewhere;
+    } else if (rule.beyondSuggestion[index]) {
+      color = COLORS.suggested;
+    }
+    return {color: color, hasOutline: Boolean(manualStatus), isHighlighted: color !== COLORS.base || Boolean(manualStatus)};
+  }
+  function describeStatus(kind, index) {
+    const manualStatus = kind.manualStatus.get(index);
+    const parts = [];
+    if (manualStatus) {
+      parts.push(manualStatus === "excluded" ? "Excluded by hand" : "Kept by hand");
+    }
+    const ruleReasons = kind.rules.filter(function (rule) { return rule.excludes[index]; })
+      .map(function (rule) { return rule.describe(index); });
+    if (ruleReasons.length) {
+      parts.push((manualStatus === "kept" ? "Thresholds overridden: " : "Excluded: ") + ruleReasons.join("; "));
+    }
+    if (kind.selected.has(index)) {
+      parts.push("Selected");
+    }
+    return parts.map(escapeHtml).join("<br>");
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Plots
+  // ---------------------------------------------------------------------------------------------------------------
+  function getHoverLabel(kind, index) {
+    if (kind.name === "sample") {
+      return "<b>" + escapeHtml(kind.labels[index]) + "</b>";
+    }
+    return "<b>" + escapeHtml(kind.labels[index]) + "</b><br>" + escapeHtml(data.loci.regions[index]) + " " +
+      escapeHtml(data.loci.motifs[index]) + "<br>Called in " + pluralize(data.loci.genotypedSampleCounts[index], "sample");
+  }
+  const PLOT_CONFIG = {
+    displaylogo: false, responsive: true, edits: {shapePosition: true},
+    modeBarButtonsToRemove: ["autoScale2d"], toImageButtonOptions: {format: "png", scale: 2},
+  };
+
+  function buildViolinFigure(controller) {
+    const rule = controller.rule;
+    const payload = rule.payload;
+    const pointType = controller.usesWebGl ? "scattergl" : "scatter";
+    const indices = rule.indices;
+    const traces = [];
+    if (payload.violin) {
+      const y = payload.violin.y;
+      traces.push({
+        type: "scatter", mode: "lines", fill: "toself", fillcolor: COLORS.violinFill, hoverinfo: "skip",
+        line: {color: COLORS.violinLine, width: 1},
+        x: payload.violin.density.map(function (density) { return -0.42 * density; }).concat([0, 0]),
+        y: y.concat([y[y.length - 1], y[0]]),
+      });
+    }
+    const [percentile5, firstQuartile, median, thirdQuartile, percentile95] = payload.box;
+    traces.push({
+      type: "box", x: [-0.05], q1: [firstQuartile], median: [median], q3: [thirdQuartile],
+      lowerfence: [percentile5], upperfence: [percentile95], width: 0.05, boxpoints: false, hoverinfo: "skip",
+      fillcolor: "#ffffff", line: {color: "#1f2328", width: 1.2},
+    });
+    payload.suggestedCutoffs.forEach(function (cutoff) {
+      if (cutoff !== null) {
+        const y = transformToScale(payload.scale, cutoff);
+        traces.push({type: "scatter", mode: "lines", x: [-0.5, 0.5], y: [y, y], hoverinfo: "skip",
+                     line: {color: COLORS.suggestedLine, width: 1.5, dash: "dot"}});
+      }
+    });
+    const manyPoints = indices.length > 300;
+    controller.pointSize = manyPoints ? 4 : 7;
+    controller.backgroundTraceIndex = traces.length;
+    traces.push({
+      type: pointType, mode: "markers", hovertemplate: "%{text}<extra></extra>",
+      x: indices.map(getJitter), y: indices.map(function (index) { return rule.scaled[index]; }),
+      customdata: indices,
+      text: indices.map(function (index) {
+        return getHoverLabel(rule.kind, index) + "<br>" + escapeHtml(payload.axisTitle) + ": " +
+          formatNumber(rule.values[index]);
+      }),
+      marker: {color: COLORS.base, size: controller.pointSize, opacity: manyPoints ? 0.7 : 0.9,
+               line: {color: "#ffffff", width: manyPoints ? 0 : 0.8}},
+      selected: {marker: {opacity: manyPoints ? 0.7 : 0.9}}, unselected: {marker: {opacity: manyPoints ? 0.7 : 0.9}},
+    });
+    controller.highlightTraceIndex = traces.length;
+    traces.push({type: pointType, mode: "markers", x: [], y: [], customdata: [], text: [],
+                 hovertemplate: "%{text}<extra></extra>", marker: {size: [], color: []}});
+    const axis = payload.axis;
+    const layout = {
+      margin: {l: 70, r: 12, t: 8, b: 8}, showlegend: false, hovermode: "closest", dragmode: "select",
+      paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff", font: PLOT_FONT,
+      hoverlabel: {bgcolor: "#ffffff", font: {size: 12}},
+      xaxis: {visible: false, range: [-0.5, 0.5], fixedrange: true},
+      yaxis: {title: {text: payload.axisTitle}, gridcolor: "#eaeef2", zeroline: false, range: axis.range.slice()},
+      shapes: getCutoffShapes(rule),
+    };
+    if (axis.tickvals) {
+      layout.yaxis.tickvals = axis.tickvals;
+      layout.yaxis.ticktext = axis.ticktext;
+    }
+    return {traces: traces, layout: layout, config: PLOT_CONFIG};
+  }
+
+  // The dashed red lines of a metric's cutoffs, one per side in rule.cutoffSides. A cutoff that is off is drawn at the
+  // edge of the axis.
+  function getCutoffShapes(rule) {
+    const range = rule.payload.axis.range;
+    return rule.cutoffSides.map(function (side) {
+      const cutoff = rule[side];
+      const y = cutoff === null ? range[side === "lower" ? 0 : 1] : transformToScale(rule.payload.scale, cutoff);
+      return {type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: y, y1: y,
+              line: {color: COLORS.excludedByThisPlot, width: 2.5, dash: "dash"}};
+    });
+  }
+
+  function buildSexCheckFigure(controller) {
+    const samples = data.samples;
+    const indices = controller.rule.indices;
+    const pointType = controller.usesWebGl ? "scattergl" : "scatter";
+    const symbolOfSex = function (index) {
+      const sex = (samples.sex[index] || "").toLowerCase();
+      return sex === "female" ? "circle" : sex === "male" ? "diamond" : "triangle-up";
+    };
+    controller.pointSize = indices.length > 300 ? 6 : 9;
+    controller.symbols = new Map(indices.map(function (index) { return [index, symbolOfSex(index)]; }));
+    const traces = [];
+    controller.backgroundTraceIndex = 0;
+    traces.push({
+      type: pointType, mode: "markers", hovertemplate: "%{text}<extra></extra>", showlegend: false,
+      x: indices.map(function (index) { return samples.chrXCoverageRatio[index]; }),
+      y: indices.map(function (index) { return samples.chrYCoverageRatio[index]; }),
+      customdata: indices,
+      text: indices.map(function (index) {
+        return "<b>" + escapeHtml(samples.ids[index]) + "</b><br>Reported sex: " +
+          escapeHtml(samples.sex[index] || "unknown") + "<br>Karyotype by coverage: " +
+          escapeHtml(samples.karyotype[index]) + "<br>chrX ratio: " + formatNumber(samples.chrXCoverageRatio[index]) +
+          "<br>chrY ratio: " + formatNumber(samples.chrYCoverageRatio[index]);
+      }),
+      marker: {color: COLORS.base, size: controller.pointSize, opacity: 0.9,
+               symbol: indices.map(symbolOfSex), line: {color: "#ffffff", width: 0.8}},
+      selected: {marker: {opacity: 0.9}}, unselected: {marker: {opacity: 0.9}},
+    });
+    controller.highlightTraceIndex = 1;
+    traces.push({type: pointType, mode: "markers", x: [], y: [], customdata: [], text: [], showlegend: false,
+                 hovertemplate: "%{text}<extra></extra>", marker: {size: [], color: [], symbol: []}});
+    // legend entries for the marker shapes
+    [["circle", "Reported female"], ["diamond", "Reported male"], ["triangle-up", "Reported sex unknown"]]
+      .forEach(function (entry) {
+        traces.push({type: "scatter", mode: "markers", x: [null], y: [null], name: entry[1], hoverinfo: "skip",
+                     marker: {symbol: entry[0], color: COLORS.base, size: 9}});
+      });
+    // a loop rather than Math.max.apply, which passes each sample as an argument and runs out of stack above about
+    // 120,000 samples
+    const largestRatio = indices.reduce(function (largest, index) {
+      return Math.max(largest, samples.chrXCoverageRatio[index], samples.chrYCoverageRatio[index]);
+    }, 0);
+    const maxRatio = Math.max(1.4, largestRatio + 0.1);
+    const shapes = [];
+    // the ratios at which 2 * ratio, rounded, changes the number of copies
+    [0.25, 0.75, 1.25].forEach(function (ratio) {
+      const line = {color: COLORS.karyotypeLine, width: 1, dash: "dot"};
+      shapes.push({type: "line", xref: "x", yref: "paper", x0: ratio, x1: ratio, y0: 0, y1: 1, line: line});
+      shapes.push({type: "line", xref: "paper", yref: "y", x0: 0, x1: 1, y0: ratio, y1: ratio, line: line});
+    });
+    const layout = {
+      margin: {l: 70, r: 12, t: 30, b: 56}, hovermode: "closest", dragmode: "select", font: PLOT_FONT,
+      paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff", hoverlabel: {bgcolor: "#ffffff"},
+      legend: {orientation: "h", x: 0, y: 1.08},
+      // the axes start a little below 0, so that the points at 0 (the chrY of XX samples) aren't cut in half
+      xaxis: {title: {text: "chrX coverage / autosomal coverage"}, range: [-0.05, maxRatio], gridcolor: "#eaeef2",
+              zeroline: false},
+      yaxis: {title: {text: "chrY coverage / autosomal coverage"}, range: [-0.05, maxRatio], gridcolor: "#eaeef2",
+              zeroline: false},
+      shapes: shapes,
+    };
+    return {traces: traces, layout: layout, config: Object.assign({}, PLOT_CONFIG, {edits: {shapePosition: false}})};
+  }
+
+  function makePlotController(rule, element, buildFigure) {
+    const controller = {
+      rule: rule, kind: rule.kind, element: element, buildFigure: buildFigure, isDrawn: false,
+      usesWebGl: rule.indices.length > MAX_POINTS_WITHOUT_WEBGL, hoveredIndex: null, isApplyingLayout: false,
+    };
+    rule.kind.controllers.push(controller);
+    // a DOM listener, which stays when a WebGL plot is purged and drawn again, unlike Plotly's events
+    element.addEventListener("contextmenu", function (event) {
+      const kind = controller.kind;
+      let targets;
+      if (controller.hoveredIndex !== null) {
+        targets = kind.selected.has(controller.hoveredIndex) ? Array.from(kind.selected) : [controller.hoveredIndex];
+      } else if (kind.selected.size) {
+        targets = Array.from(kind.selected);
+      } else {
+        return;
+      }
+      event.preventDefault();
+      showContextMenu(event.clientX, event.clientY, kind, targets);
+    });
+    return controller;
+  }
+
+  function drawPlot(controller) {
+    if (controller.isDrawn || controller.isDrawing) {
+      return;
+    }
+    controller.isDrawing = true;
+    const figure = controller.buildFigure(controller);
+    Plotly.newPlot(controller.element, figure.traces, figure.layout, figure.config).then(function () {
+      controller.isDrawing = false;
+      controller.isDrawn = true;
+      if (!controller.hasEvents) {
+        attachPlotEvents(controller);
+        controller.hasEvents = true;
+      }
+      updatePlot(controller);
+    });
+  }
+
+  function purgePlot(controller) {
+    if (controller.isDrawn) {
+      Plotly.purge(controller.element);
+      controller.isDrawn = false;
+      controller.hasEvents = false;
+    }
+  }
+
+  // Redraws the points that aren't plain gray on top of the others, and moves the cutoff lines to the rule's cutoffs
+  function updatePlot(controller) {
+    if (!controller.isDrawn) {
+      return;
+    }
+    const kind = controller.kind;
+    const rule = controller.rule;
+    const backgroundTrace = controller.element.data[controller.backgroundTraceIndex];
+    const highlighted = {x: [], y: [], customdata: [], text: [], color: [], size: [], lineColor: [], lineWidth: [],
+                         symbol: []};
+    rule.indices.forEach(function (index, position) {
+      const style = getPointStyle(kind, rule, index);
+      if (!style.isHighlighted) {
+        return;
+      }
+      highlighted.x.push(backgroundTrace.x[position]);
+      highlighted.y.push(backgroundTrace.y[position]);
+      highlighted.customdata.push(index);
+      highlighted.text.push(backgroundTrace.text[position] + "<br>" + describeStatus(kind, index));
+      highlighted.color.push(style.color);
+      highlighted.size.push(controller.pointSize + (style.color === COLORS.selected ? 4 : 2));
+      highlighted.lineColor.push(style.hasOutline ? COLORS.manualOutline : "#ffffff");
+      highlighted.lineWidth.push(style.hasOutline ? 2 : (controller.pointSize > 5 ? 0.8 : 0));
+      if (controller.symbols) {
+        highlighted.symbol.push(controller.symbols.get(index));
+      }
+    });
+    const update = {
+      x: [highlighted.x], y: [highlighted.y], customdata: [highlighted.customdata], text: [highlighted.text],
+      "marker.color": [highlighted.color], "marker.size": [highlighted.size],
+      "marker.line.color": [highlighted.lineColor], "marker.line.width": [highlighted.lineWidth],
+    };
+    if (controller.symbols) {
+      update["marker.symbol"] = [highlighted.symbol];
+    }
+    Plotly.restyle(controller.element, update, [controller.highlightTraceIndex]);
+    if (rule.isMetric) {
+      controller.isApplyingLayout = true;
+      Plotly.relayout(controller.element, {shapes: getCutoffShapes(rule)}).then(function () {
+        controller.isApplyingLayout = false;
+      });
+    }
+    updateCardSubtitle(controller);
+  }
+
+  function updateCardSubtitle(controller) {
+    const rule = controller.rule;
+    const kind = controller.kind;
+    const subtitle = controller.subtitleElement;
+    if (!subtitle) {
+      return;
+    }
+    let excludedHere = 0;
+    let onlyBeyondSuggestion = 0;
+    for (const index of rule.indices) {
+      if (isExcludedByRule(kind, rule, index)) {
+        excludedHere += 1;
+      } else if (rule.beyondSuggestion[index]) {
+        onlyBeyondSuggestion += 1;
+      }
+    }
+    const parts = [];
+    if (rule.isMetric) {
+      const payload = rule.payload;
+      if (payload.median !== null) {
+        parts.push("median " + formatNumber(payload.median));
+      }
+      if (rule.cutoffSides.length) {
+        parts.push(describeCutoffs("suggested thresholds", payload.suggestedCutoffs[0], payload.suggestedCutoffs[1]) ||
+                   "no suggested threshold");
+        const cutoffs = describeCutoffs("threshold", rule.lower, rule.upper);
+        if (cutoffs) {
+          parts.push(cutoffs);
+        }
+      } else {
+        parts.push("no threshold on this plot");
+      }
+    } else {
+      parts.push(pluralizeKind(kind, rule.indices.length) + " checked");
+    }
+    if (!rule.isMetric || rule.cutoffSides.length) {
+      parts.push(pluralizeKind(kind, excludedHere) + " currently excluded by this " + (controller.isTable ? "table" : "plot"));
+    }
+    if (onlyBeyondSuggestion) {
+      parts.push(onlyBeyondSuggestion.toLocaleString("en-US") + " beyond the suggested thresholds (orange dots)");
+    }
+    subtitle.textContent = parts.join(" · ");
+    if (controller.useSuggestionButton) {
+      controller.useSuggestionButton.disabled = !rule.hasSuggestion;
+    }
+  }
+  function describeCutoffs(label, lower, upper) {
+    const sides = [];
+    if (lower !== null) {
+      sides.push("below " + formatNumber(lower));
+    }
+    if (upper !== null) {
+      sides.push("above " + formatNumber(upper));
+    }
+    return sides.length ? label + ": " + sides.join(" or ") : "";
+  }
+
+  function getPointIndex(point) {
+    return typeof point.customdata === "number" ? point.customdata : null;
+  }
+
+  function attachPlotEvents(controller) {
+    const element = controller.element;
+    const kind = controller.kind;
+    const rule = controller.rule;
+    element.on("plotly_hover", function (event) {
+      const point = event.points.find(function (candidate) { return getPointIndex(candidate) !== null; });
+      controller.hoveredIndex = point ? getPointIndex(point) : null;
+    });
+    element.on("plotly_unhover", function () { controller.hoveredIndex = null; });
+    element.on("plotly_click", function (event) {
+      // Plotly reports a right-click (or a control-click, its Mac equivalent) as a click too; that opens the menu
+      if (event.event && (event.event.button !== 0 || event.event.ctrlKey)) {
+        return;
+      }
+      const point = event.points.find(function (candidate) { return getPointIndex(candidate) !== null; });
+      if (!point) {
+        return;
+      }
+      const index = getPointIndex(point);
+      if (event.event && event.event.shiftKey) {
+        if (kind.selected.has(index)) {
+          kind.selected.delete(index);
+        } else {
+          kind.selected.add(index);
+        }
+      } else {
+        kind.selected.clear();
+        kind.selected.add(index);
+      }
+      handleChange(kind, false);
+    });
+    element.on("plotly_selected", function (event) {
+      if (!event) {
+        return;
+      }
+      if (!shiftKeyIsDown) {
+        kind.selected.clear();
+      }
+      event.points.forEach(function (point) {
+        const index = getPointIndex(point);
+        if (index !== null) {
+          kind.selected.add(index);
+        }
+      });
+      // Plotly's own selection box and dimming are cleared, since the selection is drawn in blue instead
+      Plotly.update(element, {selectedpoints: null}, {selections: []});
+      handleChange(kind, false);
+    });
+    element.on("plotly_relayout", function (update) {
+      if (!rule.isMetric || controller.isApplyingLayout) {
+        return;
+      }
+      // the dragged lines' new positions, by line (the lines are in the order of rule.cutoffSides)
+      const newPositions = rule.cutoffSides.map(function () { return []; });
+      Object.keys(update).forEach(function (key) {
+        const match = /^shapes\[(\d+)\]\.y[01]$/.exec(key);
+        if (match && Number(match[1]) < newPositions.length) {
+          newPositions[Number(match[1])].push(update[key]);
+        }
+      });
+      let moved = false;
+      newPositions.forEach(function (positions, shapeIndex) {
+        if (positions.length) {
+          setCutoffFromPlot(rule, rule.cutoffSides[shapeIndex],
+                            positions.reduce(function (sum, value) { return sum + value; }, 0) / positions.length);
+          moved = true;
+        }
+      });
+      if (moved) {
+        handleChange(kind, true);
+      }
+    });
+  }
+
+  // Sets a cutoff from where its line was dragged to; a line dragged past the outermost point turns the cutoff off
+  function setCutoffFromPlot(rule, side, scaledPosition) {
+    const [lowestValue, highestValue] = rule.payload.axis.dataRange;
+    if ((side === "lower" && scaledPosition <= lowestValue) || (side === "upper" && scaledPosition >= highestValue)) {
+      rule[side] = null;
+    } else {
+      rule[side] = roundLikeShown(transformBackFromScale(rule.payload.scale, scaledPosition));
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Right-click menu
+  // ---------------------------------------------------------------------------------------------------------------
+  function showContextMenu(x, y, kind, targets) {
+    const menu = document.getElementById("context-menu");
+    const title = targets.length === 1 ? kind.labels[targets[0]] : pluralizeKind(kind, targets.length);
+    menu.innerHTML = '<div class="menu-title">' + escapeHtml(title) + "</div>" +
+      renderPointActionButtons(kind, targets, "");
+    menu.hidden = false;
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    menu.style.left = Math.min(x, window.innerWidth - width - 8) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - height - 8) + "px";
+    menu.onclick = function (event) {
+      const action = event.target.dataset.action;
+      if (!action || event.target.disabled) {
+        return;
+      }
+      applyPointAction(kind, action, targets);
+      hideContextMenu();
+    };
+  }
+  function hideContextMenu() {
+    document.getElementById("context-menu").hidden = true;
+  }
+  // The buttons of the right-click menu and the Selection section, for the points they act on (each button is
+  // disabled where it would do nothing). attributes are added to each button.
+  function renderPointActionButtons(kind, targets, attributes) {
+    const hasManualStatus = targets.some(function (index) { return kind.manualStatus.has(index); });
+    const toggleLabel = "Toggle whether " +
+      (targets.length === 1 ? "this " + kind.noun + " is" : "these " + kind.pluralNoun + " are") + " on the Excluded list";
+    return [["toggle", toggleLabel, targets.length > 0],
+            ["clear-manual", "Reset manually excluded " + kind.pluralNoun, hasManualStatus],
+            ["clear-selection", "Clear selection", kind.selected.size > 0]].map(function (button) {
+      return "<button " + attributes + ' data-action="' + button[0] + '"' + (button[2] ? "" : " disabled") + ">" +
+        button[1] + "</button>";
+    }).join("");
+  }
+  function applyPointAction(kind, action, targets) {
+    if (action === "toggle") {
+      toggleExclusionStatus(kind, targets);
+    } else if (action === "clear-manual") {
+      targets.forEach(function (index) { kind.manualStatus.delete(index); });
+      handleChange(kind, true);
+    } else {
+      kind.selected.clear();
+      handleChange(kind, false);
+    }
+  }
+  // Flips each point's exclusion status. The new status is set by hand, which the cutoffs no longer change, unless
+  // it is the status the cutoffs give, in which case the point follows the cutoffs again.
+  function toggleExclusionStatus(kind, indices) {
+    indices.forEach(function (index) {
+      const shouldBeExcluded = !isExcluded(kind, index);
+      if (shouldBeExcluded === kind.ruleCount[index] > 0) {
+        kind.manualStatus.delete(index);
+      } else {
+        kind.manualStatus.set(index, shouldBeExcluded ? "excluded" : "kept");
+      }
+    });
+    handleChange(kind, true);
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Updating after a change, and saving
+  // ---------------------------------------------------------------------------------------------------------------
+  const kindsToRedraw = new Set();
+  let redrawIsScheduled = false;
+  // Called after anything changes. statusChanged says whether exclusion statuses may have changed (not just the
+  // selection). Redraws happen once per animation frame, however many changes come in.
+  function handleChange(kind, statusChanged) {
+    if (statusChanged) {
+      kind.rules.forEach(function (rule) { rule.recompute(); });
+      recomputeRuleCount(kind);
+    }
+    kindsToRedraw.add(kind);
+    scheduleSave();
+    if (!redrawIsScheduled) {
+      redrawIsScheduled = true;
+      requestAnimationFrame(function () {
+        redrawIsScheduled = false;
+        kindsToRedraw.forEach(function (kindToRedraw) {
+          kindToRedraw.controllers.forEach(updatePlot);
+        });
+        kindsToRedraw.clear();
+        updateSummary();
+        updateSelectionBox();
+        tables.forEach(function (table) { table.draw(); });
+      });
+    }
+  }
+
+  function serializeState() {
+    function cutoffsOf(kind) {
+      const cutoffs = {};
+      kind.rules.forEach(function (rule) {
+        if (rule.isMetric) {
+          cutoffs[rule.id] = [rule.lower, rule.upper];
+        }
+      });
+      return cutoffs;
+    }
+    function byKey(kind, map) {
+      const values = {};
+      map.forEach(function (value, index) { values[kind.keys[index]] = value; });
+      return values;
+    }
+    function keysOf(kind, indices) {
+      return Array.from(indices).map(function (index) { return kind.keys[index]; });
+    }
+    return {
+      sampleCutoffs: cutoffsOf(kinds.sample), locusCutoffs: cutoffsOf(kinds.locus),
+      excludeSexMismatches: kinds.sample.sexCheckRule.isOn,
+      manualSampleStatus: byKey(kinds.sample, kinds.sample.manualStatus),
+      manualLocusStatus: byKey(kinds.locus, kinds.locus.manualStatus),
+      sampleReasonEdits: byKey(kinds.sample, kinds.sample.reasonEdits),
+      locusReasonEdits: byKey(kinds.locus, kinds.locus.reasonEdits),
+      selectedSamples: keysOf(kinds.sample, kinds.sample.selected),
+      selectedLoci: keysOf(kinds.locus, kinds.locus.selected),
+    };
+  }
+  function applySavedState(state) {
+    function applyCutoffs(kind, cutoffs) {
+      kind.rules.forEach(function (rule) {
+        // a saved cutoff on a side that the plot no longer has is dropped
+        if (rule.isMetric && cutoffs && cutoffs[rule.id]) {
+          rule.lower = rule.cutoffSides.includes("lower") ? cutoffs[rule.id][0] : null;
+          rule.upper = rule.cutoffSides.includes("upper") ? cutoffs[rule.id][1] : null;
+        }
+      });
+    }
+    function applyByKey(kind, values, map) {
+      Object.keys(values || {}).forEach(function (key) {
+        if (kind.indexByKey.has(key)) {
+          map.set(kind.indexByKey.get(key), values[key]);
+        }
+      });
+    }
+    function applySelection(kind, keys) {
+      (keys || []).forEach(function (key) {
+        if (kind.indexByKey.has(key)) {
+          kind.selected.add(kind.indexByKey.get(key));
+        }
+      });
+    }
+    applyCutoffs(kinds.sample, state.sampleCutoffs);
+    applyCutoffs(kinds.locus, state.locusCutoffs);
+    kinds.sample.sexCheckRule.isOn = Boolean(state.excludeSexMismatches);
+    applyByKey(kinds.sample, state.manualSampleStatus, kinds.sample.manualStatus);
+    applyByKey(kinds.locus, state.manualLocusStatus, kinds.locus.manualStatus);
+    applyByKey(kinds.sample, state.sampleReasonEdits, kinds.sample.reasonEdits);
+    applyByKey(kinds.locus, state.locusReasonEdits, kinds.locus.reasonEdits);
+    applySelection(kinds.sample, state.selectedSamples);
+    applySelection(kinds.locus, state.selectedLoci);
+  }
+
+  let saveTimer = null;
+  let saveIsPending = false;
+  function setSaveStatus(text, isError) {
+    const status = document.getElementById("save-status");
+    status.textContent = text;
+    status.classList.toggle("error", Boolean(isError));
+  }
+  function scheduleSave() {
+    saveIsPending = true;
+    setSaveStatus("Saving...");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveState, SAVE_DELAY_MS);
+  }
+  // POSTs a value as JSON, and returns a promise of the server's JSON answer, rejected with the server's error message
+  // (its 403 and 404 answers are plain text)
+  function postJson(path, value) {
+    return fetch(withToken(path), {method: "POST", headers: {"Content-Type": "application/json"},
+                                   body: JSON.stringify(value)})
+      .then(function (response) {
+        return response.text().then(function (text) {
+          let body = null;
+          try {
+            body = JSON.parse(text);
+          } catch (error) {
+            body = null;
+          }
+          if (!response.ok) {
+            throw new Error((body && body.error) || text || response.statusText);
+          }
+          return body;
+        });
+      });
+  }
+  function saveState() {
+    saveIsPending = false;
+    postJson("/state", serializeState())
+      .then(function () { setSaveStatus("All changes saved " + new Date().toLocaleTimeString()); })
+      .catch(function (error) {
+        setSaveStatus("Not saved: " + error.message + " (is the dashboard server still running?)", true);
+      });
+  }
+  // a change made less than SAVE_DELAY_MS before the page is closed is still saved
+  window.addEventListener("pagehide", function () {
+    if (saveIsPending) {
+      navigator.sendBeacon(withToken("/state"), new Blob([JSON.stringify(serializeState())],
+                                                         {type: "application/json"}));
+    }
+  });
+
+  function exportExclusions(kind) {
+    const exportKind = kind.name === "sample" ? "samples" : "loci";
+    const rows = getExcludedIndices(kind).map(function (index) {
+      return [kind.keys[index], getReason(kind, index)];
+    });
+    postJson("/export", {kind: exportKind, rows: rows})
+      .then(function (body) { showToast("Wrote " + pluralizeKind(kind, rows.length) + " to " + body.path); })
+      .catch(function (error) { showToast("Couldn't export: " + error.message, true); });
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Summary, selection and tables
+  // ---------------------------------------------------------------------------------------------------------------
+  function summarizeKind(kind) {
+    let excludedCount = 0;
+    let excludedByHand = 0;
+    let keptByHand = 0;
+    for (let index = 0; index < kind.count; index++) {
+      const manualStatus = kind.manualStatus.get(index);
+      if (isExcluded(kind, index)) {
+        excludedCount += 1;
+      }
+      if (manualStatus === "excluded") {
+        excludedByHand += 1;
+      } else if (manualStatus === "kept" && kind.ruleCount[index] > 0) {
+        keptByHand += 1;
+      }
+    }
+    const ruleItems = kind.rules.map(function (rule) {
+      let count = 0;
+      for (const index of rule.indices) {
+        count += isExcludedByRule(kind, rule, index) ? 1 : 0;
+      }
+      return count ? "<li>" + escapeHtml(rule.title) + ": " + count.toLocaleString("en-US") + "</li>" : "";
+    }).join("");
+    const details = ruleItems + (excludedByHand ? "<li>By hand: " + excludedByHand.toLocaleString("en-US") + "</li>" : "") +
+      (keptByHand ? "<li>Kept by hand despite a threshold: " + keptByHand.toLocaleString("en-US") + "</li>" : "");
+    return "<li><b>" + excludedCount.toLocaleString("en-US") + " of " + pluralizeKind(kind, kind.count) +
+      "</b> filtered out so far." + (details ? "<ul>" + details + "</ul>" : "") + "</li>";
+  }
+  function updateSummary() {
+    document.getElementById("summary-box").innerHTML = "<ul>" + summarizeKind(kinds.sample) +
+      summarizeKind(kinds.locus) + "<li>Selected: " + pluralizeKind(kinds.sample, kinds.sample.selected.size) +
+      " and " + pluralizeKind(kinds.locus, kinds.locus.selected.size) + ".</li></ul>";
+  }
+
+  function updateSelectionBox() {
+    const box = document.getElementById("selection-box");
+    box.innerHTML = [kinds.sample, kinds.locus].map(function (kind) {
+      const selected = Array.from(kind.selected).sort(function (first, second) { return first - second; });
+      const listed = selected.slice(0, MAX_IDS_LISTED).map(function (index) { return escapeHtml(kind.labels[index]); });
+      return "<h3>Selected " + kind.pluralNoun + " (" + selected.length.toLocaleString("en-US") + ")</h3>" +
+        (selected.length ? '<div class="id-list">' + listed.join(", ") +
+          (selected.length > MAX_IDS_LISTED ? ", and " + (selected.length - MAX_IDS_LISTED).toLocaleString("en-US") +
+           " more" : "") + "</div>" : '<p class="empty">None. Click or box-select points on the plots.</p>') +
+        '<div class="button-row">' + renderPointActionButtons(kind, selected, 'data-kind="' + kind.name + '"') +
+        "</div>";
+    }).join("");
+  }
+  document.getElementById("selection-box").addEventListener("click", function (event) {
+    const action = event.target.dataset.action;
+    if (action) {
+      const kind = kinds[event.target.dataset.kind];
+      applyPointAction(kind, action, Array.from(kind.selected));
+    }
+  });
+
+  // The tables' cells are text; numbers within them sort by value. One collator is made and reused, since
+  // localeCompare with options makes a new one for each comparison, which is slow for thousands of rows.
+  const CELL_COLLATOR = new Intl.Collator(undefined, {numeric: true});
+  function compareCells(first, second) {
+    return CELL_COLLATOR.compare(String(first), String(second));
+  }
+
+  // A table of the excluded samples or loci, with search, sorting (click a column header), pages, and a reason that
+  // can be edited (the pencil) and reverted to the automatic one
+  function makeExclusionTable(kind, container, columns, getCells) {
+    const table = {page: 0, query: "", sortColumn: -1, sortDescending: false, editingIndex: null};
+    container.innerHTML =
+      '<div class="table-tools"><input type="search" placeholder="Search"><span class="table-count"></span>' +
+      '<span style="flex: 1"></span><button data-action="previous">Previous</button>' +
+      '<button data-action="next">Next</button></div>' +
+      '<div class="table-wrap"><table class="data"><thead><tr></tr></thead><tbody></tbody></table></div>';
+    const headerRow = container.querySelector("thead tr");
+    const body = container.querySelector("tbody");
+    const count = container.querySelector(".table-count");
+    const previousButton = container.querySelector('[data-action="previous"]');
+    const nextButton = container.querySelector('[data-action="next"]');
+    columns.concat(["Reasons for exclusion"]).forEach(function (column, columnIndex) {
+      const header = document.createElement("th");
+      header.textContent = column;
+      header.addEventListener("click", function () {
+        table.sortDescending = table.sortColumn === columnIndex ? !table.sortDescending : false;
+        table.sortColumn = columnIndex;
+        headerRow.querySelectorAll("th").forEach(function (other) {
+          other.classList.remove("sorted-ascending", "sorted-descending");
+        });
+        header.classList.add(table.sortDescending ? "sorted-descending" : "sorted-ascending");
+        table.page = 0;
+        table.draw();
+      });
+      headerRow.appendChild(header);
+    });
+    function getRows() {
+      const query = table.query.toLowerCase();
+      let rows = getExcludedIndices(kind).map(function (index) {
+        return {index: index, cells: getCells(index).concat([getReason(kind, index)])};
+      });
+      if (query) {
+        rows = rows.filter(function (row) {
+          return row.cells.some(function (cell) { return String(cell).toLowerCase().includes(query); });
+        });
+      }
+      if (table.sortColumn >= 0) {
+        rows.sort(function (first, second) {
+          const comparison = compareCells(first.cells[table.sortColumn], second.cells[table.sortColumn]);
+          return table.sortDescending ? -comparison : comparison;
+        });
+      }
+      return rows;
+    }
+    function renderReasonCell(row) {
+      if (table.editingIndex === row.index) {
+        return '<td class="reason"><input type="text" value="' + escapeHtml(table.editingText) + '">' +
+          ' <button class="small" data-action="save">Save</button> <button class="small" data-action="cancel">' +
+          "Cancel</button></td>";
+      }
+      const isEdited = kind.reasonEdits.has(row.index);
+      return '<td class="reason">' + (isEdited ? '<span class="edited">edited</span>' : "") +
+        '<span class="reason-text">' + escapeHtml(row.cells[row.cells.length - 1]) + "</span>" +
+        '<button class="icon" data-action="edit" title="Edit the reason">&#9998;</button>' +
+        (isEdited ? '<button class="icon" data-action="revert" title="Go back to the automatic reason">' +
+          "&#8634;</button>" : "") + "</td>";
+    }
+    table.draw = function () {
+      const rows = getRows();
+      const pageCount = Math.max(1, Math.ceil(rows.length / TABLE_PAGE_SIZE));
+      table.page = Math.min(table.page, pageCount - 1);
+      const start = table.page * TABLE_PAGE_SIZE;
+      const end = Math.min(start + TABLE_PAGE_SIZE, rows.length);
+      body.innerHTML = rows.slice(start, end).map(function (row) {
+        return '<tr data-index="' + row.index + '">' + row.cells.slice(0, -1).map(function (cell) {
+          return '<td class="nowrap">' + escapeHtml(cell) + "</td>";
+        }).join("") + renderReasonCell(row) + "</tr>";
+      }).join("") || '<tr><td class="empty" colspan="' + (columns.length + 1) + '">' +
+        (table.query ? "No matching " + kind.pluralNoun : "No " + kind.pluralNoun + " are excluded yet") + "</td></tr>";
+      count.textContent = rows.length ? "Rows " + (start + 1).toLocaleString("en-US") + "-" +
+        end.toLocaleString("en-US") + " of " + rows.length.toLocaleString("en-US") : "";
+      previousButton.disabled = table.page === 0;
+      nextButton.disabled = end >= rows.length;
+      // the editor is focused only when it opens, since the table is also redrawn after changes made elsewhere, and
+      // focusing would scroll the page back here
+      const input = body.querySelector("td.reason input");
+      if (input && table.focusEditor) {
+        table.focusEditor = false;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    };
+    function finishEditing(save) {
+      const index = table.editingIndex;
+      table.editingIndex = null;
+      if (save && index !== null) {
+        const text = table.editingText.replace(/[\t\r\n]+/g, " ").trim();
+        if (text && text !== getAutomaticReason(kind, index)) {
+          kind.reasonEdits.set(index, text);
+        } else {
+          kind.reasonEdits.delete(index);
+        }
+        handleChange(kind, false);
+      } else {
+        table.draw();
+      }
+    }
+    body.addEventListener("click", function (event) {
+      const action = event.target.dataset.action;
+      const row = event.target.closest("tr");
+      if (!action || !row) {
+        return;
+      }
+      const index = Number(row.dataset.index);
+      if (action === "edit") {
+        table.editingIndex = index;
+        // what has been typed so far, which redraws keep
+        table.editingText = getReason(kind, index);
+        table.focusEditor = true;
+        table.draw();
+      } else if (action === "revert") {
+        kind.reasonEdits.delete(index);
+        handleChange(kind, false);
+      } else {
+        finishEditing(action === "save");
+      }
+    });
+    body.addEventListener("input", function (event) {
+      if (event.target.tagName === "INPUT") {
+        table.editingText = event.target.value;
+      }
+    });
+    body.addEventListener("keydown", function (event) {
+      if (event.target.tagName === "INPUT" && (event.key === "Enter" || event.key === "Escape")) {
+        event.preventDefault();
+        finishEditing(event.key === "Enter");
+      }
+    });
+    container.querySelector("input[type=search]").addEventListener("input", function (event) {
+      table.query = event.target.value.trim();
+      table.page = 0;
+      table.draw();
+    });
+    previousButton.addEventListener("click", function () { table.page -= 1; table.draw(); });
+    nextButton.addEventListener("click", function () { table.page += 1; table.draw(); });
+    return table;
+  }
+  const tables = [];
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Building the page
+  // ---------------------------------------------------------------------------------------------------------------
+  function createCard(container, title, helpItems, isWide) {
+    const card = document.createElement("div");
+    card.className = "card" + (isWide ? " wide" : "");
+    card.innerHTML = "<h4>" + escapeHtml(title) + " " + (helpItems ? renderHelp(helpItems) : "") + "</h4>" +
+      '<div class="card-subtitle"></div><div class="button-row"></div>';
+    container.appendChild(card);
+    return card;
+  }
+
+  function addPlotCard(container, rule, title, helpItems, isWide, buildFigure, extraControls) {
+    const card = createCard(container, title, helpItems, isWide);
+    card.id = rule.kind.name + "-" + rule.id;
+    const buttonRow = card.querySelector(".button-row");
+    if (extraControls) {
+      extraControls(buttonRow);
+    }
+    if (!rule.indices.length) {
+      buttonRow.remove();
+      card.querySelector(".card-subtitle").textContent = "No " + rule.kind.noun + " has a value";
+      return;
+    }
+    const plotElement = document.createElement("div");
+    plotElement.className = "plot";
+    card.appendChild(plotElement);
+    const controller = makePlotController(rule, plotElement, buildFigure);
+    controller.subtitleElement = card.querySelector(".card-subtitle");
+    if (rule.isMetric && rule.cutoffSides.length) {
+      controller.useSuggestionButton = addCutoffButtons(buttonRow, rule);
+    }
+    updateCardSubtitle(controller);
+    plotObserver.observe(plotElement);
+    plotElement.controller = controller;
+  }
+
+  // Adds the "Use suggested thresholds" and "Reset thresholds" buttons of a metric's card, and returns the first
+  function addCutoffButtons(buttonRow, rule) {
+    const useSuggestionButton = document.createElement("button");
+    useSuggestionButton.className = "small";
+    useSuggestionButton.textContent = "Use suggested thresholds";
+    useSuggestionButton.addEventListener("click", function () {
+      rule.useSuggestion();
+      handleChange(rule.kind, true);
+    });
+    const resetButton = document.createElement("button");
+    resetButton.className = "small";
+    resetButton.textContent = "Reset thresholds";
+    resetButton.addEventListener("click", function () {
+      rule.clear();
+      handleChange(rule.kind, true);
+    });
+    buttonRow.appendChild(useSuggestionButton);
+    buttonRow.appendChild(resetButton);
+    return useSuggestionButton;
+  }
+
+  // The table of the number of samples with each read length, longest first, with an upper and a lower dashed red
+  // line that snap to the boundaries between its rows. The rows above the upper line (longer reads) and below the
+  // lower line (shorter reads) are excluded. Samples without a read length are listed last, and no cutoff applies to
+  // them.
+  function addReadLengthTableCard(container, rule) {
+    const kind = rule.kind;
+    const card = createCard(container, "Read lengths", rule.payload.help, false);
+    card.id = kind.name + "-" + rule.id;
+    const sampleCountByReadLength = new Map();
+    rule.values.forEach(function (value) {
+      sampleCountByReadLength.set(value, (sampleCountByReadLength.get(value) || 0) + 1);
+    });
+    const readLengths = Array.from(sampleCountByReadLength.keys()).filter(function (value) { return value !== null; })
+      .sort(function (a, b) { return b - a; });
+    if (!readLengths.length) {
+      card.querySelector(".button-row").remove();
+      card.querySelector(".card-subtitle").textContent = "No sample has a read length";
+      return;
+    }
+    const controller = {rule: rule, kind: kind, isTable: true, subtitleElement: card.querySelector(".card-subtitle")};
+    controller.useSuggestionButton = addCutoffButtons(card.querySelector(".button-row"), rule);
+    const wrapper = document.createElement("div");
+    wrapper.className = "row-cutoff-table";
+    wrapper.innerHTML = '<table class="data"><thead><tr><th>Read length (bp)</th><th>Samples</th></tr></thead>' +
+      "<tbody>" + readLengths.map(function (readLength) {
+        return "<tr><td>" + readLength + '</td><td class="number">' +
+          sampleCountByReadLength.get(readLength).toLocaleString("en-US") + "</td></tr>";
+      }).join("") + "</tbody>" + (sampleCountByReadLength.has(null) ?
+        '<tfoot><tr><td>unknown (no threshold applies)</td><td class="number">' +
+        sampleCountByReadLength.get(null).toLocaleString("en-US") + "</td></tr></tfoot>" : "") + "</table>";
+    card.appendChild(wrapper);
+    const rows = Array.from(wrapper.querySelectorAll("tbody tr"));
+    // A line's position is the number of rows above it. The upper line is kept above the last row, and the lower
+    // line below the first, so that each cutoff is a read length in the table. The lines can meet, which excludes
+    // every row.
+    function getLinePosition(side) {
+      if (side === "upper") {
+        return rule.upper === null ? 0 : readLengths.filter(function (value) { return value > rule.upper; }).length;
+      }
+      return rule.lower === null ? readLengths.length :
+        readLengths.filter(function (value) { return value >= rule.lower; }).length;
+    }
+    function setCutoffFromLinePosition(side, position) {
+      if (side === "upper") {
+        rule.upper = position === 0 ? null : readLengths[position];
+      } else {
+        rule.lower = position === readLengths.length ? null : readLengths[position - 1];
+      }
+    }
+    // the y of each boundary between rows, from the top of the first row to the bottom of the last
+    function getRowBoundaries() {
+      const top = wrapper.getBoundingClientRect().top;
+      return [rows[0].getBoundingClientRect().top - top].concat(rows.map(function (row) {
+        return row.getBoundingClientRect().bottom - top;
+      }));
+    }
+    const lineBySide = {};
+    ["upper", "lower"].forEach(function (side) {
+      const line = document.createElement("div");
+      line.className = "row-cutoff-line";
+      line.title = "Drag to a boundary between rows";
+      wrapper.appendChild(line);
+      lineBySide[side] = line;
+      line.addEventListener("pointerdown", function (event) {
+        event.preventDefault();
+        line.setPointerCapture(event.pointerId);
+        line.classList.add("dragging");
+      });
+      line.addEventListener("pointermove", function (event) {
+        if (!line.hasPointerCapture(event.pointerId)) {
+          return;
+        }
+        const y = event.clientY - wrapper.getBoundingClientRect().top;
+        const boundaries = getRowBoundaries();
+        let position = 0;
+        boundaries.forEach(function (boundary, index) {
+          if (Math.abs(boundary - y) < Math.abs(boundaries[position] - y)) {
+            position = index;
+          }
+        });
+        position = side === "upper" ? Math.min(position, getLinePosition("lower"), readLengths.length - 1) :
+          Math.max(position, getLinePosition("upper"), 1);
+        if (position !== getLinePosition(side)) {
+          setCutoffFromLinePosition(side, position);
+          handleChange(kind, true);
+        }
+      });
+      line.addEventListener("lostpointercapture", function () { line.classList.remove("dragging"); });
+    });
+    controller.draw = function () {
+      const boundaries = getRowBoundaries();
+      const upperPosition = getLinePosition("upper");
+      const lowerPosition = getLinePosition("lower");
+      lineBySide.upper.style.top = boundaries[upperPosition] + "px";
+      lineBySide.lower.style.top = boundaries[lowerPosition] + "px";
+      rows.forEach(function (row, index) {
+        row.classList.toggle("excluded", index < upperPosition || index >= lowerPosition);
+      });
+      updateCardSubtitle(controller);
+    };
+    // redrawn after every change, like the exclusion tables, and when the window is resized
+    tables.push(controller);
+    window.addEventListener("resize", controller.draw);
+    controller.draw();
+  }
+
+  // Plots are drawn when they come near the screen, so that the page opens quickly, and WebGL plots are purged when
+  // they are far from it
+  const plotObserver = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      const controller = entry.target.controller;
+      if (entry.isIntersecting) {
+        drawPlot(controller);
+      } else if (controller.usesWebGl) {
+        purgePlot(controller);
+      }
+    });
+  }, {rootMargin: "800px"});
+
+  function buildSampleSections() {
+    const container = document.getElementById("sample-sections");
+    const sampleKind = kinds.sample;
+    const ruleById = new Map(sampleKind.rules.map(function (rule) { return [rule.id, rule]; }));
+    data.sampleSections.forEach(function (section) {
+      const heading = document.createElement("h3");
+      heading.id = section.id;
+      heading.textContent = section.title;
+      container.appendChild(heading);
+      const cards = document.createElement("div");
+      cards.className = "cards";
+      container.appendChild(cards);
+      section.metrics.forEach(function (metricName) {
+        const rule = ruleById.get(metricName);
+        addPlotCard(cards, rule, rule.title, rule.payload.help, false, buildViolinFigure);
+      });
+      if (section.extraCard === "read lengths") {
+        addReadLengthTableCard(cards, ruleById.get("MostCommonReadLength"));
+      } else if (section.extraCard === "sex check") {
+        const rule = sampleKind.sexCheckRule;
+        addPlotCard(cards, rule, "chrY against chrX coverage", [
+          "The median Coverage at a sample's chrX repeats, and at its chrY repeats, outside the pseudoautosomal " +
+          "regions (GRCh38 coordinates), divided by the median at its autosomal repeats.",
+          "About 1 and 0 in an XX sample, and 0.5 and 0.5 in an XY sample. The karyotype has 2 x ratio copies " +
+          "(rounded) of each, so the dotted lines are where the number of copies changes.",
+          "Orange: the coverage contradicts the reported sex, or suggests a karyotype other than XX or XY (which " +
+          "may be real). The switch excludes the contradictions, which mean a sample swap or a metadata error, and " +
+          "that ExpansionHunter genotyped chrX with the wrong number of alleles.",
+          "Samples without autosomal coverage (as in exomes), or without chrX or chrY repeats, can't be checked."],
+          true, buildSexCheckFigure, function (buttonRow) {
+            const label = document.createElement("label");
+            label.className = "switch";
+            const mismatchCount = data.samples.sexCheckProblem.filter(function (problem) {
+              return problem === "mismatch";
+            }).length;
+            label.innerHTML = '<input type="checkbox"> Exclude the ' + pluralize(mismatchCount, "sample") +
+              " whose coverage contradicts their reported sex";
+            const checkbox = label.querySelector("input");
+            checkbox.checked = rule.isOn;
+            checkbox.addEventListener("change", function () {
+              rule.isOn = checkbox.checked;
+              handleChange(sampleKind, true);
+            });
+            rule.checkbox = checkbox;
+            buttonRow.appendChild(label);
+          });
+      }
+    });
+  }
+
+  function buildLegend() {
+    document.getElementById("legend").innerHTML = [
+      ['<span class="dot" style="background:' + COLORS.base + '"></span>', "Not excluded"],
+      ['<span class="dot" style="background:' + COLORS.suggested + '"></span>', "Beyond the suggested threshold"],
+      ['<span class="dot" style="background:' + COLORS.excludedByThisPlot + '"></span>',
+       "Excluded by this plot's threshold"],
+      ['<span class="dot" style="background:' + COLORS.excludedElsewhere + '"></span>',
+       "Excluded by another plot's threshold, or by hand"],
+      ['<span class="dot" style="background:' + COLORS.selected + '"></span>', "Selected"],
+      ['<span class="dash"></span>', "Threshold (drag it)"],
+      ['<span class="dotted"></span>', "Suggested threshold"],
+    ].map(function (entry) { return "<span>" + entry[0] + entry[1] + "</span>"; }).join("");
+  }
+
+  function buildMethods() {
+    const settings = data.settings;
+    const leftOutCompoundLocusIds = data.loci.leftOutCompoundLocusIds;
+    document.getElementById("overview-iqr-multiplier").textContent = settings.iqrMultiplier;
+    document.getElementById("overview-suggested-min-locus-call-rate").textContent = settings.suggestedMinRepeatCallRate;
+    document.getElementById("methods-box").innerHTML = '<ul class="plain">' + [
+      "Each plot shows a half violin of the metric's distribution (a kernel density estimate), a box of its " +
+      "quartiles and median with whiskers at the 5th and 95th percentiles, and a point per sample or locus.",
+      "Fractions are plotted on a log odds scale, counts and coverage on a log(1 + value) scale, ratios on a log " +
+      "scale, and the mean allele size difference and the fragment length on a linear scale.",
+      "Suggested thresholds are Tukey's fences, Q1 - k x IQR and Q3 + k x IQR with k = " + settings.iqrMultiplier +
+      ", where Q1 and Q3 are the 25th and 75th percentiles of the metric on its plotted scale and IQR = Q3 - Q1. " +
+      "A metric whose IQR is 0 gets none, since its fences would suggest excluding every other value. The repeats' " +
+      "call rate gets a fixed suggestion of " + settings.suggestedMinRepeatCallRate + " instead, since most " +
+      "repeats have a call rate of 1.",
+      "A plot has a threshold only on the sides where its metric's values point to a potential problem with the " +
+      "sample or locus. Some plots don't have settable thresholds because filtering on the metrics in those plots " +
+      "is not recommended.",
+      "Observed vs. Expected (HWE) Heterozygosity, where the expected heterozygosity is what Hardy-Weinberg " +
+      "equilibrium (HWE) predicts from the allele size frequencies: for repeats with at least " +
+      settings.minTwoAlleleCallsForObservedVsExpectedHeterozygosity.toLocaleString("en-US") +
+      " two-allele calls whose expected " +
+      "heterozygosity is at least " + settings.minExpectedHeterozygosity + ".",
+      "Loci with more than one repeat (compound locus definitions, such as HTT's CAG and CCG repeats) are left out " +
+      "of the dashboard, including its counts of loci where a sample has the largest expansion or contraction, so " +
+      "they are never excluded: generate_multisample_tsv.py --loci-to-exclude leaves out whole loci, so excluding " +
+      "one repeat of such a locus would also leave out its other repeats. " + (leftOutCompoundLocusIds.length ?
+        "Left out: " + leftOutCompoundLocusIds.slice(0, 20).join(", ") +
+        (leftOutCompoundLocusIds.length > 20 ?
+          " and " + (leftOutCompoundLocusIds.length - 20).toLocaleString("en-US") + " more" : "") +
+        "." : "This QC stats file has none."),
+      "QC stats file: " + data.dataPath,
+      "Exports: " + data.outputPaths.samples + " (SampleId, ReasonsForExclusion) and " + data.outputPaths.loci +
+      " (LocusId, VariantId, ReasonsForExclusion). Pass them to generate_multisample_tsv.py with " +
+      "--samples-to-exclude and --loci-to-exclude.",
+      "Saved state: " + data.outputPaths.state,
+    ].map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function buildPage() {
+    document.getElementById("page-subtitle").textContent = "Callset summary: " +
+      pluralizeKind(kinds.sample, kinds.sample.count) + " · " + pluralizeKind(kinds.locus, kinds.locus.count) + " · " +
+      data.title;
+    buildLegend();
+    buildSampleSections();
+    const locusCards = document.getElementById("locus-cards");
+    kinds.locus.rules.forEach(function (rule) {
+      addPlotCard(locusCards, rule, rule.title, rule.payload.help, false, buildViolinFigure);
+    });
+    tables.push(makeExclusionTable(kinds.sample, document.getElementById("excluded-samples-table"), ["SampleId", "Sex"],
+                                   function (index) { return [data.samples.ids[index], data.samples.sex[index] || ""]; }));
+    tables.push(makeExclusionTable(kinds.locus, document.getElementById("excluded-loci-table"),
+                                   ["LocusId", "VariantId", "Region", "Motif"], function (index) {
+        // the VariantId only where it differs from the LocusId
+        return [data.loci.locusIds[index], data.loci.variantIds[index], data.loci.regions[index],
+                data.loci.motifs[index]];
+      }));
+    buildMethods();
+    document.getElementById("export-samples").addEventListener("click", function () { exportExclusions(kinds.sample); });
+    document.getElementById("export-loci").addEventListener("click", function () { exportExclusions(kinds.locus); });
+    document.getElementById("export-samples").disabled = false;
+    document.getElementById("export-loci").disabled = false;
+    [kinds.sample, kinds.locus].forEach(function (kind) {
+      document.getElementById("reset-" + kind.name + "-thresholds").addEventListener("click", function () {
+        kind.rules.forEach(function (rule) { rule.clear(); });
+        if (kind.sexCheckRule) {
+          kind.sexCheckRule.checkbox.checked = false;
+        }
+        handleChange(kind, true);
+      });
+      // undoes every hand choice, including points kept by hand, so that the thresholds alone decide
+      document.getElementById("reset-manually-excluded-" + kind.pluralNoun).addEventListener("click", function () {
+        kind.manualStatus.clear();
+        handleChange(kind, true);
+      });
+    });
+  }
+
+  window.addEventListener("keydown", function (event) {
+    if (event.key === "Shift") {
+      shiftKeyIsDown = true;
+    } else if (event.key === "Escape") {
+      hideContextMenu();
+    }
+  });
+  window.addEventListener("keyup", function (event) {
+    if (event.key === "Shift") {
+      shiftKeyIsDown = false;
+    }
+  });
+  window.addEventListener("blur", function () { shiftKeyIsDown = false; });
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest("#context-menu")) {
+      hideContextMenu();
+    }
+  });
+  window.addEventListener("scroll", hideContextMenu, {passive: true});
+
+  Promise.all([fetch(withToken("/data")), fetch(withToken("/state"))]).then(function (responses) {
+    responses.forEach(function (response) {
+      if (!response.ok) {
+        throw new Error(response.status + " " + response.statusText);
+      }
+    });
+    return Promise.all(responses.map(function (response) { return response.json(); }));
+  }).then(function (results) {
+    data = results[0];
+    const savedState = results[1];
+    const sampleLabels = data.samples.ids;
+    // a repeat's LocusId and VariantId joined by a tab, as get_repeat_key in start_multisample_qc_dashboard.py does,
+    // since loci of some catalogs share VariantIds
+    const locusKeys = data.loci.locusIds.map(function (locusId, index) {
+      return locusId + "\t" + (data.loci.variantIds[index] || locusId);
+    });
+    const locusLabels = data.loci.locusIds.map(function (locusId, index) {
+      return locusId + (data.loci.variantIds[index] ? " (" + data.loci.variantIds[index] + ")" : "");
+    });
+    kinds = {
+      sample: makeKind("sample", data.samples.ids, sampleLabels, data.sampleMetrics),
+      locus: makeKind("locus", locusKeys, locusLabels, data.locusMetrics),
+    };
+    kinds.sample.sexCheckRule = makeSexCheckRule(kinds.sample);
+    kinds.sample.rules.push(kinds.sample.sexCheckRule);
+    applySavedState(savedState);
+    document.getElementById("loading").hidden = true;
+    document.getElementById("content").hidden = false;
+    buildPage();
+    [kinds.sample, kinds.locus].forEach(function (kind) { handleChange(kind, true); });
+    // loading the saved state isn't a change to save
+    clearTimeout(saveTimer);
+    saveIsPending = false;
+    setSaveStatus(Object.keys(savedState).length ? "Restored the saved state" : "");
+  }).catch(function (error) {
+    document.getElementById("loading").textContent = "Couldn't load the dashboard: " + error.message +
+      ". Is start_multisample_qc_dashboard.py still running, and is this the URL it printed?";
+  });
+})();
+</script>
+</body>
+</html>

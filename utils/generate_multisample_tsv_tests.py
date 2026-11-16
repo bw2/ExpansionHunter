@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import expansion_hunter_json_streaming_utils as streaming_utils
 import generate_multisample_tsv as m
 
 
@@ -124,13 +125,13 @@ class FakeGcsBlob:
         self.size = os.path.getsize(local_path)
 
     def open(self, mode, chunk_size):
-        assert mode == "rb" and chunk_size == m.GCS_READ_CHUNK_BYTES
+        assert mode == "rb" and chunk_size == streaming_utils.GCS_READ_CHUNK_BYTES
         return open(self.local_path, "rb")
 
 
 def serve_local_files_as_gcs_blobs(local_path_by_gcs_path):
     """Returns a patch that makes the script read these gs:// paths from the local files they map to."""
-    return mock.patch.object(m, "get_gcs_blob", lambda path: FakeGcsBlob(local_path_by_gcs_path[path])
+    return mock.patch.object(streaming_utils, "get_gcs_blob", lambda path: FakeGcsBlob(local_path_by_gcs_path[path])
                              if path in local_path_by_gcs_path else None)
 
 
@@ -197,14 +198,109 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         # A's hemizygous 8 is written as 8/8
         self.assertEqual(rows["L2"]["BiallelicHistogram"], "8/8:1,8/9:1")
 
-    def test_motif_composition_is_summed_by_sequence_and_renumbered(self):
-        output_prefix = self.run_main("out", self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B))
+    def test_the_locus_allele_count_decides_which_calls_are_hemizygous(self):
+        # In a male sample, PAR is a chrX locus in a pseudoautosomal region, which ExpansionHunter genotypes with two
+        # alleles (AlleleCount 2), and NON_PAR is a chrX locus it genotypes with one
+        sample = expansion_hunter_json("A", "Male", [
+            ("PAR", [repeat_record("PAR", "chrX:100-130", "GCC", "8/10")]),
+            ("NON_PAR", [repeat_record("NON_PAR", "chrX:5000000-5000030", "GCC", "8")]),
+        ])
+        sample["LocusResults"]["PAR"]["AlleleCount"] = 2
+        sample["LocusResults"]["NON_PAR"]["AlleleCount"] = 1
+        output_prefix, printed = self.run_main_and_capture_output("out", self.write_json("A", sample))
         _, rows = self.read_output(output_prefix)
-        # CAG: 30 + 10 = 40 occurrences, CAA: 2 + 40 = 42, so CAA becomes motif 1 although A called it motif 2.
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:42:8,2:CAG:40:9")
-        # A: CAG-CAG 25, CAG-CAA 2; B: CAA-CAA 30, CAG-CAA 5 (its [2][1])
-        self.assertEqual(rows["L1"]["MotifPairs"], "[1][1]:30:6,[2][1]:7:5,[2][2]:25:5")
+        self.assertEqual(rows["PAR"]["HemizygousAlleleHistogram"], "")
+        self.assertEqual(rows["PAR"]["BiallelicHistogram"], "8/10:1")
+        self.assertEqual(rows["NON_PAR"]["HemizygousAlleleHistogram"], "8x:1")
+        self.assertNotIn("doesn't match the sample's sex", printed)
+
+        # Without AlleleCount, a male's two-allele chrX call is counted as not matching the sample's sex
+        del sample["LocusResults"]["PAR"]["AlleleCount"]
+        _, printed = self.run_main_and_capture_output("without_allele_count", self.write_json("A", sample))
+        self.assertIn("WARNING: 1 genotype with an allele count that doesn't match the sample's sex", printed)
+
+    def test_motif_composition_counts_samples_by_sequence_and_renumbers_motifs(self):
+        output_prefix = self.run_main("out", self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B))
+        header, rows = self.read_output(output_prefix)
+        self.assertNotIn(m.MOTIF_OCCURRENCE_DISTRIBUTIONS_COLUMN, header)
+        # CAG and CAA are each in 2 samples, so the tie goes to CAA, motif 1, although A called it motif 2
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:2,2:CAG:2")
+        # A: CAG-CAG, CAG-CAA; B: CAA-CAA, CAG-CAA (its [2][1])
+        self.assertEqual(rows["L1"]["MotifPairs"], "[1][1]:1,[2][1]:2,[2][2]:1")
         self.assertEqual(rows["M_CAG"]["MotifComposition"], "")
+
+        # C has only CAG at L1, so CAG, in 3 samples, comes before CAA, in 2. C's L2 record is empty, so GCC is in
+        # 2 of the 3 samples there
+        _, rows = self.read_output(self.run_main(
+            "out_with_C", self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B),
+            self.write_json("C", SAMPLE_C)))
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAG:3,2:CAA:2")
+        self.assertEqual(rows["L1"]["MotifPairs"], "[1][1]:2,[1][2]:2,[2][2]:1")
+        self.assertEqual(rows["L2"]["SampleCount"], "3")
+        self.assertEqual(rows["L2"]["MotifComposition"], "1:GCC:2")
+
+    def test_motif_occurrence_distributions(self):
+        inputs = [self.write_json(name, data) for name, data in [("A", SAMPLE_A), ("B", SAMPLE_B), ("C", SAMPLE_C)]]
+        output_prefix, printed = self.run_main_and_capture_output(
+            "out", "--output-motif-occurrence-distributions", "--add-consensus-sequence-column", *inputs)
+        header, rows = self.read_output(output_prefix)
+        self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS
+                         + [m.MOTIF_OCCURRENCE_DISTRIBUTIONS_COLUMN, m.ALLELE_SEQUENCES_COLUMN])
+        # CAG: 30 in A, 10 in B, 50 in C; CAA: 2 in A, 40 in B
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAG:3,2:CAA:2")
+        self.assertEqual(rows["L1"]["MotifOccurrenceDistributions"], "1:CAG:10x:1,30x:1,50x:1|2:CAA:2x:1,40x:1")
+        self.assertEqual(rows["L2"]["MotifOccurrenceDistributions"], "1:GCC:8x:1,17x:1")
+        self.assertEqual(rows["M_CAG"]["MotifOccurrenceDistributions"], "")
+        self.assertIn(f"(with motif composition, {m.MOTIF_OCCURRENCE_DISTRIBUTIONS_COLUMN}, AlleleSequences columns)",
+                      printed)
+
+        # Two samples with the same number of occurrences are counted together
+        _, rows = self.read_output(self.run_main(
+            "same_counts", "--output-motif-occurrence-distributions", "--allow-overlapping-samples", inputs[0],
+            self.write_json("A_again", SAMPLE_A)))
+        self.assertEqual(rows["L1"]["MotifOccurrenceDistributions"], "1:CAA:2x:2|2:CAG:30x:2")
+
+    def test_motif_occurrence_distributions_without_motif_composition_in_the_inputs_get_a_warning(self):
+        output_prefix, printed = self.run_main_and_capture_output(
+            "out", "--output-motif-occurrence-distributions", self.write_json("D", SAMPLE_WITHOUT_EXTRA_FIELDS))
+        self.assertIn("WARNING: --output-motif-occurrence-distributions was given, but no input has motif "
+                      "composition", printed)
+        self.assertEqual(self.read_output(output_prefix)[0], m.BASE_COLUMNS)
+
+    def test_motif_occurrence_distributions_cannot_be_combined_with_skipping_motif_composition(self):
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.run_main("out", "--output-motif-occurrence-distributions", "--skip-motif-composition-columns",
+                          self.write_json("A", SAMPLE_A))
+        self.assertIn("can't be combined with --skip-motif-composition-columns", stderr.getvalue())
+
+    def test_tsv_input_without_motif_occurrence_distributions_raises_when_they_are_requested(self):
+        batch = self.run_main("batch", self.write_json("A", SAMPLE_A))
+        with self.assertRaisesRegex(ValueError, "has motif composition columns but no MotifOccurrenceDistributions"):
+            self.run_main("out", "--output-motif-occurrence-distributions", batch + ".tsv.gz",
+                          self.write_json("B", SAMPLE_B))
+        # A TSV without any motif composition columns only gets the usual warning
+        batch_without_motif_composition = self.run_main(
+            "batch_without_motif_composition", "--skip-motif-composition-columns", self.write_json("A", SAMPLE_A))
+        output_prefix, printed = self.run_main_and_capture_output(
+            "out", "--output-motif-occurrence-distributions", batch_without_motif_composition + ".tsv.gz",
+            self.write_json("B", SAMPLE_B))
+        self.assertIn("WARNING: Motif composition is missing from 1 input", printed)
+        _, rows = self.read_output(output_prefix)
+        self.assertEqual(rows["L1"]["MotifOccurrenceDistributions"], "1:CAA:40x:1|2:CAG:10x:1")
+
+    def test_tsv_input_from_an_earlier_version_with_occurrence_and_read_counts_raises(self):
+        batch = self.run_main("batch", self.write_json("A", SAMPLE_A))
+        with gzip.open(batch + ".tsv.gz", "rt") as f:
+            text = f.read()
+        self.assertIn("\t1:CAA:1,2:CAG:1\t[2][1]:1,[2][2]:1", text)
+        with gzip.open(batch + ".tsv.gz", "wt") as f:
+            f.write(text.replace("\t1:CAA:1,2:CAG:1\t[2][1]:1,[2][2]:1", "\t1:CAG:30:5,2:CAA:2:2\t[1][1]:25:5,[1][2]:2:2"))
+        with self.assertRaisesRegex(ValueError, "TSVs made by earlier versions of this script"):
+            self.run_main("out", batch + ".tsv.gz", self.write_json("B", SAMPLE_B))
+        # without the motif composition columns, the earlier TSV can still be combined
+        _, rows = self.read_output(self.run_main(
+            "out", "--skip-motif-composition-columns", batch + ".tsv.gz", self.write_json("B", SAMPLE_B)))
+        self.assertEqual(rows["L1"]["SampleCount"], "2")
 
     def test_allele_sequences_are_haplotype_counts(self):
         output_prefix = self.run_main("out", "--add-consensus-sequence-column",
@@ -231,7 +327,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         self.assertEqual(printed.count("WARNING: Motif composition is missing from 1 input"), 1)
         header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAG:30:5,2:CAA:2:2")
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:1,2:CAG:1")
         output_prefix, printed = self.run_main_and_capture_output("out2", "--skip-motif-composition-columns", *inputs)
         self.assertNotIn("Motif composition is missing", printed)
         header, rows = self.read_output(output_prefix)
@@ -258,7 +354,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         _, rows = self.read_output(output_prefix)
         self.assertEqual(rows["L1"]["SampleCount"], "2")
         # Only B's motif composition is counted
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:40:6,2:CAG:10:4")
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:1,2:CAG:1")
 
     def test_motif_composition_found_only_late_in_a_file_reruns_the_merge_with_its_columns(self):
         # The sample's RunInfo has no CommandLine, so only the full read finds its motif composition
@@ -268,7 +364,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         self.assertIn("merging again", printed)
         header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:15:2")
+        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:1")
         self.assertEqual(rows["first"]["MotifComposition"], "")
 
     def test_command_line_of_a_sparse_motif_composition_mode_avoids_rerunning_the_merge(self):
@@ -279,7 +375,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         self.assertNotIn("merging again", printed)
         header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:15:2")
+        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:1")
 
     def test_any_json_command_line_read_with_its_header_avoids_rerunning_the_merge(self):
         # The smaller JSON was run without motif composition; the larger one's command line says it has it
@@ -306,7 +402,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         header, rows = self.read_output(
             self.run_main("out", self.write_json("A", SAMPLE_A), self.write_json("D", sample_without_records)))
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAG:30:5,2:CAA:2:2")
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:1,2:CAG:1")
 
         sample_run_without_motif_composition = with_sample_id(SAMPLE_WITHOUT_EXTRA_FIELDS, "E")
         sample_run_without_motif_composition["RunInfo"]["CommandLine"] = "ExpansionHunter --analysis-mode seeking"
@@ -341,22 +437,26 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         # In seeking-mode layout, SampleParameters comes after RunInfo
         seeking_sample_without_records = in_older_seeking_mode_layout(with_sample_id(SAMPLE_WITHOUT_EXTRA_FIELDS, "D"))
         seeking_sample_without_records["RunInfo"]["CommandLine"] = long_command_line
-        header, rows = self.read_output(self.run_main(
-            "out", self.write_json("A", sample_with_records), self.write_json("D", seeking_sample_without_records)))
+        output_prefix, printed = self.run_main_and_capture_output(
+            "out", self.write_json("A", sample_with_records), self.write_json("D", seeking_sample_without_records))
+        # D has no MotifComposition record, so only its command line says it has motif composition
+        self.assertNotIn("Motif composition is missing", printed)
+        header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAG:30:5,2:CAA:2:2")
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CAA:1,2:CAG:1")
 
     def test_run_info_keeping_reader_finds_a_key_split_between_reads(self):
         json_bytes = json.dumps({"LocusResults": {"L": {}}, "RunInfo": {"CommandLine": "x" * 1000}}).encode()
-        reader = m.RunInfoKeepingReader(io.BytesIO(json_bytes))
+        reader = streaming_utils.RunInfoKeepingReader(io.BytesIO(json_bytes))
         while reader.read(3):
             pass
-        self.assertEqual(m.parse_run_info(reader.tail), {"CommandLine": "x" * 1000})
-        with mock.patch.object(m, "MAX_RUN_INFO_BYTES", 100):
-            reader = m.RunInfoKeepingReader(io.BytesIO(json_bytes))
+        self.assertEqual(streaming_utils.parse_records_from_run_info_on(reader.tail),
+                         {"RunInfo": {"CommandLine": "x" * 1000}})
+        with mock.patch.object(streaming_utils, "MAX_RUN_INFO_BYTES", 100):
+            reader = streaming_utils.RunInfoKeepingReader(io.BytesIO(json_bytes))
             while reader.read(3):
                 pass
-        self.assertIsNone(m.parse_run_info(reader.tail))
+        self.assertEqual(streaming_utils.parse_records_from_run_info_on(reader.tail), {})
 
     def test_consensus_sequence_columns_accept_an_input_without_any_called_repeat(self):
         uncalled = expansion_hunter_json("U", "Female", [("L1", [repeat_record("L1", "chr1:100-130", "CAG")])])
@@ -383,7 +483,8 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
 
     def test_tsvs_from_earlier_runs_give_the_same_output_as_the_json_files(self):
         inputs = [self.write_json(name, data) for name, data in [("A", SAMPLE_A), ("B", SAMPLE_B), ("C", SAMPLE_C)]]
-        options = ["--add-outlier-sample-id-columns", "--n-outlier-sample-ids", "2", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--n-outlier-sample-ids", "2", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         direct = self.run_main("direct", *options, *inputs)
         batch = self.run_main("batch", *options, inputs[0], inputs[1])
         combined = self.run_main("combined", *options, batch + ".tsv.gz", inputs[2])
@@ -395,17 +496,21 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         _, combined_rows = self.read_output(combined)
         self.assertEqual(combined_rows["L1"]["OutlierSampleIds_AllAlleles"], "40x:C")
         self.assertEqual(combined_rows["L2"]["OutlierSampleIds_HemizygousAlleles"], "20x:C,8x:A")
+        self.assertEqual(combined_rows["L1"]["MotifOccurrenceDistributions"],
+                         "1:CAG:10x:1,30x:1,50x:1|2:CAA:2x:1,40x:1")
 
     def test_threads_give_the_same_output(self):
         inputs = [self.write_json(name, data) for name, data in [("A", SAMPLE_A), ("B", SAMPLE_B), ("C", SAMPLE_C)]]
-        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         single = self.run_main("single", *options, *inputs)
         threaded = self.run_main("threaded", "--threads", "2", *options, *inputs)
         self.assertEqual(self.read_output_text(single), self.read_output_text(threaded))
         self.assertEqual([name for name in os.listdir(self.temp_dir) if ".tmp_" in name], [])
 
     def test_older_seeking_mode_layout_gives_the_same_output(self):
-        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         optimized_streaming = self.run_main(
             "optimized_streaming", *options, self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B))
         # sorted by LocusId, L2 (chrX) comes before M (chr2)
@@ -415,7 +520,8 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         self.assertEqual(self.read_output_text(optimized_streaming), self.read_output_text(seeking))
 
     def test_current_layout_gives_the_same_output_as_older_layouts(self):
-        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         older = self.run_main("older", *options, self.write_json("A", SAMPLE_A),
                               self.write_json("B", in_older_seeking_mode_layout(SAMPLE_B)))
         # In seeking mode, sorted by LocusId, L2 (chrX) comes before M (chr2), so only RunInfo.AnalysisMode tells
@@ -428,22 +534,134 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
     def test_current_layout_command_line_is_read_before_the_merge_without_keeping_the_tail(self):
         sample = with_sample_id(SAMPLE_WITH_MOTIF_COMPOSITION_ONLY_IN_SECOND_RECORD, "A")
         sample["RunInfo"]["CommandLine"] = "ExpansionHunter --output-motif-composition loci-with-known-motifs"
+        # The shared module reads the header, streams the records and reads a JSON's tail
         with mock.patch.object(m, "MOTIF_COMPOSITION_CHECK_RECORDS", 1), \
-                mock.patch.object(m, "RunInfoKeepingReader") as run_info_keeping_reader:
+                mock.patch.object(streaming_utils, "RunInfoKeepingReader") as run_info_keeping_reader:
             output_prefix, printed = self.run_main_and_capture_output(
                 "out", self.write_json("A", in_current_layout(sample)))
         run_info_keeping_reader.assert_not_called()
         self.assertNotIn("merging again", printed)
         header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
-        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:15:2")
+        self.assertEqual(rows["second"]["MotifComposition"], "1:CA:1")
+
+    def write_text_file(self, name, text):
+        path = os.path.join(self.temp_dir, name)
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def test_samples_and_loci_to_exclude(self):
+        inputs = [self.write_json(name, data) for name, data in [("A", SAMPLE_A), ("B", SAMPLE_B), ("C", SAMPLE_C)]]
+        # Without B, and without either repeat of locus M (M_CAG and M_CCG), the output is that of A and C. Loci are
+        # matched by LocusId only, so the export's row for one of M's repeats leaves out both.
+        expected_header, expected_rows = self.read_output(self.run_main("A_and_C", inputs[0], inputs[2]))
+        del expected_rows["M_CAG"]
+        del expected_rows["M_CCG"]
+        # the TSVs that start_multisample_qc_dashboard.py exports, and plain lists of IDs
+        qc_report_tsvs = (
+            self.write_text_file("samples_to_exclude.tsv",
+                                 "SampleId\tReasonsForExclusion\nB\tCall rate 0.5 < 0.9\n"),
+            self.write_text_file("loci_to_exclude.tsv",
+                                 "LocusId\tVariantId\tReasonsForExclusion\nM\tM_CCG\tCall rate 0.6 < 0.9\n"))
+        plain_lists = (self.write_text_file("samples.txt", "B\n"),
+                       self.write_text_file("loci.txt", "# loci to leave out\nM\n\n"))
+        for description, (samples_to_exclude, loci_to_exclude) in [("QC report TSVs", qc_report_tsvs),
+                                                                    ("plain lists", plain_lists)]:
+            for threads in (1, 2):
+                with self.subTest(description=description, threads=threads), \
+                        mock.patch.object(streaming_utils, "get_max_inputs_per_merge", lambda: 2):
+                    output_prefix, printed = self.run_main_and_capture_output(
+                        "out", "--threads", threads, "--samples-to-exclude", samples_to_exclude, "--loci-to-exclude",
+                        loci_to_exclude, *inputs)
+                    self.assertEqual(self.read_output(output_prefix), (expected_header, expected_rows))
+                    self.assertIn(f"Leaving out 1 JSON input of the 1 sample listed in {samples_to_exclude}", printed)
+                    self.assertIn(f"Left out the repeats of 1 of the 1 locus listed in {loci_to_exclude}", printed)
+                    self.assertNotIn("WARNING", printed)
+
+    def test_listed_samples_and_loci_that_are_not_in_the_inputs_are_reported(self):
+        # a VariantId (M_CCG) isn't a LocusId, so it matches nothing
+        _, printed = self.run_main_and_capture_output(
+            "out", "--samples-to-exclude", self.write_text_file("samples.txt", "B\nZ\n"),
+            "--loci-to-exclude", self.write_text_file("loci.txt", "L1\nM_CCG\nNOT_IN_THE_CATALOG\n"),
+            self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B))
+        self.assertIn("WARNING: 1 sample listed in", printed)
+        self.assertIn("is not among the inputs (e.g. Z)", printed)
+        self.assertIn("Left out the repeats of 1 of the 3 loci listed in", printed)
+        self.assertIn("WARNING: 2 loci listed in", printed)
+        self.assertIn("are not in the inputs (e.g. M_CCG)", printed)
+
+    def test_n_counts_only_the_rows_that_are_kept(self):
+        output_prefix = self.run_main("out", "-n", 2, "--loci-to-exclude", self.write_text_file("loci.txt", "L1\n"),
+                                      self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B))
+        self.assertEqual(list(self.read_output(output_prefix)[1]), ["M_CAG", "M_CCG"])
+
+    def test_loci_option_keeps_only_the_repeats_of_the_given_loci(self):
+        # an optimized-streaming JSON, a seeking-mode JSON (sorted into a temporary TSV first) and a TSV
+        options = ["--add-outlier-sample-id-columns", "--output-motif-occurrence-distributions"]
+        inputs = [self.write_json("A", SAMPLE_A), self.write_json("B_seeking", in_older_seeking_mode_layout(SAMPLE_B)),
+                  self.run_main("batch", *options, self.write_json("C", SAMPLE_C)) + ".tsv.gz"]
+        # header, L1, M_CAG, M_CCG, L2
+        all_lines = self.read_output_text(self.run_main("all", *options, *inputs)).splitlines()
+        self.assertEqual(len(all_lines), 5)
+        for threads in (1, 2):
+            for loci_arguments in (["-L", "M", "-L", "L2"], ["-L", "M,L2"], ["--loci", "L2,M"]):
+                with self.subTest(threads=threads, loci_arguments=loci_arguments):
+                    output_prefix, printed = self.run_main_and_capture_output(
+                        "out", "--threads", threads, *options, *loci_arguments, *inputs)
+                    self.assertEqual(self.read_output_text(output_prefix).splitlines(),
+                                     [all_lines[0]] + all_lines[2:])
+                    self.assertIn("Keeping only the repeats of the 2 LocusIds given with -L", printed)
+                    self.assertNotIn("WARNING", printed)
+
+        # A VariantId (M_CCG) is not a LocusId. A repeat listed in --loci-to-exclude outside the -L loci isn't
+        # reported as missing from the inputs.
+        output_prefix, printed = self.run_main_and_capture_output(
+            "missing", "-L", "L1,NOT_IN_THE_CATALOG", "-L", "M_CCG", "--loci-to-exclude",
+            self.write_text_file("loci.txt", "L2\n"), *inputs)
+        self.assertIn("WARNING: 2 LocusIds given with -L have no rows in the output (e.g. M_CCG)", printed)
+        self.assertNotIn("not in the inputs", printed)
+        self.assertEqual(list(self.read_output(output_prefix)[1]), ["L1"])
+
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            self.run_main("out", "-L", ",", inputs[0])
+
+    def test_loci_with_several_repeats_do_not_count_as_missing_consensus_sequences(self):
+        # ExpansionHunter writes no ConsensusSequences at a locus with several repeats, such as M
+        inputs = [self.write_json("A", SAMPLE_A), self.write_json("B", SAMPLE_B)]
+        _, printed = self.run_main_and_capture_output(
+            "out", "-L", "M", "--add-consensus-sequence-column", "--skip-motif-composition-columns", *inputs)
+        self.assertNotIn("WARNING", printed)
+
+    def test_input_paths_file(self):
+        inputs = [self.write_json(name, data) for name, data in [("A", SAMPLE_A), ("B", SAMPLE_B), ("C", SAMPLE_C)]]
+        # blank lines and lines that start with # are skipped
+        input_paths_file = self.write_text_file("inputs.txt", "# JSONs\n" + "\n".join(inputs[1:]) + "\n\n")
+        from_file = self.run_main("from_file", "--input-paths-file", input_paths_file, inputs[0])
+        from_command_line = self.run_main("from_command_line", *inputs)
+        self.assertEqual(self.read_output_text(from_file), self.read_output_text(from_command_line))
+        output_prefix = os.path.join(self.temp_dir, "out")
+        for argv in (["-o", output_prefix],
+                     ["-o", output_prefix, "--input-paths-file", os.path.join(self.temp_dir, "missing.txt")],
+                     ["-o", output_prefix, "--input-paths-file", input_paths_file, inputs[1]]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                m.parse_args(argv)
+
+    def test_samples_cannot_be_left_out_of_tsv_inputs(self):
+        tsv_input = self.run_main("batch", self.write_json("A", SAMPLE_A)) + ".tsv.gz"
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.run_main("out", "--samples-to-exclude", self.write_text_file("samples.txt", "A\n"), tsv_input,
+                          self.write_json("B", SAMPLE_B))
+        self.assertIn("--samples-to-exclude can only leave out JSON inputs", stderr.getvalue())
 
     def test_many_inputs_are_merged_in_rounds_that_stay_under_the_open_file_limit(self):
         inputs = [self.write_json(f"S{index}", with_sample_id(data, f"S{index}"))
                   for index, data in enumerate([SAMPLE_A, SAMPLE_B, SAMPLE_C, SAMPLE_A, SAMPLE_B])]
-        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         direct = self.run_main("direct", *options, *inputs)
-        with mock.patch.object(m, "get_max_inputs_per_merge", lambda: 2):
+        with mock.patch.object(streaming_utils, "get_max_inputs_per_merge", lambda: 2):
             in_rounds = self.run_main("in_rounds", *options, *inputs)
             in_rounds_threaded = self.run_main("in_rounds_threaded", "--threads", "2", *options, *inputs)
         self.assertEqual(self.read_output_text(direct), self.read_output_text(in_rounds))
@@ -462,7 +680,7 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
             with self.subTest(n=n):
                 first_lines = self.read_output_text(self.run_main(f"first_{n}", "-n", n, *options, *inputs))
                 self.assertEqual(first_lines.splitlines(), full_lines[:n + 1])
-                with mock.patch.object(m, "get_max_inputs_per_merge", lambda: 2):
+                with mock.patch.object(streaming_utils, "get_max_inputs_per_merge", lambda: 2):
                     first_lines_in_rounds = self.read_output_text(
                         self.run_main(f"first_{n}_in_rounds", "-n", n, "--threads", "2", *options, *inputs))
                 self.assertEqual(first_lines_in_rounds.splitlines(), full_lines[:n + 1])
@@ -483,7 +701,16 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
                 with_sample_id(SAMPLE_WITH_MOTIF_COMPOSITION_ONLY_IN_SECOND_RECORD, sample_id))
             sample["RunInfo"]["CommandLine"] = "ExpansionHunter --output-motif-composition loci-with-non-ref-motifs"
             inputs.append(self.write_json(sample_id, sample))
-        self.assertEqual(m.read_expansion_hunter_json_header(inputs[0]), ("A", "Female", True, True))
+        # SampleParameters and RunInfo are taken from the end of the file without parsing the loci
+        with mock.patch.object(streaming_utils.ijson, "items") as parse_items:
+            self.assertEqual(m.read_expansion_hunter_json_header(inputs[0]), (
+                "A", "Female", True, "ExpansionHunter --output-motif-composition loci-with-non-ref-motifs"))
+        parse_items.assert_not_called()
+        # Illumina ExpansionHunter's output has no RunInfo, so its SampleParameters is found by parsing the loci
+        illumina_layout_sample = in_older_seeking_mode_layout(with_sample_id(SAMPLE_A, "Illumina"))
+        del illumina_layout_sample["RunInfo"]
+        self.assertEqual(m.read_expansion_hunter_json_header(self.write_json("Illumina", illumina_layout_sample)),
+                         ("Illumina", "Male", True, None))
         output_prefix, printed = self.run_main_and_capture_output("first_row", "-n", "1", *inputs)
         self.assertNotIn("merging again", printed)
         header, _ = self.read_output(output_prefix)
@@ -519,10 +746,11 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
         header, rows = self.read_output(output_prefix)
         self.assertEqual(header, m.BASE_COLUMNS + m.MOTIF_COMPOSITION_COLUMNS)
         self.assertEqual(list(rows), ["L1"])
-        self.assertEqual(rows["L1"]["MotifComposition"], "1:CA:15:2")
+        self.assertEqual(rows["L1"]["MotifComposition"], "1:CA:1")
 
     def test_gcs_inputs_give_the_same_output_as_local_ones(self):
-        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column"]
+        options = ["--add-outlier-sample-id-columns", "--add-consensus-sequence-column",
+                   "--output-motif-occurrence-distributions"]
         batch_prefix = self.run_main("batch", *options, self.write_json("C", SAMPLE_C))
         local_inputs = [self.write_json("A", SAMPLE_A),
                         self.write_json("B_seeking", in_older_seeking_mode_layout(SAMPLE_B), compress=False),
@@ -588,16 +816,18 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
 
     def test_gzip_reader_closes_the_file_it_decompresses(self):
         source = io.BytesIO(gzip.compress(b"text"))
-        with m.GzipFileThatClosesItsSource(source) as f:
+        with streaming_utils.GzipFileThatClosesItsSource(source) as f:
             self.assertEqual(f.read(), b"text")
         self.assertTrue(source.closed)
 
     def test_failing_worker_raises_its_error_and_leaves_no_temporary_files(self):
+        # "earliest" comes more than the reorder window after "far", which starts later on the same chromosome
         bad_sample = expansion_hunter_json("bad", "Female", [
-            ("on_chr2", [repeat_record("on_chr2", "chr2:100-130", "CA", "5/5")]),
-            ("on_chr1", [repeat_record("on_chr1", "chr1:100-130", "CA", "6/6")]),
+            ("first", [repeat_record("first", "chr1:1000-1030", "CA", "5/5")]),
+            ("far", [repeat_record("far", "chr1:900000-900050", "CA", "5/5")]),
+            ("earliest", [repeat_record("earliest", "chr1:100-130", "CA", "6/6")]),
         ])
-        with self.assertRaisesRegex(ValueError, "lists chr1 after a chromosome"):
+        with self.assertRaisesRegex(ValueError, "after repeats that start later"):
             self.run_main("out", "--threads", "2", "--skip-motif-composition-columns", self.write_json("bad", bad_sample),
                           self.write_json("A", SAMPLE_A))
         self.assertEqual([name for name in os.listdir(self.temp_dir) if ".tmp_" in name], [])
@@ -673,14 +903,39 @@ class GenerateMultisampleTsvTests(unittest.TestCase):
             ("far", [repeat_record("far", "chr1:900000-900050", "CA", "5/5")]),
             ("earliest", [repeat_record("earliest", "chr1:100-130", "CA", "6/6")]),
         ])
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "after repeats that start later"):
             self.run_main("out", self.write_json("A", sample))
+        # a chromosome whose repeats are in two places can't be put back in order
         sample = expansion_hunter_json("A", "Female", [
+            ("on_chr1", [repeat_record("on_chr1", "chr1:100-130", "CA", "5/5")]),
             ("on_chr2", [repeat_record("on_chr2", "chr2:100-130", "CA", "5/5")]),
-            ("on_chr1", [repeat_record("on_chr1", "chr1:100-130", "CA", "6/6")]),
+            ("on_chr1_again", [repeat_record("on_chr1_again", "chr1:900-930", "CA", "6/6")]),
         ])
-        with self.assertRaises(ValueError):
-            self.run_main("out", self.write_json("B", sample))
+        with self.assertRaisesRegex(ValueError, "lists the repeats of chr1 in more than one place"):
+            self.run_main("split", self.write_json("split", sample))
+
+    def test_chromosomes_in_the_order_of_a_header_sorted_by_name_are_put_in_order(self):
+        # A BAM or CRAM header sorted by name lists chr1, chr10, ..., chr19, chr2, ..., chrM, chrX, chrY, and
+        # optimized-streaming output follows it
+        def sample_with_chromosomes(sample_id, chromosomes):
+            return expansion_hunter_json(sample_id, "Female", [
+                (f"on_{chromosome}", [repeat_record(f"on_{chromosome}", f"{chromosome}:100-130", "CA", "5/6")])
+                for chromosome in chromosomes])
+        standard_order = ["chr1", "chr2", "chr10", "chrX", "chrY", "chrM"]
+        header_sorted_by_name = ["chr1", "chr10", "chr2", "chrM", "chrX", "chrY"]
+        expected = self.read_output_text(self.run_main(
+            "standard", self.write_json("A_standard", sample_with_chromosomes("A", standard_order)),
+            self.write_json("B_standard", sample_with_chromosomes("B", standard_order))))
+        for threads in (1, 2):
+            with self.subTest(threads=threads):
+                output_prefix = self.run_main(
+                    f"sorted_by_name_{threads}", "--threads", threads,
+                    self.write_json("A_by_name", sample_with_chromosomes("A", header_sorted_by_name)),
+                    self.write_json("B_standard", sample_with_chromosomes("B", standard_order)))
+                self.assertEqual(self.read_output_text(output_prefix), expected)
+                self.assertEqual(list(self.read_output(output_prefix)[1]),
+                                 ["on_chr1", "on_chr2", "on_chr10", "on_chrX", "on_chrY", "on_chrM"])
+        self.assertEqual([name for name in os.listdir(self.temp_dir) if ".tmp_" in name], [])
 
 
 class FormattingTests(unittest.TestCase):
@@ -722,13 +977,25 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(m.parse_biallelic_histogram(""), {})
 
     def test_motif_composition_round_trip(self):
-        motif_counts = {"GCG": [561, 64], "GCA": [82, 50]}
-        pair_counts = {("GCG", "GCG"): [398, 63], ("GCG", "GCA"): [82, 50]}
-        motifs_value, pairs_value = m.format_motif_composition(motif_counts, pair_counts)
-        self.assertEqual(motifs_value, "1:GCG:561:64,2:GCA:82:50")
-        self.assertEqual(pairs_value, "[1][1]:398:63,[1][2]:82:50")
-        self.assertEqual(m.parse_motif_composition_columns(motifs_value, pairs_value), (motif_counts, pair_counts))
-        self.assertEqual(m.format_motif_composition({"AT": [5, 1], "AC": [5, 2]}, {})[0], "1:AC:5:2,2:AT:5:1")
+        motif_sample_counts = {"GCA": 20, "GCG": 23}
+        pair_sample_counts = {("GCG", "GCG"): 23, ("GCG", "GCA"): 18}
+        motif_ids = m.get_motif_ids(motif_sample_counts)
+        self.assertEqual(motif_ids, {"GCG": 1, "GCA": 2})
+        motifs_value, pairs_value = m.format_motif_composition(motif_sample_counts, pair_sample_counts, motif_ids)
+        self.assertEqual(motifs_value, "1:GCG:23,2:GCA:20")
+        self.assertEqual(pairs_value, "[1][1]:23,[1][2]:18")
+        self.assertEqual(m.parse_motif_composition_columns(motifs_value, pairs_value, "batch.tsv.gz"),
+                         (motif_sample_counts, pair_sample_counts))
+        # ties go by motif sequence
+        self.assertEqual(m.get_motif_ids({"AT": 5, "AC": 5}), {"AC": 1, "AT": 2})
+        self.assertEqual(m.format_motif_composition({}, {}, {}), ("", ""))
+
+    def test_motif_occurrence_distributions_round_trip(self):
+        distributions = {"GCG": {235: 6, 10: 5, 11: 12}, "GCA": {1: 18, 2: 2}}
+        value = m.format_motif_occurrence_distributions(distributions, {"GCG": 1, "GCA": 2})
+        self.assertEqual(value, "1:GCG:10x:5,11x:12,235x:6|2:GCA:1x:18,2x:2")
+        self.assertEqual(m.parse_motif_occurrence_distributions(value), distributions)
+        self.assertEqual(m.parse_motif_occurrence_distributions(""), {})
 
     def test_allele_sequences_round_trip(self):
         value = m.format_allele_sequences({"TGCTGA": 56, "TGCTGC": 86})
