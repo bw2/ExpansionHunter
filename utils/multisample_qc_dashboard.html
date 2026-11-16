@@ -1548,7 +1548,7 @@ or not.</p>
         "." : "This QC stats file has none."),
       "QC stats file: " + data.dataPath,
       "Exports: " + data.outputPaths.samples + " (SampleId, ReasonsForExclusion) and " + data.outputPaths.loci +
-      " (LocusId, VariantId, ReasonsForExclusion). Pass them to generate_multisample_tsv.py with " +
+      " (LocusId, ReasonsForExclusion). Pass them to generate_multisample_tsv.py with " +
       "--samples-to-exclude and --loci-to-exclude.",
       "Saved state: " + data.outputPaths.state,
     ].map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>";

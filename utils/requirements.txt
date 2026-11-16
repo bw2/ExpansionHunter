@@ -1,0 +1,7 @@
+# Packages needed by the scripts in this folder. Install with: pip3 install -r requirements.txt
+ijson>=3.1
+numpy
+plotly>=5
+tqdm
+# needed only for reading gs:// paths
+google-cloud-storage>=1.38

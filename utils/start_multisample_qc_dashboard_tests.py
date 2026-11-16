@@ -248,7 +248,7 @@ class StartMultisampleQcDashboardTests(unittest.TestCase):
                       output.getvalue())
         self.assertEqual(dashboard.repeat_keys, {"HTT\tHTT"})
         with open(dashboard.export("loci", [["HTT\tHTT", "manually excluded"]])) as f:
-            self.assertEqual(f.read(), "LocusId\tVariantId\tReasonsForExclusion\nHTT\tHTT\tmanually excluded\n")
+            self.assertEqual(f.read(), "LocusId\tReasonsForExclusion\nHTT\tmanually excluded\n")
 
     def test_damaged_state_file_is_not_overwritten(self):
         data_path = self.write_qc_stats_file(SAMPLE_JSONS)
@@ -334,7 +334,7 @@ class StartMultisampleQcDashboardTests(unittest.TestCase):
         self.assertEqual(self.request(port, "POST", "/export" + token_query, body={
             "kind": "loci", "rows": [[m.get_repeat_key("L2", "L2"), "Call rate 0.75 < 0.9"]]})[0], 200)
         with open(output_prefix + ".loci_to_exclude.tsv") as f:
-            self.assertEqual(f.read(), "LocusId\tVariantId\tReasonsForExclusion\nL2\tL2\tCall rate 0.75 < 0.9\n")
+            self.assertEqual(f.read(), "LocusId\tReasonsForExclusion\nL2\tCall rate 0.75 < 0.9\n")
         for body, error_text in [({"kind": "samples", "rows": [["Z", "x"]]}, "Unknown SampleId"),
                                  ({"kind": "loci", "rows": [["L2", "x"]]}, "Unknown repeat"),
                                  ({"kind": "other", "rows": []}, "Unknown export kind")]:

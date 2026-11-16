@@ -51,7 +51,7 @@ directory), are:
     <prefix>.samples_to_exclude.tsv       written by the "Export excluded samples" button: SampleId,
                                           ReasonsForExclusion. generate_multisample_tsv.py and
                                           generate_multisample_qc_stats.py read it with --samples-to-exclude.
-    <prefix>.loci_to_exclude.tsv          written by the "Export excluded loci" button: LocusId, VariantId,
+    <prefix>.loci_to_exclude.tsv          written by the "Export excluded loci" button: LocusId,
                                           ReasonsForExclusion. generate_multisample_tsv.py reads it with
                                           --loci-to-exclude.
     <prefix>.qc_dashboard_state.json      the thresholds, the statuses set by hand, the edited reasons, the sex check
@@ -253,7 +253,7 @@ STATE_KEYS_OF_SAMPLE_IDS = ("manualSampleStatus", "sampleReasonEdits", "selected
 STATE_KEYS_OF_REPEAT_KEYS = ("manualLocusStatus", "locusReasonEdits", "selectedLoci")
 EXPORT_COLUMNS_BY_KIND = {
     "samples": ["SampleId", "ReasonsForExclusion"],
-    "loci": ["LocusId", "VariantId", "ReasonsForExclusion"],
+    "loci": ["LocusId", "ReasonsForExclusion"],
 }
 # Largest request body the server reads: an export of every repeat of a large catalog with long reasons fits
 MAX_REQUEST_BYTES = 512 * 1024 * 1024
@@ -830,8 +830,9 @@ class Dashboard:
             else:
                 if item_id not in self.repeat_keys:
                     raise ValueError(f"Unknown repeat: {item_id}")
-                # the LocusId and the VariantId
-                values = item_id.split("\t")
+                # the LocusId alone, since generate_multisample_tsv.py --loci-to-exclude reads only that, and the
+                # dashboard leaves out loci with more than one repeat
+                values = [item_id.split("\t")[0]]
             lines.append("\t".join(values + [remove_tabs_and_newlines(reason)]))
         path = self.output_paths[kind]
         with self.lock:
